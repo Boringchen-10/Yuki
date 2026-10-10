@@ -1,5 +1,19 @@
 # Codex 与 DeepSeek Harness 项目交接记录
 
+## 安卓详情批量剧集匹配 / 续季编号对应（2026-10-10）
+
+- 基线 `caa8063`，工作树 `.tmp/android-first` / `codex/android-first`。用户要求移除详情“个人记录”选择项（已明确指按钮，保留数据），作品匹配后增加批量匹配官方剧集；明确指出续季文件 13–24、作品官方 1–12 的编号差异。本轮继续包含 OpenDesign 当前草稿构建，Git 仅纳入本轮 App 差异。
+- 详情“剧集”标题旁和“概览 → 资料管理”有“批量匹配剧集”。目标固定为当前作品，默认处理可用的未关联视频，可显式显示已关联文件；按文件集号填写文件起始 / 官方起始（如 13 / 1），只读诊断、勾选、逐行预览后确认。修改编号或选择使旧预览失效；已有人工对应不默认勾选，官方不唯一 / 季度冲突 / 编号范围异常不确认。保留已有高级分集纠错流程。
+- 复用 correctionApi / recognition_preferences：CorrectionInput 新增可选 episodeOffset（旧调用默认 0），正片官方集号 = 文件原始集号 - 偏移。特别篇不套正片偏移，预览显示类型。确认复用既有原子事务 / 令牌 / media_episode_overrides / 识别历史，保留 ID、路径、原始解析集号和观看位置；重新构建官方关联后仍恢复人工对应。无迁移 / 新依赖 / 固定 12 集推断。
+- 批量诊断补齐 SAF 的真实 relative_path 上下文；选中文件的实际解析路径参与预览令牌，目录上下文变化也会拒绝旧预览。没有把不透明 documentId 当文件夹或在真实媒体上做重命名。
+- 按用户确认去掉视频与书籍详情“个人记录”按钮；移除因此失去入口的安卓 WorkEditor / modal 分支，已有收藏、状态、评分、备注、观看进度与追番 / 收藏入口保留。
+- 验证：TypeScript 与 **98** 前端测试通过；Rust **334 通过 / 18 忽略**，新增 13–24 → 1–12、刷新重建保留、未选人工关联 / 播放位置 / 原始集号保留、改偏移拒绝旧预览、负范围诊断隔离、旧 API 默认 0，以及 SAF 目录变化令牌保护。
+- UI 八组宽度 / 深浅主题通过，检查显式起始对应、勾选范围、已有人工关联默认保护、修改编号后预览失效与确认；证据 `D:/DevTools/Android/Build/qa/episode-match-ui-1791639915057/`。既有目录整理 / 剧集来源 / 剧照 UI 回归通过，证据 `organize-ui-1791640169895`。
+- 原生独立 `com.genzo.android.organizeqa` **6 项通过**：真实 Bangumi《小林家的龙女仆S》第二季官方正片 1–12，自建 DAV 中 13.mkv–24.mkv 原先全部没有官方对应；通过真实详情入口填写 13 / 1 / 第 2 季、勾选预览确认，12 文件按 13 → 1 … 24 → 12 成功关联。原 ID / 路径 / 文件名 / 解析集号与个人状态逐项相同；个人记录按钮不存在。来源移除后作品保留，服务只收到 PROPFIND、无视频 GET / DELETE。证据 `D:/DevTools/Android/Build/qa/episode-match-native-1791640247583/`，服务 / 反向端口已关闭；测试没有操作用户媒体或给真实作品批量保存。
+- 普通签名预览 `D:/DevTools/Android/Build/previews/episode-offset-20261010/Genzo_0.6.0_episode-match-preview_arm64-v8a.apk`，**74,100,953 字节**，SHA256 **48267e3c1efb1b27838f605742f6eb7ca694e3f7432ff4994d38d98b62925393**。0.6.0 / code6000 / com.genzo.android / arm64 / min26 / target36 / 非 debuggable / 原证书 `cee90e5f…cdb`。签名、16KiB ZIP、包内无数据库 / EPUB / CBZ、APK 库与 Gradle 实际产物、内嵌前端 `index-Ccuc4_T4.js` 均核对。
+- 普通包与原 readerqa 已覆盖更新一加 PLK110 / Android16（`3B164M00Z0500000`），无清库。原调试库更新前后 **27 作品 / 1 来源 / 收藏评分状态 / 播放记录**逐项一致；已实际打开批量入口且无个人记录按钮，没有确认用户真实文件的批量操作。普通包 firstInstallTime 仍为 **2026-10-08 23:16:41**、检查日志无 FATAL / ANR。共享前端预览同为新资源，9228 / 9351 转发更新，其他预览进程保留；最后普通 Genzo 在前台。
+- 汇总记录 `D:/DevTools/Android/Build/qa/episode-offset-20261010/`。这是本机 v0.6.0 预览，不创建公开 Release / 标签 / 推送，不覆盖 v0.5.2 公开资产。下次先看当前源码与用户实际数据，不能把本次测试包或以前的作品数量当作用户库快照。
+
 ## 安卓 WebDAV 后台整理 / TMDB 长 Token 与剧照（2026-10-10）
 
 - 基线 `788a38a`，工作树 `.tmp/android-first` / 分支 `codex/android-first`。用户要求新连接首次自动扫描识别、后续手动更新、离开页面仍处理、按真实目录人工核对，以及保存较长 TMDB Read Access Token 并获取分集封面。继续基于 OpenDesign 最新实际界面，保留其未提交草稿和预览进程；本轮只提交自己 App 入口差异。

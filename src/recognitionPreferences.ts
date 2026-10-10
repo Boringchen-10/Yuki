@@ -2,6 +2,8 @@ export interface RecognitionPreference { id: string; workId: string; title: stri
 export interface CorrectionInput {
   sourceWorkId: string | null; targetWorkId: string; mediaFileIds: string[];
   mode: "keep" | "sequence" | "parsed" | "unlink"; startEpisode: number; season: number | null; episodeType: number;
+  /** Official episode = parsed file episode - offset. Explicit preview only. */
+  episodeOffset?: number;
 }
 export interface CorrectionPreview {
   token: string; title: string; warnings: string[];

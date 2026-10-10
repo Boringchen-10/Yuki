@@ -26,6 +26,7 @@ import { androidSession } from "./sessionCache";
 import NetworkPanel from "./NetworkPanel";
 import WebdavEditor from "./WebdavEditor";
 import CorrectionEditor from "./CorrectionEditor";
+import BatchEpisodeMatcher from "./BatchEpisodeMatcher";
 import Organize from "./Organize";
 import InboxPanel from "./InboxPanel";
 import EpisodeSources from "./EpisodeSources";
@@ -242,16 +243,6 @@ function QuickCard({ label, subtitle, icon: Icon, onClick }: { label: string; su
     <span className="gz-meta">{subtitle}</span>
   </button>;
 }
-function WorkEditor({ work, onSave, busy }: { work: WorkDetail; onSave: (input: WorkInput) => void; busy: boolean }) {
-  const [input, setInput] = useState(() => inputFor(work));
-  return <form onSubmit={event => { event.preventDefault(); onSave(input); }}>
-    <label>作品标题 *<input required maxLength={200} value={input.title} onChange={event => setInput({ ...input, title: event.target.value })} /></label>
-    <label>个人状态<select value={input.status} onChange={event => setInput({ ...input, status: event.target.value as WorkStatus })}>{Object.entries(statuses).map(([value, title]) => <option key={value} value={value}>{title}</option>)}</select></label>
-    <label>个人评分（0–10）<input type="number" min={0} max={10} step={0.5} value={input.rating ?? ""} onChange={event => setInput({ ...input, rating: event.target.value === "" ? null : Number(event.target.value) })} /></label>
-    <label>个人备注<textarea rows={4} value={input.notes} onChange={event => setInput({ ...input, notes: event.target.value })} /></label>
-    <button className="gz-btn primary" disabled={busy || !input.title.trim()} type="submit"><Check size={18} />保存记录</button>
-  </form>;
-}
 function Sk({ className }: { className?: string }) {
   return <span className={`gz-skeleton ${className ?? ""}`} aria-hidden="true" />;
 }
@@ -339,7 +330,7 @@ export default function AndroidApp() {
   const setCornerRadius = usePreferences(state => state.setCornerRadius);
   const resetAppearance = usePreferences(state => state.resetAppearance);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [modal, setModal] = useState<{ kind: "edit"; work: WorkDetail } | { kind: "correct"; work: WorkDetail } | { kind: "match"; work: WorkDetail; mediaId: string } | { kind: "organize"; group: UnassignedMediaGroup; remaining?: UnassignedMediaGroup[] } | { kind: "remove-webdav"; source: VideoSource } | { kind: "webdav"; sourceId?: string } | null>(null);
+  const [modal, setModal] = useState<{ kind: "episodes"; work: WorkDetail } | { kind: "correct"; work: WorkDetail } | { kind: "match"; work: WorkDetail; mediaId: string } | { kind: "organize"; group: UnassignedMediaGroup; remaining?: UnassignedMediaGroup[] } | { kind: "remove-webdav"; source: VideoSource } | { kind: "webdav"; sourceId?: string } | null>(null);
   const [modalBusy, setModalBusy] = useState(false);
   const [browseStack, setBrowseStack] = useState<{ name: string; uri: string | null }[]>([]);
   const [browseFolders, setBrowseFolders] = useState<DocumentEntry[]>([]);
@@ -1088,7 +1079,6 @@ export default function AndroidApp() {
       </>}
       {workId && (detail ? (detail.type === "comic" || detail.type === "novel" ? <>
         <section className="gz-book-head">
-          {managedDetail && <button className="gz-iconbtn gz-book-edit" aria-label="个人记录" onClick={() => setModal({ kind: "edit", work: detail })}><Settings size={18} /></button>}
           <Poster work={detail} />
           <div className="gz-book-info">
             <h2>{detail.title}</h2>
@@ -1136,7 +1126,6 @@ export default function AndroidApp() {
               {detail.networkScore != null && <div className="gz-subject-stat"><span>{detail.networkRatingCount ? `${detail.networkRatingCount} 人评分:` : "评分:"}</span><strong className="gz-subject-score">{detail.networkScore.toFixed(1)}<em>{stars(detail.networkScore)}</em></strong></div>}
               <div className="gz-subject-stat"><span>资料状态:</span><strong>{metadataStates[detail.metadataStatus]}</strong></div>
               <button type="button" className="gz-status-pill" aria-haspopup="dialog" aria-expanded={statusSheet} disabled={busy} onClick={() => setStatusSheet(true)}><WorkStatusIcon id={detail.status} /><span>{statuses[detail.status]}</span></button>
-              {managedDetail && <button className="gz-btn" onClick={() => setModal({ kind: "edit", work: detail })}><Settings size={16} />个人记录</button>}
             </div>
           </div>
         </section>
@@ -1150,12 +1139,12 @@ export default function AndroidApp() {
             {detail.tags.length ? <div className="gz-tag-grid">{detail.tags.map(tag => <button type="button" className="gz-tag" key={tag} onClick={() => openTag(tag)}>{tag}</button>)}</div> : <p className="gz-meta">还没有标签。</p>}
           </Section>
           <Section title="个人备注"><p className="gz-description">{detail.notes || "还没有写下备注。"}</p></Section>
-          <Section title="资料管理"><div className="gz-actions"><button className="gz-btn" disabled={busy || !detail.metadata} onClick={() => void run(async () => { const result = await api.refreshWorkMetadata(detail.id); await reloadDetail(detail.id, result); await refresh(true); setToast("作品资料已刷新"); })}><RefreshCw size={16} />刷新已匹配资料</button><button className="gz-btn" disabled={busy || !detail.mediaFiles.some(file => file.mediaType === "video" && !file.missing)} onClick={() => { const file = detail.mediaFiles.find(item => item.mediaType === "video" && !item.missing); if (file) setModal({ kind: "match", work: detail, mediaId: file.id }); }}><Search size={16} />{detail.metadata ? "重新匹配资料" : "匹配作品资料"}</button><button className="gz-btn" disabled={busy || !detail.mediaFiles.some(file => file.mediaType === "video")} onClick={() => setModal({ kind: "correct", work: detail })}><Pencil size={16} />分集纠错</button></div><p className="gz-meta">{detail.metadata ? `资料来源 ${detail.metadata.provider}；刷新失败时保留已有资料。` : "当前为手动作品，尚未绑定资料来源。"}</p></Section>
+          <Section title="资料管理"><div className="gz-actions"><button className="gz-btn" disabled={busy || !detail.metadata} onClick={() => void run(async () => { const result = await api.refreshWorkMetadata(detail.id); await reloadDetail(detail.id, result); await refresh(true); setToast("作品资料已刷新"); })}><RefreshCw size={16} />刷新已匹配资料</button><button className="gz-btn" disabled={busy || !detail.mediaFiles.some(file => file.mediaType === "video" && !file.missing)} onClick={() => { const file = detail.mediaFiles.find(item => item.mediaType === "video" && !item.missing); if (file) setModal({ kind: "match", work: detail, mediaId: file.id }); }}><Search size={16} />{detail.metadata ? "重新匹配资料" : "匹配作品资料"}</button><button className="gz-btn" disabled={busy || !detail.mediaFiles.some(file => file.mediaType === "video")} onClick={() => setModal({ kind: "correct", work: detail })}><Pencil size={16} />分集纠错</button><button className="gz-btn" disabled={busy || !detail.mediaFiles.some(file => file.mediaType === "video")} onClick={() => setModal({ kind: "episodes", work: detail })}><Layers size={16} />批量匹配剧集</button></div><p className="gz-meta">{detail.metadata ? `资料来源 ${detail.metadata.provider}；刷新失败时保留已有资料。` : "当前为手动作品，尚未绑定资料来源。"}</p></Section>
         </>}
         {detailTab === "comments" && <Section title="吐槽" action={<span className="gz-meta">Bangumi 条目评论</span>}>
           <div className="gz-empty"><MessageCircle size={26} /><h2>吐槽数据待接入</h2><p>吐槽来自 Bangumi 条目评论，后端接口尚未接入；接入后会在这里按时间展示真实评论。</p></div>
         </Section>}
-        {detailTab === "episodes" && <Section title="剧集与播放来源"><EpisodeSources workId={detail.id} structure={structure} files={detail.mediaFiles} sources={sources} progress={progress} busy={busy} onPlay={id => void run(() => play(id))} /></Section>}
+        {detailTab === "episodes" && <Section title="剧集与播放来源" action={<button className="gz-link" disabled={busy || !detail.mediaFiles.some(file => file.mediaType === "video")} onClick={() => setModal({ kind: "episodes", work: detail })}>批量匹配剧集</button>}><EpisodeSources workId={detail.id} structure={structure} files={detail.mediaFiles} sources={sources} progress={progress} busy={busy} onPlay={id => void run(() => play(id))} /></Section>}
         {detailTab === "characters" && <Section title="角色" action={structure ? <span className="gz-meta">{structure.characters.length} 位</span> : undefined}>{structureState === "loading" ? <RowsSkeleton count={4} label="正在读取角色资料…" /> : !structure || structureState === "error" ? <p className="gz-panel gz-meta">暂无角色资料。匹配 Bangumi 资料后可显示。</p> : structure.characters.length ? <div className="gz-credit-list">{structure.characters.map(character => <div className="gz-credit" key={character.externalId}><span className="gz-credit-avatar">{character.name.slice(0, 1)}</span><span className="gz-credit-main"><strong>{character.name}</strong><span>{[character.role, character.actors.join(" / ")].filter(Boolean).join(" · ") || "角色"}</span></span></div>)}</div> : <p className="gz-panel gz-meta">没有角色资料。</p>}</Section>}
         {detailTab === "related" && <Section title="关联" action={structure ? <span className="gz-meta">{structure.seasons.length} 部</span> : undefined}>{structureState === "loading" ? <RowsSkeleton count={4} label="正在读取关联作品…" /> : !structure || structureState === "error" ? <p className="gz-panel gz-meta">暂无关联资料。</p> : structure.seasons.length ? <div className="gz-related-list">{structure.seasons.map(season => { const local = season.localWorkId; const body = <><span className="gz-credit-avatar">{season.title.slice(0, 1)}</span><span className="gz-related-main"><strong>{season.title}</strong><span>{[season.relation, season.seasonNumber ? `第 ${season.seasonNumber} 季` : null, season.current ? "当前作品" : null].filter(Boolean).join(" · ")}</span></span></>; return local ? <button type="button" className={`gz-related ${season.current ? "is-current" : ""}`} key={season.externalId} onClick={() => navigate(`detail/${encodeURIComponent(local)}`)}>{body}<ChevronRight size={16} /></button> : <div className={`gz-related ${season.current ? "is-current" : ""}`} key={season.externalId}>{body}</div>; })}</div> : <p className="gz-panel gz-meta">没有关联作品。</p>}</Section>}
         {detailTab === "staff" && <Section title="制作人员" action={structure ? <span className="gz-meta">{structure.staff.length} 位</span> : undefined}>{structureState === "loading" ? <RowsSkeleton count={5} label="正在读取制作人员…" /> : !structure || structureState === "error" ? <p className="gz-panel gz-meta">暂无制作人员资料。</p> : structure.staff.length ? <div className="gz-credit-list">{structure.staff.map(credit => <div className="gz-credit" key={credit.externalId}><span className="gz-credit-avatar">{credit.name.slice(0, 1)}</span><span className="gz-credit-main"><strong>{credit.name}</strong><span>{credit.role}</span></span></div>)}</div> : <p className="gz-panel gz-meta">没有制作人员资料。</p>}</Section>}
@@ -1211,10 +1200,10 @@ export default function AndroidApp() {
     {busy && <div className="gz-busy" role="status"><LoaderCircle size={18} />正在处理…</div>}
     {modal && <div className="gz-scrim" onClick={closeModal}><section ref={sheet} className="gz-sheet" role="dialog" aria-modal="true" aria-labelledby="gz-dialog-title" onClick={event => event.stopPropagation()}>
       <span className="gz-sheet-handle" {...modalDrag} aria-hidden="true" />
-      <div className="gz-section-head"><h2 id="gz-dialog-title">{modal.kind === "edit" ? "个人记录" : modal.kind === "webdav" ? modal.sourceId ? "WebDAV 连接凭据" : "添加 WebDAV 视频来源" : modal.kind === "remove-webdav" ? "移除 WebDAV 连接" : modal.kind === "correct" ? "分集纠错" : "整理作品"}</h2><button className="gz-iconbtn" aria-label="关闭" disabled={busy || modalBusy} onClick={closeModal}><X /></button></div>
+      <div className="gz-section-head"><h2 id="gz-dialog-title">{modal.kind === "episodes" ? "批量匹配剧集" : modal.kind === "webdav" ? modal.sourceId ? "WebDAV 连接凭据" : "添加 WebDAV 视频来源" : modal.kind === "remove-webdav" ? "移除 WebDAV 连接" : modal.kind === "correct" ? "分集纠错" : "整理作品"}</h2><button className="gz-iconbtn" aria-label="关闭" disabled={busy || modalBusy} onClick={closeModal}><X /></button></div>
       {error && <p className="gz-error" role="alert">{error}</p>}
-      {modal.kind === "edit" ? <WorkEditor work={modal.work} busy={busy} onSave={input => void run(async () => { await api.updateWork(modal.work.id, input); await reloadDetail(modal.work.id); await refresh(true); setModal(null); setToast("个人记录已保存"); })} />
-        : modal.kind === "webdav" ? <WebdavEditor sourceId={modal.sourceId} onBusyChange={setModalBusy} onSaved={async () => { await refresh(true); await imports.reload(); setModal(null); setToast(modal.sourceId ? "WebDAV 凭据已更新" : "WebDAV 已保存，首次扫描与识别在后台进行"); }} />
+      {modal.kind === "webdav" ? <WebdavEditor sourceId={modal.sourceId} onBusyChange={setModalBusy} onSaved={async () => { await refresh(true); await imports.reload(); setModal(null); setToast(modal.sourceId ? "WebDAV 凭据已更新" : "WebDAV 已保存，首次扫描与识别在后台进行"); }} />
+        : modal.kind === "episodes" ? <BatchEpisodeMatcher key={modal.work.id} work={modal.work} structure={structure} onBusyChange={setModalBusy} onSaved={async () => { await refresh(true); await reloadDetail(modal.work.id); setModal(null); setToast("剧集已批量匹配"); }} />
         : modal.kind === "correct" ? <CorrectionEditor work={modal.work} works={works} onBusyChange={setModalBusy} onSaved={async id => { await refresh(true); await reloadDetail(modal.work.id); setModal(null); if (id !== modal.work.id) navigate(`detail/${id}`); setToast("分集纠错已保存"); }} />
         : modal.kind === "remove-webdav" ? <><p>移除「{modal.source.label}」的连接？</p><p className="gz-meta">网盘文件保留。作品、评分和观看记录保留，来自此连接的文件将显示为不可用；其他来源仍可播放。</p><div className="gz-actions"><button className="gz-btn" disabled={busy} onClick={closeModal}>取消</button><button className="gz-btn primary" disabled={busy} onClick={() => void run(async () => { await remoteApi.remove(modal.source.id); await refresh(true); setModal(null); setToast("WebDAV 连接已移除，网盘文件保留"); })}>确认移除连接</button></div></>
         : <Organize key={modal.kind === "match" ? modal.mediaId : modal.group.key} mediaId={modal.kind === "match" ? modal.mediaId : modal.group.representative.id} initialTitle={modal.kind === "match" ? modal.work.title : modal.group.title} linkedWorkId={modal.kind === "match" ? modal.work.id : undefined} works={works} busy={busy} onRun={operation => void run(operation)} onSkip={modal.kind === "organize" && modal.remaining !== undefined ? () => { const [next, ...remaining] = modal.remaining ?? []; setModal(next ? { kind: "organize", group: next, remaining } : null); } : undefined} onDone={async id => { await refresh(true); if (modal.kind === "organize") { const [next, ...remaining] = modal.remaining ?? []; setModal(next ? { kind: "organize", group: next, remaining } : null); setToast(next ? "已整理，继续下一项" : "作品整理完成"); } else { const target = id ?? modal.work.id; if (routeRef.current === `detail/${target}`) await reloadDetail(target); setModal(null); navigate(`detail/${target}`); setToast("作品整理完成"); } }} />}
