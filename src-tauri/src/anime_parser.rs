@@ -326,7 +326,7 @@ pub fn is_multi_season_collection(value: &str) -> bool {
     cached_regex!(r"\d{1,2}\s*[-~～]\s*\d{1,2}\s*[季期]").is_match(value)
 }
 
-fn is_division_folder(value: &str) -> bool {
+pub(crate) fn is_division_folder(value: &str) -> bool {
     cached_regex!(r"(?i)^(?:season\s*\d{0,2}|s\d{1,2}|第[一二三四五六七八九十\d]+季|vol\.?\s*\d+|bd|dvd|disc\s*\d*|sp|ova|oad|特别篇|劇場版|剧场版|特典|video|videos|subtitle|subtitles|视频|字幕)$")
     .is_match(value.trim())
 }

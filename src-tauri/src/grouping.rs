@@ -21,7 +21,7 @@ pub struct MediaGroupContext {
 }
 
 fn normalized_key(path: &Path) -> String {
-    if path.to_string_lossy().starts_with("webdav:") {
+    if path.to_string_lossy().starts_with("webdav:") || path.to_string_lossy().starts_with("saf:") {
         return path.to_string_lossy().replace('/', "\\");
     }
     path.to_string_lossy().replace('/', "\\").to_lowercase()
@@ -43,15 +43,21 @@ fn season_marker(media: &MediaFile, root: Option<&Path>) -> (i64, Option<String>
     (season, special)
 }
 
-fn group_identity(media: &MediaFile, root_path: Option<&str>) -> GroupIdentity {
-    let mut decoded_media;
-    let media = if media.path.starts_with("webdav://") {
-        decoded_media = media.clone();
-        decoded_media.path = crate::remote_storage::display_path(&media.path);
-        &decoded_media
-    } else {
-        media
-    };
+pub(crate) async fn context_paths<'e, E: sqlx::Executor<'e, Database = sqlx::Sqlite>>(executor: E) -> AppResult<HashMap<String, String>> {
+    let rows: Vec<(String, String, String)> = sqlx::query_as("SELECT media_file_id,source_id,relative_path FROM android_documents")
+        .fetch_all(executor).await?;
+    Ok(rows.into_iter().map(|(id, source, relative)| (id, format!("saf://{source}/{relative}"))).collect())
+}
+
+fn context_media(media: &MediaFile, paths: &HashMap<String, String>) -> MediaFile {
+    let mut value = media.clone();
+    value.path = paths.get(&media.id).cloned().unwrap_or_else(|| crate::remote_storage::display_path(&media.path));
+    value
+}
+
+fn group_identity(media: &MediaFile, root_path: Option<&str>, paths: &HashMap<String, String>) -> GroupIdentity {
+    let contextual = context_media(media, paths);
+    let media = &contextual;
     let mut identity = container_identity(media, root_path);
     if media.media_type == "video" || is_subtitle_file(media) {
         let (season, special) = season_marker(media, root_path.map(Path::new));
@@ -68,6 +74,17 @@ fn group_identity(media: &MediaFile, root_path: Option<&str>) -> GroupIdentity {
 
 fn container_identity(media: &MediaFile, root_path: Option<&str>) -> GroupIdentity {
     let media_path = Path::new(&media.path);
+    if (media.path.starts_with("webdav://") || media.path.starts_with("saf://"))
+        && (media.media_type == "video" || is_subtitle_file(media)) {
+        if let Some(folder) = source_work_folder(media_path, root_path.map(Path::new)) {
+            if root_path.is_some_and(|root| Path::new(root) == folder) {
+                return direct_file_identity(media, folder);
+            }
+            return GroupIdentity { key: format!("folder:{}", normalized_key(folder)),
+                folder_path: Some(folder.to_string_lossy().to_string()),
+                title: folder.file_name().unwrap_or_default().to_string_lossy().to_string() };
+        }
+    }
     if let Some(root_path) = root_path {
         let root = Path::new(root_path);
         if let Ok(relative) = media_path.strip_prefix(root) {
@@ -124,6 +141,17 @@ fn container_identity(media: &MediaFile, root_path: Option<&str>) -> GroupIdenti
         };
     }
     file_identity(media)
+}
+
+// Virtual source roots can contain categories, years and many works. Use the nearest
+// work directory, looking past season/BD/subtitle folders; never the first category.
+fn source_work_folder<'a>(path: &'a Path, root: Option<&Path>) -> Option<&'a Path> {
+    for folder in path.ancestors().skip(1) {
+        if root.is_some_and(|root| folder == root) { return Some(folder); }
+        let name = folder.file_name()?.to_str()?;
+        if !crate::anime_parser::is_division_folder(name) && !crate::anime_parser::preprocess_folder_name(name).is_empty() { return Some(folder); }
+    }
+    None
 }
 
 fn is_subtitle_file(media: &MediaFile) -> bool {
@@ -222,8 +250,7 @@ fn choose_representative(files: &[MediaFile], media_type: &str) -> MediaFile {
     candidates.sort_by(|left, right| {
         let left_special = left.parsed_special_type.is_some();
         let right_special = right.parsed_special_type.is_some();
-        left_special
-            .cmp(&right_special)
+        left.missing.cmp(&right.missing).then_with(|| left_special.cmp(&right_special))
             .then_with(|| natord::compare_ignore_case(&left.file_name, &right.file_name))
     });
     candidates.first().copied().unwrap_or(&files[0]).clone()
@@ -282,7 +309,7 @@ async fn roots_by_id(pool: &SqlitePool) -> AppResult<HashMap<String, String>> {
 
 async fn unassigned_media(pool: &SqlitePool) -> AppResult<Vec<MediaFile>> {
     Ok(sqlx::query_as::<_, MediaFile>(&format!(
-        "SELECT {MEDIA_COLUMNS} FROM media_files WHERE work_id IS NULL ORDER BY path COLLATE NOCASE"
+        "SELECT {MEDIA_COLUMNS} FROM media_files WHERE work_id IS NULL AND NOT EXISTS(SELECT 1 FROM remote_sources s WHERE s.id=media_files.library_root_id AND s.removed_at IS NOT NULL) ORDER BY path COLLATE NOCASE"
     ))
     .fetch_all(pool)
     .await?)
@@ -296,6 +323,7 @@ async fn root_destinations(pool: &SqlitePool) -> AppResult<HashMap<String, Strin
 
 pub async fn list_unassigned_groups(pool: &SqlitePool) -> AppResult<Vec<UnassignedMediaGroup>> {
     let roots = roots_by_id(pool).await?;
+    let paths = context_paths(pool).await?;
     let destinations = root_destinations(pool).await?;
     let mut grouped: HashMap<GroupIdentity, Vec<MediaFile>> = HashMap::new();
     for media in unassigned_media(pool).await? {
@@ -305,7 +333,7 @@ pub async fn list_unassigned_groups(pool: &SqlitePool) -> AppResult<Vec<Unassign
             .and_then(|id| roots.get(id))
             .map(String::as_str);
         grouped
-            .entry(group_identity(&media, root_path))
+            .entry(group_identity(&media, root_path, &paths))
             .or_default()
             .push(media);
     }
@@ -349,6 +377,7 @@ pub async fn unassigned_group_context(
     media_file_id: &str,
 ) -> AppResult<Option<MediaGroupContext>> {
     let roots = roots_by_id(pool).await?;
+    let paths = context_paths(pool).await?;
     let files = unassigned_media(pool).await?;
     let Some(requested) = files.iter().find(|file| file.id == media_file_id) else {
         return Ok(None);
@@ -358,7 +387,7 @@ pub async fn unassigned_group_context(
         .as_ref()
         .and_then(|id| roots.get(id))
         .map(String::as_str);
-    let identity = group_identity(requested, root_path);
+    let identity = group_identity(requested, root_path, &paths);
     let members: Vec<_> = files
         .into_iter()
         .filter(|file| {
@@ -367,7 +396,7 @@ pub async fn unassigned_group_context(
                 .as_ref()
                 .and_then(|id| roots.get(id))
                 .map(String::as_str);
-            group_identity(file, file_root) == identity
+            group_identity(file, file_root, &paths) == identity
         })
         .collect();
     Ok(Some(MediaGroupContext {
@@ -395,13 +424,14 @@ pub async fn recognition_group_context(
         return unassigned_group_context(pool, media_file_id).await;
     };
     let roots = roots_by_id(pool).await?;
+    let paths = context_paths(pool).await?;
     let root_for = |file: &MediaFile| {
         file.library_root_id
             .as_ref()
             .and_then(|id| roots.get(id))
             .map(String::as_str)
     };
-    let identity = group_identity(&requested, root_for(&requested));
+    let identity = group_identity(&requested, root_for(&requested), &paths);
     let members = sqlx::query_as::<_, MediaFile>(&format!(
         "SELECT {MEDIA_COLUMNS} FROM media_files WHERE work_id = ? ORDER BY path COLLATE NOCASE"
     ))
@@ -409,7 +439,7 @@ pub async fn recognition_group_context(
     .fetch_all(pool)
     .await?
     .into_iter()
-    .filter(|file| group_identity(file, root_for(file)) == identity)
+    .filter(|file| group_identity(file, root_for(file), &paths) == identity)
     .collect();
     let members = preserve_linked_episodes(pool, &requested, members).await?;
     Ok(Some(MediaGroupContext {
@@ -512,6 +542,9 @@ impl RecognitionScopeContext {
 /// 媒体文件所属“作品文件夹”的原始路径（不含季度/特别篇后缀）。直接放在
 /// 扫描目录下的文件，其作品文件夹就是该扫描目录本身。
 fn work_folder_prefix(media: &MediaFile, root_path: Option<&str>) -> Option<String> {
+    if media.path.starts_with("webdav://") || media.path.starts_with("saf://") {
+        return source_work_folder(Path::new(&media.path), root_path.map(Path::new)).map(|path| path.to_string_lossy().to_string());
+    }
     let root = root_path?.trim_end_matches(['\\', '/']);
     if root.is_empty() {
         return None;
@@ -539,10 +572,11 @@ fn path_inside_folder(path: &str, folder: &str) -> bool {
     let Some(head) = path.get(..folder.len()) else {
         return false;
     };
-    if !head.eq_ignore_ascii_case(folder) {
+    let same = if folder.starts_with("webdav://") || folder.starts_with("saf://") { head == folder } else { head.eq_ignore_ascii_case(folder) };
+    if !same {
         return false;
     }
-    let separator = if folder.starts_with("webdav://") { '/' } else { '\\' };
+    let separator = if folder.starts_with("webdav://") || folder.starts_with("saf://") { '/' } else { '\\' };
     path.as_bytes().get(folder.len()).copied() == Some(separator as u8)
 }
 
@@ -569,6 +603,7 @@ pub async fn recognition_scope_context(
         return Ok(None);
     };
     let roots = roots_by_id(pool).await?;
+    let paths = context_paths(pool).await?;
     let root_for = |file: &MediaFile| {
         file.library_root_id
             .as_ref()
@@ -577,7 +612,8 @@ pub async fn recognition_scope_context(
     };
     let requested_root = root_for(&requested);
     let is_video_group = requested.media_type == "video" || is_subtitle_file(&requested);
-    let folder = work_folder_prefix(&requested, requested_root).filter(|_| is_video_group);
+    let contextual = context_media(&requested, &paths);
+    let folder = work_folder_prefix(&contextual, requested_root).filter(|_| is_video_group);
     // 文件直接放在一个还包含其他媒体源的合集目录下时，保持按文件名分组，
     // 避免一次把整个合集目录都拉进识别界面。
     let folder = folder.filter(|folder| {
@@ -605,6 +641,10 @@ pub async fn recognition_scope_context(
             .fetch_all(pool)
             .await?
         }
+        None if requested.path.starts_with("webdav://") || requested.path.starts_with("saf://") => {
+            sqlx::query_as::<_, MediaFile>(&format!("SELECT {MEDIA_COLUMNS} FROM media_files WHERE library_root_id = ? ORDER BY path COLLATE NOCASE"))
+                .bind(&requested.library_root_id).fetch_all(pool).await?
+        }
         None => {
             sqlx::query_as::<_, MediaFile>(&format!(
                 "SELECT {MEDIA_COLUMNS} FROM media_files WHERE path = ? COLLATE NOCASE OR (substr(path, 1, length(?)) = ? COLLATE NOCASE AND substr(path, length(?) + 1, 1) IN ('\\', '/')) ORDER BY path COLLATE NOCASE"
@@ -619,13 +659,13 @@ pub async fn recognition_scope_context(
     };
 
     let folder_path = Path::new(&folder);
-    let requested_marker = season_marker(&requested, Some(folder_path));
+    let requested_marker = season_marker(&contextual, Some(folder_path));
     let members: Vec<MediaFile> = rows
         .into_iter()
         .filter(|file| file.media_type == "video" || is_subtitle_file(file))
-        .filter(|file| path_inside_folder(&file.path, &folder))
+        .filter(|file| path_inside_folder(&context_media(file, &paths).path, &folder))
         .filter(|file| {
-            scope == GroupScope::Folder || season_marker(file, Some(folder_path)) == requested_marker
+            scope == GroupScope::Folder || season_marker(&context_media(file, &paths), Some(folder_path)) == requested_marker
         })
         .collect();
 
@@ -676,6 +716,57 @@ mod tests {
     use super::*;
     use crate::db;
     use chrono::Utc;
+
+    #[test]
+    fn virtual_folder_scopes_keep_case_sensitive_names_separate() {
+        assert!(!path_inside_folder("webdav://source/Work/01.mkv", "webdav://source/work"));
+        assert!(!path_inside_folder("saf://source/Work/01.mkv", "saf://source/work"));
+        assert!(path_inside_folder("webdav://source/Work/01.mkv", "webdav://source/Work"));
+        assert!(path_inside_folder(r"C:\Anime\Work\01.mkv", r"C:\anime\work"));
+    }
+
+    #[tokio::test]
+    async fn broad_webdav_root_separates_works_and_decodes_season_scope() {
+        let pool = db::test_pool().await.unwrap();
+        sqlx::query("INSERT INTO library_roots(id,path,kind,source_type,created_at,updated_at) VALUES('dav','webdav://dav','video','webdav','t','t')").execute(&pool).await.unwrap();
+        for (id, relative) in [
+            ("a1", "动画/2024/作品甲/第一季/01.mkv"),
+            ("a2", "动画/2024/作品甲/第一季/02.mkv"),
+            ("a3", "动画/2024/作品甲/第二季/01.mkv"),
+            ("b1", "动画/2024/作品乙/第一季/01.mkv"),
+        ] {
+            sqlx::query("INSERT INTO media_files(id,library_root_id,path,file_name,extension,media_type,created_at,updated_at) VALUES(?,'dav',?,?,'mkv','video','t','t')")
+                .bind(id).bind(crate::remote_storage::virtual_path("dav", relative)).bind(relative.rsplit('/').next().unwrap()).execute(&pool).await.unwrap();
+        }
+        let groups = list_unassigned_groups(&pool).await.unwrap();
+        assert_eq!(groups.len(), 3, "a category folder must not merge unrelated works");
+        let group = groups.iter().find(|group| group.title == "作品甲").unwrap();
+        assert_eq!(group.file_count, 2);
+        let season = recognition_scope_context(&pool, "a1", GroupScope::Season).await.unwrap().unwrap();
+        assert_eq!(season.title, "作品甲");
+        assert_eq!(season.members.iter().map(|file| file.id.as_str()).collect::<Vec<_>>(), vec!["a1", "a2"]);
+        let folder = recognition_scope_context(&pool, "a1", GroupScope::Folder).await.unwrap().unwrap();
+        assert_eq!(folder.members.len(), 3);
+        assert!(!folder.members.iter().any(|file| file.id == "b1"));
+    }
+
+    #[tokio::test]
+    async fn saf_groups_use_relative_directories_instead_of_opaque_document_ids() {
+        let pool = db::test_pool().await.unwrap();
+        sqlx::raw_sql("INSERT INTO library_roots(id,path,kind,created_at,updated_at) VALUES('saf','saf://saf','video','t','t'); INSERT INTO android_saf_sources(source_id,tree_uri,label) VALUES('saf','content://qa/tree/opaque','测试目录');").execute(&pool).await.unwrap();
+        for (id, relative) in [("a1", "动漫/作品甲/第二季/01.mkv"), ("a2", "动漫/作品甲/第二季/02.mkv"), ("b1", "动漫/作品乙/01.mkv")] {
+            sqlx::query("INSERT INTO media_files(id,library_root_id,path,file_name,extension,media_type,created_at,updated_at) VALUES(?,'saf',?,?,'mkv','video','t','t')")
+                .bind(id).bind(crate::android_sources::virtual_path("saf", id)).bind(relative.rsplit('/').next().unwrap()).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO android_documents(media_file_id,source_id,document_id,uri,parent_uri,relative_path) VALUES(?,'saf',?,'content://qa/file','content://qa/folder',?)")
+                .bind(id).bind(id).bind(relative).execute(&pool).await.unwrap();
+        }
+        let groups = list_unassigned_groups(&pool).await.unwrap();
+        assert_eq!(groups.len(), 2);
+        assert!(groups.iter().any(|group| group.title == "作品甲 · 第 2 季" && group.file_count == 2));
+        let scope = recognition_scope_context(&pool, "a1", GroupScope::Season).await.unwrap().unwrap();
+        assert_eq!(scope.title, "作品甲"); assert_eq!(scope.members.len(), 2);
+        assert!(!scope.members.iter().any(|file| file.id == "b1"));
+    }
 
     #[tokio::test]
     async fn existing_index_upgrades_and_directory_route_survives_rescan() {

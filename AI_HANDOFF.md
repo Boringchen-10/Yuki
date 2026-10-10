@@ -1,5 +1,21 @@
 # Codex 与 DeepSeek Harness 项目交接记录
 
+## 安卓目录整理 / 剧集来源 v0.6.0 本机验收（2026-10-10）
+
+- 基线 `365a7e3`。用户要求整个 WebDAV 根目录合理识别、可靠动漫连续归档、失败按目录逐项整理、官方分集下选择本地 / WebDAV 文件，以及移除 WebDAV 连接。已明确“删除”只移除应用连接，保留网盘文件。
+- 用户进一步明确所有优化必须在 OpenDesign 最新前端基础增量实施。最终 APK 包含工作树中的人物 / 关联 / 制作人员 / 评论 / 外观草稿与本轮改动，构建源 11 个相关文件已比对一致（`source-receipt.json`）；不要用排除设计草稿的旧界面快照代替。Git 只暂存本轮 App 入口差异，其他 Agent 尚未提交部分继续留在工作区。
+- 修复 WebDAV 第一层分类目录误当作品、确认使用编码路径丢失季度、SAF 不透明文档 ID 缺少目录上下文；虚拟来源采用最近作品目录 / 实际 relative_path，分组、确认、官方分集重建一致，保留大小写与 Windows 既有规则。混有不同命名作品的目录不自动整组归档。
+- 待整理提供来源 / 目录导航、逐组自动识别可靠动漫、真实进度与当前项结束后停止、逐项确认 / 跳过。整理复用 PC 的可用视频代表和电影 / TV 初选范围，确认前预览实际选中文件。详情剧集按官方分集组织并选择本地 / WebDAV 或版本，未关联文件单列，空来源有提示。
+- 新迁移 `0030_webdav_source_removal.sql` 记录连接移除时间；活动扫描拒绝移除，移除后凭据删除、索引不可用，作品 / 评分 / 笔记 / 播放位置 / 缓存保留，服务端不发送 DELETE。旧迁移不改。先前错误归档仍需人工重新匹配 / 分集纠错，不批量猜测回滚。
+- 本机预览同步 package / Cargo / lock / Tauri 为 **0.6.0**，versionCode **6000**，阻止旧 5002 包直接覆盖含新迁移的数据库；本轮不创建公开 Release / 标签 / 推送。公开 v0.5.2 APK 仍为 SHA256 `0ec1456354f755d827e5acb27e28c6bb703d950623d22827e9574f6f19c4af05`，未改写。
+- 最终普通包 `D:/DevTools/Android/Build/previews/recognition-20261010/Genzo_0.6.0_organize-preview_arm64-v8a.apk`，**74,002,649 字节**，SHA256 **654a6a888b19682d416230c5b98086b9265173c3dfa3cd7888edbd2951851903**。包名 `com.genzo.android`、arm64、min26 / target36、Release 非 debuggable，固定证书 SHA256 `cee90e5f49edc18217ec2d1f7cdf360f50b61af1e99e4eefdb0837b549c13cdb`；签名 / 16KiB ZIP / 包内无测试库和书籍检查通过。前端 `index-BElKBMEq.js`，SHA256 `2fc436841669e984c2c8b0985dfa5f000395654de571eeb66a87070aeb9596b7`，实际 APK 内库与最终构建库相符，包含 OpenDesign 和整理代码。
+- 实体机 `3B164M00Z0500000` 普通包与原 `com.genzo.android.readerqa` 均 install -r 更新，未卸载 / 清库 / 播种 / 复制数据库或授权。普通包 firstInstallTime 仍为 2026-10-08，ceDataInode 178849 / deDataInode 164486 保留，冷启动无 AndroidRuntime 错误；原调试包仍为 8 部作品 / 1 个连接。没有触发用户的批量识别或删除连接；最后打开原调试包真实待整理（125 组）。
+- 原调试包有三个已有预览进程共用 `D:/DevTools/Android/Build/frontend-preview`，旧资源曾覆盖新包界面。没有擅自关闭这些进程；已将共用资源从完整当前工作树重新构建，并启动 Vite watch（本次会话 77069），ADB 截图 `phone-final-updated.png` 确认新版目录 / 连续识别入口可见。重复预览进程留待协作方协调；生产包调试仍关闭。前端预览只更新 React / CSS，原生仍需 APK。
+- v0.6.0 最终 TypeScript / 98 前端测试、Rust 326 通过 / 18 依赖外网或真实媒体的忽略；含存量 v29 升级、移除保留个人记录、大小写隔离、SAF + WebDAV 正确季度分集。UI 360 / 412 / 915 / 1024 × 深浅主题通过。OpenDesign 角色 / 关联 / 制作人员既有只读脚本通过。
+- 完整 OpenDesign 界面专用 `com.genzo.android.organizeqa` 使用自建 WebDAV，真实扫描 / 范围 / 连续人工跳过 / 真 Bangumi 自动识别 / 官方剧集来源筛选 / 移除通过。3 组中归档 2、未知 1 保留；芙莉莲 2 个文件、迷宫饭 1 个文件正确关联官方分集；服务只有 PROPFIND，无视频 GET / 远程 DELETE。证据 `D:/DevTools/Android/Build/qa/webdav-organize-1791620592424/`，无普通 / 原调试库测试数据覆盖。
+- 最后工具链生成未使用 rlib / staticlib 位码时出现 LLVM inline assembly 转义错误；`build-reader-qa.ps1` 改用 `cargo rustc --crate-type cdylib`，只生成安卓实际使用的共享库，构建恢复且包体减少，Windows Cargo 库类型不变。174MB 诊断已压缩为 `bitcode-error-summary.txt`。调试 WebView fetch 包内 JS 与 CDP 截图失败，改用 APK 内嵌资源校验及 ADB 截图，不把失败当成功。
+- 详细范围与复跑：`docs/android/WEBDAV_ORGANIZE.md`。构建 / 结果 / 包体证明在 `D:/DevTools/Android/Build/qa/recognition-20261010/`。不携带真实数据分发，不创建新的公开发布。
+
 ## v0.5.2 正式打包供用户使用（2026-10-09）
 
 - 用户要求「将目前的程序打包成 v0.5.2 版本供用户使用」。此前 `D:/DevTools/Android/Build/releases/v0.5.2/` 已有的 APK 是 10:52 的旧构建，早于崩溃修复与后续轮次；本轮用当前工作树（含崩溃修复与全部未提交验收轮次）重新走 `scripts/build-android-release.ps1` 打包。

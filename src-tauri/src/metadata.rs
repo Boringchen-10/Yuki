@@ -374,6 +374,9 @@ pub async fn recognize_media(
         return Err(AppError::Validation("文件已缺失，无法识别".to_string()));
     }
     let group = grouping::recognition_group_context(&state.pool, media_file_id).await?;
+    let paths = grouping::context_paths(&state.pool).await?;
+    let mut media = media;
+    if let Some(path) = paths.get(&media.id) { media.path = path.clone(); }
     let library_root_path: Option<String> = match &media.library_root_id {
         Some(root_id) => {
             sqlx::query_scalar("SELECT path FROM library_roots WHERE id = ?")
@@ -385,10 +388,11 @@ pub async fn recognize_media(
     };
     let library_root = library_root_path.as_deref().map(Path::new);
     let group_title = group.as_ref().map(|context| context.title.as_str());
-    let members = group
+    let mut members = group
         .as_ref()
         .map(|context| context.members.clone())
         .unwrap_or_else(|| vec![media.clone()]);
+    for file in &mut members { if let Some(path) = paths.get(&file.id) { file.path = path.clone(); } }
     let mut parsed = group_query_parse(group_title, &members, &media, library_root);
     if let Some(query) = manual_query.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
         parsed = parse_folder_name(query);
@@ -491,12 +495,18 @@ pub async fn recognize_media(
         .iter()
         .filter(|file| file.media_type == "video")
         .map(|file| {
-            parse_media_path(&file.file_name, Path::new(&file.path), library_root).special_type
+            parse_media_path(&file.file_name, Path::new(&crate::remote_storage::display_path(&file.path)), library_root).special_type
         })
         .collect::<HashSet<_>>()
         .len()
         > 1;
-    let ambiguous = mixed_types
+    // A shared directory can contain unrelated named videos. A strong match for
+    // the representative must not automatically claim all of those files.
+    let mixed_titles = members.iter().filter(|file| file.media_type == "video")
+        .filter_map(|file| crate::anime_parser::parse_file_name(&file.file_name).title)
+        .filter(|title| has_descriptive_title(Some(title)))
+        .map(|title| crate::anime_parser::normalize_title(&title)).collect::<HashSet<_>>().len() > 1;
+    let ambiguous = mixed_types || mixed_titles
         || group_title.is_some_and(crate::anime_parser::is_multi_season_collection)
         || scored.get(1).is_some_and(|second| {
             scored

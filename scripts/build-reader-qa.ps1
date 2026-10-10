@@ -78,7 +78,9 @@ try {
 } finally { Pop-Location }
 Push-Location $taskCopy
 try {
-    $taskCargoArgs = @('build', '--manifest-path', 'src-tauri/Cargo.toml', '--lib', '--target', $taskRustTarget, '--features', 'custom-protocol', '--locked')
+    # Android packages only the shared library; unused rlib/staticlib bitcode can
+    # trigger an LLVM inline-assembly escaping error with embedded frontend assets.
+    $taskCargoArgs = @('rustc', '--crate-type', 'cdylib', '--manifest-path', 'src-tauri/Cargo.toml', '--lib', '--target', $taskRustTarget, '--features', 'custom-protocol', '--locked')
     if ($Optimize) { $taskCargoArgs += '--release' }
     & cargo @taskCargoArgs
     if ($LASTEXITCODE -ne 0) { throw 'Reader Android Rust build failed' }

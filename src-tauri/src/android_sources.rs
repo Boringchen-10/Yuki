@@ -63,7 +63,7 @@ pub async fn directory(uri: &str) -> AppResult<Directory> {
 }
 
 pub async fn list(pool: &SqlitePool) -> AppResult<Vec<VideoSource>> {
-    let mut sources: Vec<VideoSource> = sqlx::query_as("SELECT r.id,CASE WHEN s.source_id IS NOT NULL THEN 'saf' ELSE 'webdav' END kind,COALESCE(s.label,w.name) label,r.enabled,CASE r.availability WHEN 'online' THEN 'available' WHEN 'unknown' THEN 'checking' WHEN 'permission_denied' THEN 'permission_denied' WHEN 'credential_invalid' THEN 'credential_invalid' WHEN 'connection_failed' THEN 'connection_failed' WHEN 'not_authorized' THEN 'not_authorized' ELSE 'offline' END state,r.last_scanned_at FROM library_roots r LEFT JOIN android_saf_sources s ON s.source_id=r.id LEFT JOIN remote_sources w ON w.id=r.id WHERE r.kind='video' AND (s.source_id IS NOT NULL OR w.id IS NOT NULL) ORDER BY label")
+    let mut sources: Vec<VideoSource> = sqlx::query_as("SELECT r.id,CASE WHEN s.source_id IS NOT NULL THEN 'saf' ELSE 'webdav' END kind,COALESCE(s.label,w.name) label,r.enabled,CASE r.availability WHEN 'online' THEN 'available' WHEN 'unknown' THEN 'checking' WHEN 'permission_denied' THEN 'permission_denied' WHEN 'credential_invalid' THEN 'credential_invalid' WHEN 'connection_failed' THEN 'connection_failed' WHEN 'not_authorized' THEN 'not_authorized' ELSE 'offline' END state,r.last_scanned_at FROM library_roots r LEFT JOIN android_saf_sources s ON s.source_id=r.id LEFT JOIN remote_sources w ON w.id=r.id AND w.removed_at IS NULL WHERE r.kind='video' AND (s.source_id IS NOT NULL OR w.id IS NOT NULL) ORDER BY label")
         .fetch_all(pool).await?;
     for source in &mut sources {
         source.error = match source.state.as_str() {

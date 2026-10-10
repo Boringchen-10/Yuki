@@ -116,12 +116,14 @@ pub async fn rebuild_episode_links(
         .bind(work_id)
         .execute(&mut **transaction)
         .await?;
-    let files = sqlx::query_as::<_, MediaFile>(&format!(
+    let mut files = sqlx::query_as::<_, MediaFile>(&format!(
         "SELECT {MEDIA_COLUMNS} FROM media_files WHERE work_id = ?"
     ))
     .bind(work_id)
     .fetch_all(&mut **transaction)
     .await?;
+    let paths = crate::grouping::context_paths(&mut **transaction).await?;
+    for file in &mut files { if let Some(path) = paths.get(&file.id) { file.path = path.clone(); } }
     let manual_media_ids = sqlx::query_scalar::<_, String>(
         "SELECT media_file_id FROM media_episode_links WHERE work_id = ? AND match_method = 'manual'",
     )
@@ -402,7 +404,10 @@ pub async fn work_structure(pool: &SqlitePool, work_id: &str) -> AppResult<Anime
     .bind(work_id)
     .fetch_all(pool)
     .await?;
-    let mixed = has_mixed_installments(&media);
+    let paths = crate::grouping::context_paths(pool).await?;
+    let mut contextual = media.clone();
+    for file in &mut contextual { if let Some(path) = paths.get(&file.id) { file.path = path.clone(); } }
+    let mixed = has_mixed_installments(&contextual);
     if mixed {
         warnings.push("同一作品里混有不同季度或特别篇：只有与本作品季度一致的文件会自动分集，其余请在文件操作中选择“识别到其他作品”。".to_string());
     }
@@ -1028,4 +1033,27 @@ mod tests {
             .fetch_one(&pool).await.expect("link");
         assert_eq!(link, ("ep2".to_string(), "manual".to_string()));
     }
+    #[tokio::test]
+    async fn saf_and_webdav_versions_share_only_the_correct_official_season() {
+        let pool = crate::db::test_pool().await.unwrap();
+        sqlx::raw_sql("INSERT INTO works(id,title,type,created_at,updated_at) VALUES('work','动画','video','t','t'); INSERT INTO library_roots(id,path,kind,created_at,updated_at) VALUES('saf','saf://saf','video','t','t'),('dav','webdav://dav','video','t','t'); INSERT INTO android_saf_sources(source_id,tree_uri,label) VALUES('saf','content://qa/tree','本地'); INSERT INTO anime_episodes(work_id,provider,external_id,episode_number,sort_number,episode_type,title,fetched_at) VALUES('work','bangumi','ep1',1,1,0,'第一集','t');").execute(&pool).await.unwrap();
+        let mut metadata = crate::explore::lookup_title("葬送的芙莉莲").unwrap().remove(0); metadata.season = Some(2);
+        sqlx::query("INSERT INTO metadata_provider_records(work_id,provider,external_id,title,confidence,response_json,fetched_at) VALUES('work','bangumi',?,'动画',1,?,'t')")
+            .bind(&metadata.external_id).bind(serde_json::to_string(&metadata).unwrap()).execute(&pool).await.unwrap();
+        for (id, root, path) in [
+            ("local", "saf", crate::android_sources::virtual_path("saf", "opaque-local")),
+            ("other-season", "saf", crate::android_sources::virtual_path("saf", "opaque-other")),
+            ("remote", "dav", crate::remote_storage::virtual_path("dav", "动漫/作品/第二季/01.mkv")),
+        ] {
+            sqlx::query("INSERT INTO media_files(id,work_id,library_root_id,path,file_name,extension,media_type,created_at,updated_at) VALUES(?,'work',?,?,'01.mkv','mkv','video','t','t')")
+                .bind(id).bind(root).bind(path).execute(&pool).await.unwrap();
+        }
+        for (id, relative) in [("local", "动漫/作品/第二季/01.mkv"), ("other-season", "动漫/作品/第一季/01.mkv")] {
+            sqlx::query("INSERT INTO android_documents(media_file_id,source_id,document_id,uri,parent_uri,relative_path) VALUES(?,'saf',?,'content://qa/file','content://qa/parent',?)").bind(id).bind(id).bind(relative).execute(&pool).await.unwrap();
+        }
+        let mut transaction = pool.begin().await.unwrap(); rebuild_episode_links(&mut transaction, "work").await.unwrap(); transaction.commit().await.unwrap();
+        let links: Vec<(String, String)> = sqlx::query_as("SELECT media_file_id,episode_external_id FROM media_episode_links ORDER BY media_file_id").fetch_all(&pool).await.unwrap();
+        assert_eq!(links, vec![("local".into(), "ep1".into()), ("remote".into(), "ep1".into())]);
+    }
+
 }

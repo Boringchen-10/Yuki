@@ -1,0 +1,5 @@
+.android-app .gz-breadcrumb > span { display: inline-flex; align-items: center; min-width: 0; }
+.android-app .gz-file-choice { display: flex; gap: 10px; align-items: flex-start; margin: 10px 0; }
+.android-app .gz-file-choice input { flex: none; width: 22px; min-height: 22px; }
+.android-app .gz-file-name { overflow-wrap: anywhere; }
+.android-app .gz-episode select { width: 100%; min-height: 44px; }

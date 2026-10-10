@@ -33,7 +33,7 @@ pub struct ConnectionInput {
 }
 
 pub async fn source(pool: &SqlitePool, id: &str) -> AppResult<RemoteSource> {
-    sqlx::query_as("SELECT * FROM remote_sources WHERE id = ?")
+    sqlx::query_as("SELECT * FROM remote_sources WHERE id = ? AND removed_at IS NULL")
         .bind(id)
         .fetch_optional(pool)
         .await?
@@ -46,9 +46,30 @@ pub fn client(source: &RemoteSource) -> AppResult<DavClient> {
 
 #[tauri::command]
 pub async fn list_remote_sources(state: State<'_, AppState>) -> AppResult<Vec<RemoteSource>> {
-    Ok(sqlx::query_as("SELECT * FROM remote_sources ORDER BY name")
+    Ok(sqlx::query_as("SELECT * FROM remote_sources WHERE removed_at IS NULL ORDER BY name")
         .fetch_all(&state.pool)
         .await?)
+}
+
+pub(crate) async fn remove_source_in_pool(pool: &SqlitePool, id: &str) -> AppResult<String> {
+    let (_guard, mut transaction) = crate::db::begin_write(pool).await?;
+    let credential: String = sqlx::query_scalar("SELECT credential_id FROM remote_sources WHERE id=? AND removed_at IS NULL")
+        .bind(id).fetch_optional(&mut *transaction).await?.ok_or_else(|| AppError::NotFound("WebDAV 连接不存在或已移除".into()))?;
+    if crate::scan_tasks::source_active(id) { return Err(AppError::Validation("请先结束该来源的扫描，再移除连接".into())); }
+    let now = Utc::now().to_rfc3339();
+    sqlx::query("UPDATE remote_sources SET removed_at=? WHERE id=?").bind(&now).bind(id).execute(&mut *transaction).await?;
+    sqlx::query("UPDATE library_roots SET enabled=0,availability='offline',updated_at=? WHERE id=?").bind(&now).bind(id).execute(&mut *transaction).await?;
+    sqlx::query("UPDATE media_files SET missing=1 WHERE library_root_id=?").bind(id).execute(&mut *transaction).await?;
+    transaction.commit().await?;
+    Ok(credential)
+}
+
+#[tauri::command]
+pub async fn remove_webdav_source(id: String, state: State<'_, AppState>) -> AppResult<()> {
+    let credential = remove_source_in_pool(&state.pool, &id).await?;
+    credentials::delete(&credential);
+    crate::android_events::source_removed(&id);
+    Ok(())
 }
 
 #[tauri::command]
@@ -168,6 +189,31 @@ pub fn serialize_display_path<S: serde::Serializer>(
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
     serializer.serialize_str(&display_path(path))
+}
+
+#[cfg(test)]
+mod removal_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn existing_database_upgrade_and_removal_preserve_personal_records() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+        let mut previous = sqlx::migrate!("./migrations");
+        previous.migrations = std::borrow::Cow::Owned(previous.migrations.into_owned().into_iter().filter(|migration| migration.version <= 29).collect());
+        previous.run(&pool).await.unwrap();
+        sqlx::raw_sql("INSERT INTO works(id,title,type,status,favorite,rating,notes,created_at,updated_at) VALUES('w','作品','video','completed',1,8,'保留笔记','t','t'); INSERT INTO library_roots(id,path,kind,source_type,created_at,updated_at) VALUES('r','webdav://r','video','webdav','t','t'); INSERT INTO remote_sources(id,name,endpoint,directory,credential_id) VALUES('r','测试连接','http://127.0.0.1:1','/','qa-credential'); INSERT INTO media_files(id,work_id,library_root_id,path,file_name,extension,media_type,created_at,updated_at) VALUES('m','w','r','webdav://r/30312e6d6b76','01.mkv','mkv','video','t','t'),('pending',NULL,'r','webdav://r/30322e6d6b76','02.mkv','mkv','video','t','t'); INSERT INTO remote_files(media_file_id,source_id,href) VALUES('m','r','/01.mkv'); INSERT INTO remote_cache(media_file_id,revision,size,completed,accessed_at) VALUES('m','v1',12,1,'t'); INSERT INTO playback_progress(media_file_id,position_ms,duration_ms,updated_at) VALUES('m',1234,10000,'t');").execute(&pool).await.unwrap();
+        crate::migration_compat::run(&pool).await.unwrap();
+        assert!(source(&pool, "r").await.is_ok());
+        assert_eq!(remove_source_in_pool(&pool, "r").await.unwrap(), "qa-credential");
+        assert!(source(&pool, "r").await.is_err()); assert!(crate::android_sources::list(&pool).await.unwrap().is_empty());
+        assert!(crate::grouping::list_unassigned_groups(&pool).await.unwrap().is_empty());
+        let personal: (String, bool, f64, String) = sqlx::query_as("SELECT status,favorite,rating,notes FROM works WHERE id='w'").fetch_one(&pool).await.unwrap();
+        assert_eq!(personal, ("completed".into(), true, 8.0, "保留笔记".into()));
+        assert_eq!(sqlx::query_scalar::<_, i64>("SELECT position_ms FROM playback_progress WHERE media_file_id='m'").fetch_one(&pool).await.unwrap(), 1234);
+        assert_eq!(sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM media_files WHERE library_root_id='r' AND missing=1").fetch_one(&pool).await.unwrap(), 2);
+        assert_eq!(sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM remote_cache").fetch_one(&pool).await.unwrap(), 1);
+        assert!(remove_source_in_pool(&pool, "r").await.is_err());
+    }
 }
 
 #[tauri::command]

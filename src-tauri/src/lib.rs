@@ -160,6 +160,7 @@ pub fn run() {
             library_maintenance::preview_media_relocation,
             library_maintenance::apply_media_relocation,
             remote_storage::list_remote_sources,
+            remote_storage::remove_webdav_source,
             remote_storage::browse_webdav,
             remote_storage::add_webdav_source,
             remote_storage::update_webdav_credentials,

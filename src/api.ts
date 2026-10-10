@@ -93,6 +93,7 @@ export const scanTaskApi = {
 };
 
 export const remoteApi = {
+  remove: (id: string) => call<void>("remove_webdav_source", { id }),
   listSources: () => call<RemoteSource[]>("list_remote_sources"),
   browse: (input: WebdavConnection) => call<RemoteEntry[]>("browse_webdav", { input }),
   add: (input: WebdavConnection) => call<string>("add_webdav_source", { input }),

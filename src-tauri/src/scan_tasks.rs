@@ -43,6 +43,12 @@ fn registry() -> &'static Registry {
     static TASKS: OnceLock<Registry> = OnceLock::new();
     TASKS.get_or_init(|| Mutex::new(HashMap::new()))
 }
+pub(crate) fn source_active(root: &str) -> bool {
+    registry().lock().unwrap().values().any(|task| {
+        let state = task.state.lock().unwrap();
+        state.root_id == root && matches!(state.stage.as_str(), "queued" | "scanning" | "indexing" | "committing")
+    })
+}
 impl TaskHandle {
     pub fn update(&self, action: impl FnOnce(&mut ScanTask)) {
         let mut state = self.state.lock().unwrap();

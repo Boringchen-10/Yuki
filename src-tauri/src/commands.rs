@@ -549,7 +549,7 @@ pub async fn import_cover(
 #[tauri::command]
 pub async fn list_library_roots(state: State<'_, AppState>) -> AppResult<Vec<LibraryRoot>> {
     Ok(sqlx::query_as::<_, LibraryRoot>(
-        "SELECT id, path, kind, destination, enabled, last_scanned_at, created_at, updated_at, source_type, availability, (SELECT name FROM remote_sources WHERE remote_sources.id=library_roots.id) AS display_name FROM library_roots ORDER BY created_at DESC",
+        "SELECT id, path, kind, destination, enabled, last_scanned_at, created_at, updated_at, source_type, availability, (SELECT name FROM remote_sources WHERE remote_sources.id=library_roots.id) AS display_name FROM library_roots WHERE NOT EXISTS(SELECT 1 FROM remote_sources s WHERE s.id=library_roots.id AND s.removed_at IS NOT NULL) ORDER BY created_at DESC",
     )
     .fetch_all(&state.pool)
     .await?)
@@ -617,7 +617,7 @@ pub async fn update_library_root(
         return Err(AppError::Validation("无效的目录类型".to_string()));
     }
     let result =
-        sqlx::query("UPDATE library_roots SET kind = ?, enabled = ?, updated_at = ? WHERE id = ?")
+        sqlx::query("UPDATE library_roots SET kind = ?, enabled = ?, updated_at = ? WHERE id = ? AND NOT EXISTS(SELECT 1 FROM remote_sources s WHERE s.id=library_roots.id AND s.removed_at IS NOT NULL)")
             .bind(kind)
             .bind(enabled)
             .bind(Utc::now().to_rfc3339())
