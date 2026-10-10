@@ -130,3 +130,28 @@ pub fn read(_: &str) -> AppResult<Credentials> {
 }
 #[cfg(not(any(windows, target_os = "android")))]
 pub fn delete(_: &str) {}
+pub fn normalize_tmdb_token(value: &str) -> AppResult<String> {
+    let value = value.trim();
+    let value = if value.get(..7).is_some_and(|prefix| prefix.eq_ignore_ascii_case("bearer ")) {
+        value[7..].trim()
+    } else { value };
+    if value.len() > 8192 || value.bytes().any(|byte| !byte.is_ascii_graphic()) {
+        return Err(AppError::Validation("TMDB Token 格式无效：请完整粘贴 Read Access Token，勿含空格或换行".into()));
+    }
+    Ok(value.into())
+}
+
+#[cfg(test)]
+mod token_tests {
+    use super::*;
+    #[test]
+    fn long_read_token_and_optional_bearer_prefix_are_preserved() {
+        let token = format!("eyJ{}", "x".repeat(2045));
+        assert_eq!(normalize_tmdb_token(&format!("  Bearer {token}\n")).unwrap(), token);
+        assert_eq!(normalize_tmdb_token(&"x".repeat(8192)).unwrap().len(), 8192);
+        assert_eq!(normalize_tmdb_token("  ").unwrap(), "");
+        for invalid in ["x".repeat(8193), "eyJ\ncut".into(), "eyJ cut".into(), "中文".into()] {
+            assert!(normalize_tmdb_token(&invalid).is_err());
+        }
+    }
+}

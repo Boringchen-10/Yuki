@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Check, Eye, EyeOff, Trash2 } from "lucide-react";
 import { api } from "../api";
+import { invoke } from "@tauri-apps/api/core";
 import type { MetadataProviderStatus } from "../types";
 import { androidSession } from "./sessionCache";
 
@@ -22,9 +23,18 @@ export default function MetadataSettings() {
     try {
       await api.setSetting("metadata.tmdb_read_token", value);
       setToken(""); setVisible(false);
-      setProviders(await androidSession.load("provider-status", () => api.metadataProviderStatuses(), true));
       setMessage(value ? "TMDB 配置已保存" : "TMDB 配置已清除");
+      androidSession.invalidate("provider-status");
+      androidSession.invalidate("episode-artwork:");
+      try { setProviders(await androidSession.load("provider-status", () => api.metadataProviderStatuses(), true)); }
+      catch { setError("配置已保存，状态暂时无法更新，请稍后重新打开此页面。"); }
     } catch (reason) { setError(String(reason)); }
+    finally { setBusy(false); }
+  }
+  async function test() {
+    setBusy(true); setError(""); setMessage("");
+    try { await invoke("test_tmdb_connection"); setMessage("连接成功，已保存的 TMDB Token 可以使用"); }
+    catch (reason) { setError(String(reason)); }
     finally { setBusy(false); }
   }
   return <form onSubmit={event => { event.preventDefault(); void save(token.trim()); }}>
@@ -32,8 +42,10 @@ export default function MetadataSettings() {
     {message && <p role="status">{message}</p>}
     {providers.map(provider => <div className="gz-correction-row" key={provider.key}><strong>{provider.label}</strong><p className="gz-meta">{provider.requiresCredential ? provider.configured ? "已配置" : "未配置" : provider.available ? "可用" : "暂不可用"}</p>{provider.message && <p className="gz-meta">{provider.message}</p>}</div>)}
     <fieldset className="gz-form-fields" disabled={busy}>
-      <label>TMDB API Read Access Token<div className="gz-input-action"><input autoComplete="off" type={visible ? "text" : "password"} maxLength={512} value={token} onChange={event => setToken(event.target.value)} /><button type="button" className="gz-iconbtn" aria-label={visible ? "隐藏 Token" : "显示 Token"} onClick={() => setVisible(value => !value)}>{visible ? <EyeOff size={18} /> : <Eye size={18} />}</button></div></label>
+      <label>TMDB API Read Access Token<div className="gz-input-action"><input autoComplete="off" type={visible ? "text" : "password"} maxLength={8192} value={token} onChange={event => setToken(event.target.value)} /><button type="button" className="gz-iconbtn" aria-label={visible ? "隐藏 Token" : "显示 Token"} onClick={() => setVisible(value => !value)}>{visible ? <EyeOff size={18} /> : <Eye size={18} />}</button></div></label>
+      <p className="gz-meta">粘贴完整的较长 Token。保存后可单独测试连接；分集页面会自动补充能够核实对应的 TMDB 剧照。</p>
       <div className="gz-actions"><button className="gz-btn primary" disabled={!token.trim()} type="submit"><Check size={18} />保存 Token</button><button className="gz-btn" type="button" onClick={() => void save("")}><Trash2 size={18} />清除 Token</button></div>
+      <button className="gz-btn" type="button" onClick={() => void test()}>测试已保存的连接</button>
     </fieldset>
   </form>;
 }

@@ -2,6 +2,7 @@ mod anime_details;
 mod android_probe;
 mod android_bridge;
 mod android_sources;
+mod source_imports;
 mod android_player;
 mod android_events;
 mod anime_parser;
@@ -90,6 +91,11 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::test_tmdb_connection,
+            source_imports::start_source_import,
+            source_imports::list_source_imports,
+            source_imports::cancel_source_import,
+            source_imports::resume_source_import,
             android_probe::android_probe,
             android_bridge::android_native,
             android_sources::authorize_video_source,

@@ -358,6 +358,21 @@ pub async fn recognize_media(
     media_file_id: &str,
     manual_query: Option<String>,
 ) -> AppResult<RecognitionResult> {
+    recognize_media_internal(state, media_file_id, manual_query, None).await
+}
+
+pub(crate) type PendingEnrichment = (String, WorkMetadata);
+
+pub(crate) async fn recognize_media_fast(state: &AppState, media_file_id: &str) -> AppResult<(RecognitionResult, Option<PendingEnrichment>)> {
+    let mut pending = None;
+    let result = recognize_media_internal(state, media_file_id, None, Some(&mut pending)).await?;
+    Ok((result, pending))
+}
+
+async fn recognize_media_internal(
+    state: &AppState, media_file_id: &str, manual_query: Option<String>,
+    deferred: Option<&mut Option<PendingEnrichment>>,
+) -> AppResult<RecognitionResult> {
     let media = sqlx::query_as::<_, MediaFile>(&format!(
         "SELECT {MEDIA_COLUMNS} FROM media_files WHERE id = ?"
     ))
@@ -521,7 +536,14 @@ pub async fn recognize_media(
             .is_some_and(|candidate| candidate.confidence >= AUTO_MATCH_THRESHOLD)
     {
         let candidate_id = scored[0].id.clone();
-        confirm_candidate(state, media_file_id, &candidate_id).await?;
+        if let Some(deferred) = deferred {
+            let json: String = sqlx::query_scalar("SELECT metadata_json FROM match_candidates WHERE id=? AND media_file_id=?")
+                .bind(&candidate_id).bind(media_file_id).fetch_one(&state.pool).await?;
+            let work_id = confirm_candidate_internal(state, media_file_id, &candidate_id, false, None, grouping::GroupScope::Season, true).await?;
+            *deferred = Some((work_id, serde_json::from_str(&json)?));
+        } else {
+            confirm_candidate(state, media_file_id, &candidate_id).await?;
+        }
         return Ok(RecognitionResult {
             media_file_id: media_file_id.to_string(),
             status: "matched".to_string(),
@@ -762,11 +784,11 @@ pub async fn confirm_candidate(
     media_file_id: &str,
     candidate_id: &str,
 ) -> AppResult<String> {
-    confirm_candidate_internal(state, media_file_id, candidate_id, true, None, grouping::GroupScope::Season).await
+    confirm_candidate_internal(state, media_file_id, candidate_id, true, None, grouping::GroupScope::Season, false).await
 }
 
 pub async fn confirm_candidate_local(state: &AppState, media_file_id: &str, candidate_id: &str) -> AppResult<String> {
-    confirm_candidate_internal(state, media_file_id, candidate_id, false, None, grouping::GroupScope::Season).await
+    confirm_candidate_internal(state, media_file_id, candidate_id, false, None, grouping::GroupScope::Season, false).await
 }
 
 pub async fn confirm_candidate_local_selected(
@@ -776,7 +798,7 @@ pub async fn confirm_candidate_local_selected(
     selected_media_ids: &[String],
     scope: grouping::GroupScope,
 ) -> AppResult<String> {
-    confirm_candidate_internal(state, media_file_id, candidate_id, false, Some(selected_media_ids), scope).await
+    confirm_candidate_internal(state, media_file_id, candidate_id, false, Some(selected_media_ids), scope, false).await
 }
 
 /// 用户在识别界面显式确认时，提交范围由界面里的作品文件夹/季度范围决定：
@@ -809,7 +831,7 @@ fn selected_group_members(group_member_ids: Vec<String>, candidate_media_id: &st
     Ok(selected.to_vec())
 }
 
-async fn confirm_candidate_internal(state: &AppState, media_file_id: &str, candidate_id: &str, enrich: bool, selected_media_ids: Option<&[String]>, scope: grouping::GroupScope) -> AppResult<String> {
+async fn confirm_candidate_internal(state: &AppState, media_file_id: &str, candidate_id: &str, enrich: bool, selected_media_ids: Option<&[String]>, scope: grouping::GroupScope, unassigned_only: bool) -> AppResult<String> {
     // 自动匹配沿用季度组（行为不变）；界面确认则使用用户看到的文件夹范围，
     // 这样先前单独识别过的小文件夹会被一起处理，而不是另建一部作品。
     let (selectable_ids, linked_work_id) = match selected_media_ids {
@@ -842,6 +864,13 @@ async fn confirm_candidate_internal(state: &AppState, media_file_id: &str, candi
         .bind(candidate_id).bind(media_file_id).fetch_one(&mut *transaction).await?;
     if !candidate_exists {
         return Err(AppError::NotFound("候选作品不存在或已失效".into()));
+    }
+    if unassigned_only {
+        let unchanged: i64 = sqlx::query_scalar("SELECT count(*) FROM media_files m JOIN library_roots r ON r.id=m.library_root_id WHERE m.id IN (SELECT value FROM json_each(?)) AND m.work_id IS NULL AND m.missing=0 AND r.enabled=1")
+            .bind(serde_json::to_string(&group_member_ids)?).fetch_one(&mut *transaction).await?;
+        if unchanged != group_member_ids.len() as i64 {
+            return Err(AppError::Validation("文件归属或来源已变化，保留当前结果，请重新核对".into()));
+        }
     }
     let media_work: Option<String> =
         sqlx::query_scalar("SELECT work_id FROM media_files WHERE id = ?")
@@ -1417,6 +1446,34 @@ mod tests {
         .fetch_one(&pool)
         .await
         .unwrap();
+        assert_eq!(details, 0);
+    }
+
+    #[tokio::test]
+    async fn background_match_commits_before_optional_network_enrichment() {
+        let pool = db::test_pool().await.unwrap(); let dir = tempfile::tempdir().unwrap();
+        let state = AppState { pool: pool.clone(), database_path: dir.path().join("test.db"), data_directory: dir.path().into(), cover_cache_path: dir.path().into(), thumbnail_cache_path: dir.path().into() };
+        let title = "后台识别验收独立作品".to_string();
+        let mut metadata = crate::explore::lookup_title("葬送的芙莉莲").unwrap().remove(0);
+        metadata.title = title.clone(); metadata.original_title = None; metadata.aliases.clear(); metadata.season = None;
+        metadata.cover_url = Some("http://127.0.0.1:1/unreachable.jpg".into());
+        let parsed = parse_folder_name(&title);
+        let key = format!("search:v045:{}:{:?}:{:?}", crate::anime_parser::normalize_title(&title), parsed.season, parsed.special_type);
+        save_cache(&pool, &key, &[metadata], 1).await.unwrap();
+        sqlx::query("INSERT INTO library_roots(id,path,kind,enabled,created_at,updated_at) VALUES('background','C:\\Anime','video',1,'now','now')").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO media_files(id,library_root_id,path,file_name,extension,media_type,created_at,updated_at) VALUES('background','background',?,'01.mkv','mkv','video','now','now')")
+            .bind(format!("C:\\Anime\\{title}\\01.mkv")).execute(&pool).await.unwrap();
+        let (result, pending) = tokio::time::timeout(StdDuration::from_secs(2), recognize_media_fast(&state, "background")).await.unwrap().unwrap();
+        assert_eq!(result.status, "matched"); assert!(pending.is_some());
+        let work: Option<String> = sqlx::query_scalar("SELECT work_id FROM media_files WHERE id='background'").fetch_one(&pool).await.unwrap();
+        assert_eq!(work.as_deref(), pending.as_ref().map(|item| item.0.as_str()));
+        let (_, metadata) = pending.unwrap();
+        sqlx::query("INSERT INTO match_candidates(id,media_file_id,provider,external_id,title,aliases_json,subject_type,confidence,match_reasons_json,metadata_json,created_at) VALUES('stale-background','background','bangumi',?,?,'[]','tv',0.99,'[]',?,'now')")
+            .bind(&metadata.external_id).bind(&metadata.title).bind(serde_json::to_string(&metadata).unwrap()).execute(&pool).await.unwrap();
+        assert!(confirm_candidate_internal(&state, "background", "stale-background", false, None, grouping::GroupScope::Season, true).await.is_err());
+        let after: Option<String> = sqlx::query_scalar("SELECT work_id FROM media_files WHERE id='background'").fetch_one(&pool).await.unwrap();
+        assert_eq!(after, work);
+        let details: i64 = sqlx::query_scalar("SELECT count(*) FROM metadata_cache WHERE cache_key LIKE 'detail:%'").fetch_one(&pool).await.unwrap();
         assert_eq!(details, 0);
     }
 

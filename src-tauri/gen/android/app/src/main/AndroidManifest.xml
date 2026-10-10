@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
@@ -29,6 +32,7 @@
 
         <activity android:name=".PlayerActivity" android:exported="false"
             android:configChanges="orientation|screenSize|keyboardHidden" />
+        <service android:name=".SourceImportService" android:exported="false" android:foregroundServiceType="dataSync" />
         <activity android:name=".ReaderActivity" android:exported="false"
             android:configChanges="keyboardHidden|uiMode" />
         <provider

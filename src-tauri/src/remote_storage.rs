@@ -55,7 +55,7 @@ pub(crate) async fn remove_source_in_pool(pool: &SqlitePool, id: &str) -> AppRes
     let (_guard, mut transaction) = crate::db::begin_write(pool).await?;
     let credential: String = sqlx::query_scalar("SELECT credential_id FROM remote_sources WHERE id=? AND removed_at IS NULL")
         .bind(id).fetch_optional(&mut *transaction).await?.ok_or_else(|| AppError::NotFound("WebDAV 连接不存在或已移除".into()))?;
-    if crate::scan_tasks::source_active(id) { return Err(AppError::Validation("请先结束该来源的扫描，再移除连接".into())); }
+    if crate::scan_tasks::source_active(id) || crate::source_imports::source_active(id) { return Err(AppError::Validation("请先结束该来源的后台整理，再移除连接".into())); }
     let now = Utc::now().to_rfc3339();
     sqlx::query("UPDATE remote_sources SET removed_at=? WHERE id=?").bind(&now).bind(id).execute(&mut *transaction).await?;
     sqlx::query("UPDATE library_roots SET enabled=0,availability='offline',updated_at=? WHERE id=?").bind(&now).bind(id).execute(&mut *transaction).await?;
@@ -124,6 +124,12 @@ pub async fn add_webdav_source(
     }
     result?;
     let _ = crate::android_sources::notify(&state.pool, &id).await;
+    #[cfg(target_os = "android")]
+    if matches!(input.kind.as_str(), "video" | "auto" | "mixed") {
+        // A failed background start is listed as a resumable task. The saved
+        // connection must not be reported as a failed save.
+        let _ = crate::source_imports::start(&state, vec![id.clone()], None, true).await;
+    }
     Ok(id)
 }
 

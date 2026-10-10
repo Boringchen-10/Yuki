@@ -10,6 +10,12 @@ export interface VideoSource {
   error?: Failure;
 }
 export interface Failure { code: string; message: string; retryable: boolean }
+export interface SourceImportTask {
+  id: string; sourceIds: string[]; stage: string; scan: boolean; scanTaskId: string | null;
+  currentDirectory: string; currentTitle: string; total: number; done: number;
+  matched: number; pending: number; errors: number; message: string | null; updatedAt: string;
+}
+export const activeImport = (task: SourceImportTask) => ["queued", "scanning", "recognizing", "enriching"].includes(task.stage);
 export interface SubtitleTrack { id: string; label: string; kind: "embedded" | "sidecar"; language?: string; available: boolean }
 export type PlayerAction = { type: "play" | "pause" | "close" }
   | { type: "seek"; positionMs: number } | { type: "rate"; speed: number }
@@ -32,6 +38,10 @@ export interface TreeListing {
 }
 export const isDirectoryEntry = (entry: DocumentEntry) => entry.mimeType === "vnd.android.document/directory";
 export const androidApi = {
+  importSources: (sourceIds: string[], scan = true, mediaIds?: string[]) => invoke<SourceImportTask>("start_source_import", { sourceIds, scan, mediaIds }),
+  imports: () => invoke<SourceImportTask[]>("list_source_imports"),
+  cancelImport: (id: string) => invoke<void>("cancel_source_import", { id }),
+  resumeImport: (id: string) => invoke<SourceImportTask>("resume_source_import", { id }),
   sources: () => invoke<VideoSource[]>("get_video_source_states"),
   authorize: (sourceId?: string, reuseAuthorized = false) => invoke<{ status: string; source?: VideoSource }>("authorize_video_source", { sourceId, reuseAuthorized }),
   scan: (sourceId: string) => invoke<{ taskId: string }>("scan_video_source", { sourceId }),

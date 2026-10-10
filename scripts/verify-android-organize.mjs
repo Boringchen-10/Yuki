@@ -17,11 +17,13 @@ try {
   await page.getByRole("button", { name: /动画/ }).click(); await page.getByRole("button", { name: /2024/ }).click();
   await page.getByRole("button", { name: /作品甲.*1 组/ }).waitFor();
   await page.getByRole("button", { name: /自动识别此目录/ }).click();
-  await page.getByRole("status").filter({ hasText: "已处理 2/2" }).waitFor();
-  assert.match(await page.getByRole("status").filter({ hasText: "已处理" }).innerText(), /已归档 1.*待核对 1/);
+  await page.getByRole("button", { name: "读取测试调用", exact: true }).click();
+  const queued = (await page.evaluate(() => window.__qaCalls)).find(call => call.type === "enqueue");
+  assert.deepEqual(queued.sourceIds, ["dav"]); assert.equal(queued.scan, false); assert.deepEqual(queued.mediaIds, ["a", "pending"]);
   await page.getByRole("button", { name: "逐个整理此目录", exact: true }).click();
   assert.equal(await page.locator("[data-qa-opened]").innerText(), "a:1"); result.cases.directoryAndContinuous = true;
   await page.getByRole("button", { name: "organize", exact: true }).click();
+  await page.getByText("动画/作品甲", { exact: false }).waitFor();
   await page.getByRole("checkbox").nth(1).uncheck();
   await page.getByRole("button", { name: "查找候选", exact: true }).click();
   await page.getByRole("button", { name: "预览关联", exact: true }).click();
@@ -39,11 +41,14 @@ try {
   await page.getByRole("combobox", { name: "第 1 集的播放文件" }).selectOption("b");
   await page.getByRole("button", { name: /播放 第 1 集/ }).click();
   await page.getByRole("button", { name: "读取测试调用", exact: true }).click();
-  assert.equal((await page.evaluate(() => window.__qaCalls)).at(-1).id, "b");
+  assert.equal((await page.evaluate(() => window.__qaCalls)).findLast(call => call.type === "play").id, "b");
   await page.getByRole("button", { name: "WebDAV", exact: true }).click(); assert.equal(await page.getByRole("combobox").count(), 0);
   await page.getByRole("button", { name: /播放 第 1 集/ }).click();
   await page.getByRole("button", { name: "读取测试调用", exact: true }).click();
-  assert.equal((await page.evaluate(() => window.__qaCalls)).at(-1).id, "a"); result.cases.officialEpisodeSources = true;
+  assert.equal((await page.evaluate(() => window.__qaCalls)).findLast(call => call.type === "play").id, "a"); result.cases.officialEpisodeSources = true;
+  await page.getByAltText("分集剧照").waitFor(); await page.waitForFunction(() => document.querySelector("img.gz-episode-still")?.naturalWidth > 0);
+  await page.getByRole("button", { name: "读取测试调用", exact: true }).click();
+  assert.ok((await page.evaluate(() => window.__qaCalls)).some(call => call.type === "cache" && call.episodeKey === "bangumi:ep1")); result.cases.episodeStillAndVisibleCache = true;
   await page.getByRole("button", { name: "全部来源", exact: true }).click();
   for (const width of [360, 412, 915, 1024]) {
     await page.setViewportSize({ width, height: width > 700 ? 640 : 915 });
@@ -52,6 +57,12 @@ try {
       await page.waitForTimeout(350);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), width);
       await page.screenshot({ path: `${output}/episodes-${width}-${theme}.png` }); result.layouts.push({ width, theme });
+      await page.getByRole("button", { name: "tasks", exact: true }).click();
+      await page.getByRole("button", { name: "查看后台整理任务", exact: true }).click();
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), width);
+      const dialogWidth = await page.locator("dialog").evaluate(node => ({ inner: node.clientWidth, full: node.scrollWidth })); assert.equal(dialogWidth.inner, dialogWidth.full);
+      await page.screenshot({ path: `${output}/tasks-${width}-${theme}.png` });
+      await page.getByRole("button", { name: "关闭后台整理", exact: true }).click(); await page.getByRole("button", { name: "episodes", exact: true }).click();
     }
   }
   assert.deepEqual(errors, []); writeFileSync(`${output}/result.json`, JSON.stringify(result, null, 2)); console.log(JSON.stringify({ ...result, passed: true }));

@@ -1,5 +1,20 @@
 # Codex 与 DeepSeek Harness 项目交接记录
 
+## 安卓 WebDAV 后台整理 / TMDB 长 Token 与剧照（2026-10-10）
+
+- 基线 `788a38a`，工作树 `.tmp/android-first` / 分支 `codex/android-first`。用户要求新连接首次自动扫描识别、后续手动更新、离开页面仍处理、按真实目录人工核对，以及保存较长 TMDB Read Access Token 并获取分集封面。继续基于 OpenDesign 最新实际界面，保留其未提交草稿和预览进程；本轮只提交自己 App 入口差异。
+- `source_imports.rs` 将扫描 / 连续识别放到 Rust 队列，复用 scanner / grouping / metadata 核心。每来源一项、全局最多两项执行；任务 / 游标 / 队列 / 待补充资料存于现有 app_settings 独立命名空间，不新增迁移。完成后清掉无用途队列，取消 / 中断保留明确继续所需记录。只有新增 WebDAV 自动启动，更新凭据 / 启动应用不会重扫，后续由“更新并识别”触发。
+- Android dataSync 前台服务 / 有限唤醒锁保护后台运行，通知 / 应用任务面板显示状态与目录；系统超时停止服务。停止待当前项原子操作结束，强制停止应用后显示中断、由用户明确继续。没有开机启动、电池豁免或新依赖。活动整理保护来源改动 / 移除 / 重复扫描。
+- 自动确认先落基本资料与文件归属，事务中再次校验仍未关联 / 来源启用，避免覆盖并发人工整理；补图与完整资料延后。明确电影 / 真人剧目录留人工，未知 / 混季 / 多标题仍沿用共享歧义保护。前端不再每项等待补图并刷新全库；手动搜索可离开面板、旧响应不能覆盖下一目录。目录位置会话内保留。
+- TMDB 输入 / 后端原限制 512，改为 8192 字节并规范可选 Bearer 前缀，内嵌空白拒绝。保存成功与后续状态读取分开提示，独立连接测试直接用安全存储凭据请求 configuration，不用资料缓存。原 Keystore 加密 / 读回校验继续使用，前端不返回 Token。
+- 安卓分集接现有 episode_artwork 的缓存先读、自动标题 / 日期 / 集号偏移核对、可见图片缓存和手动更新。沿用 Bangumi 主锚点、官方分集与文件版本，缺图回退中性播放占位，不以海报冒充分集图。
+- 验证：TypeScript、98 项前端、Rust **331 通过 / 18 忽略**；含长 Token 边界、私有队列 / 中断游标、目录 / 来源选择、取消保留、先归档不等网络、已关联文件不被背景确认改写。UI 八组宽度 / 主题及分集图片缓存、长目录任务面板通过，证据 `D:/DevTools/Android/Build/qa/organize-ui-1791633433831/`。
+- 实体机独立 `com.genzo.android.organizeqa` 最终 **14 项通过**，证据 `D:/DevTools/Android/Build/qa/background-import-1791633952784/`：长假 Token 存储 / UI / 重启、首次自动、Home 后目录请求继续、当前目录 / 系统返回、3 组动漫 → 2 可靠归档 / 1 待核对，电影保留人工；新增文件等待手动更新后关联官方分集；强停后明确继续、取消 / 移除 / 服务退出。测试服务只收到 PROPFIND，未读取视频或远程删除。服务与反向端口测试后关闭；假 Token 已清除。早期脚本命令名、熄屏 UI 等待、截图默认缓冲区失败均已修正，以最终结果为准。
+- 最终普通签名预览 `D:/DevTools/Android/Build/previews/background-import-20261010/Genzo_0.6.0_background-preview_arm64-v8a.apk`，**74,100,953 字节**，SHA256 **5070162b63b3cc1aa6022e5e28d140444b68e8b8e7ef4e4807eb0ee12e60833d**。versionName **0.6.0** / code **6000**，com.genzo.android、arm64 / min26 / target36、非 debuggable、原固定证书 `cee90e5f…cdb`。签名 / 16KiB ZIP / 包内无数据库或 EPUB / CBZ 检查通过；APK 内共享库与实际 Gradle 裁剪产物一致，内嵌前端 `index-SwXUJuWH.js`。61 个生产源文件与完整 OpenDesign 构建副本哈希一致。汇总证据 `D:/DevTools/Android/Build/qa/background-import-20261010/`。
+- 普通包与原 readerqa 已覆盖更新实体机 `3B164M00Z0500000`（PLK110 / Android16），无清库。原调试包更新前后 **27 作品 / 1 来源 / 收藏评分状态**一致、后台任务为 0，没有重扫已有真实连接；普通包 firstInstallTime 仍为 **2026-10-08 23:16:41**，启动正常、检查范围内无 FATAL / ANR。此前交接的 8 部是上一轮当时数量，本轮按更新前实际 27 部核对，不假定旧数量。
+- 原 readerqa 中用户已有 TMDB 安全配置实际连接成功，直接在原包执行，不读取 / 输出 / 复制密钥。一部已有 Bangumi 动画取得 **12** 张真实 TMDB 剧照、缓存成功，实际 WebView 中 **12** 张已解码显示；截图 `real-tmdb-visible-stills.png`、结果 `user-qa-after.json` / `rendered-stills.json`。共享前端预览同为 `index-SwXUJuWH.js`，已重定向原预览端口到新进程，保留其他 Agent 的预览进程。最后普通 Genzo 在前台。
+- 本轮为本机预览，不创建新公开 Release / 标签 / 推送。公开 v0.5.2 APK / 标签不改。下一次继续先核对现有 Git、设备与源码，不覆盖真实数据、不把此测试包状态当所有 Android / WebDAV 服务已验证。
+
 ## 安卓目录整理 / 剧集来源 v0.6.0 本机验收（2026-10-10）
 
 - 基线 `365a7e3`。用户要求整个 WebDAV 根目录合理识别、可靠动漫连续归档、失败按目录逐项整理、官方分集下选择本地 / WebDAV 文件，以及移除 WebDAV 连接。已明确“删除”只移除应用连接，保留网盘文件。

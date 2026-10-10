@@ -613,6 +613,7 @@ pub async fn update_library_root(
     enabled: bool,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
+    if crate::source_imports::source_active(&id) { return Err(AppError::Validation("请先结束此来源的后台整理，再修改来源".into())); }
     if !ROOT_KINDS.contains(&kind.as_str()) {
         return Err(AppError::Validation("无效的目录类型".to_string()));
     }
@@ -637,6 +638,7 @@ pub async fn set_root_destination(id: String, destination: String, state: State<
 }
 
 pub async fn set_root_destination_in_pool(pool: &SqlitePool, id: &str, destination: &str) -> AppResult<()> {
+    if crate::source_imports::source_active(id) { return Err(AppError::Validation("请先结束此来源的后台整理，再修改归属".into())); }
     if !matches!(destination, "media" | "bookshelf") {
         return Err(AppError::Validation("请选择媒体库或书架".into()));
     }
@@ -674,6 +676,7 @@ pub async fn delete_library_root(id: String, state: State<'_, AppState>) -> AppR
 
 #[tauri::command]
 pub async fn scan_library_root(id: String, state: State<'_, AppState>) -> AppResult<ScanResult> {
+    if crate::source_imports::source_active(&id) { return Err(AppError::Validation("此来源正在后台整理，请勿重复扫描".into())); }
     scanner::scan_library_root(&state.pool, &id).await
 }
 
@@ -1275,15 +1278,13 @@ pub async fn set_work_field_lock(
 }
 
 #[tauri::command]
-pub async fn set_setting(key: String, value: String, state: State<'_, AppState>) -> AppResult<()> {
+pub async fn set_setting(key: String, mut value: String, state: State<'_, AppState>) -> AppResult<()> {
     let allowed = ["theme", "scan.include_hidden", "metadata.tmdb_read_token"];
     if !allowed.contains(&key.as_str()) {
         return Err(AppError::Validation("不支持的设置项".to_string()));
     }
-    if key == "metadata.tmdb_read_token" && value.chars().count() > 512 {
-        return Err(AppError::Validation(
-            "TMDB Read Access Token 长度无效".to_string(),
-        ));
+    if key == "metadata.tmdb_read_token" {
+        value = crate::credentials::normalize_tmdb_token(&value)?;
     }
     #[cfg(target_os = "android")]
     if key == "metadata.tmdb_read_token" {
@@ -1297,6 +1298,16 @@ pub async fn set_setting(key: String, value: String, state: State<'_, AppState>)
     .bind(Utc::now().to_rfc3339())
     .execute(&state.pool)
     .await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn test_tmdb_connection(state: State<'_, AppState>) -> AppResult<()> {
+    let token = crate::credentials::tmdb_token(&state.pool).await?
+        .filter(|token| !token.is_empty())
+        .ok_or_else(|| AppError::Validation("请先保存 TMDB Read Access Token".into()))?;
+    // Bypass cached metadata so a successful test verifies the saved credential.
+    crate::film_tv::fetch("https://api.themoviedb.org/3", &token, "configuration", &[]).await?;
     Ok(())
 }
 

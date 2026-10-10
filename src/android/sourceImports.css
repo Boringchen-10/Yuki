@@ -1,0 +1,8 @@
+.android-app .gz-import-status { position: fixed; right: 16px; bottom: calc(84px + env(safe-area-inset-bottom)); z-index: 45; display: flex; align-items: center; gap: 8px; max-width: calc(100% - 32px); min-height: 44px; padding: 8px 14px; color: var(--text); background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 2px 12px #0002; }
+.android-app .gz-import-status.is-active { color: var(--accent); }
+.android-app .gz-import-dialog { width: min(560px, calc(100% - 24px)); max-height: calc(100dvh - 48px); overflow: auto; padding: 16px; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); }
+.android-app .gz-import-dialog::backdrop { background: #0008; }
+.android-app .gz-import-dialog h2 { flex: 1; font-size: 18px; }
+.android-app .gz-import-dialog .gz-panel { margin-top: 12px; }
+.android-app .gz-episode-cover .gz-episode-still { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; border-radius: inherit; }
+.android-app .gz-episode-cover:has(.gz-episode-still) > span { color: #fff; padding: 2px 6px; background: #0009; border-radius: 4px; }

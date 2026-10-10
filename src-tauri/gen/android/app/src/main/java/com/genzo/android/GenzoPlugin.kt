@@ -46,9 +46,37 @@ class ReaderArgs { lateinit var sessionId: String; lateinit var baseUrl: String;
 class ReaderControlArgs { lateinit var sessionId: String; lateinit var action: String; var value: Double = 0.0; var settings: String? = null }
 @InvokeArg
 class DataPackageArgs { lateinit var data: String }
+@InvokeArg
+class ImportServiceArgs { var text: String = "正在整理目录" }
 
 @TauriPlugin
 class GenzoPlugin(private val activity: Activity) : Plugin(activity) {
+    @Command
+    fun startSourceImportService(invoke: Invoke) {
+        activity.runOnUiThread { try {
+            SourceImportService.stopped = false
+            androidx.core.content.ContextCompat.startForegroundService(activity, Intent(activity, SourceImportService::class.java))
+            invoke.resolve()
+        } catch (_: Exception) { SourceImportService.stopped = true; invoke.reject("background_import_unavailable") } }
+    }
+    @Command
+    fun updateSourceImportService(invoke: Invoke) {
+        val args = invoke.parseArgs(ImportServiceArgs::class.java)
+        activity.runOnUiThread { try {
+            if (!SourceImportService.stopped) activity.startService(Intent(activity, SourceImportService::class.java).putExtra("text", args.text))
+            invoke.resolve()
+        } catch (_: Exception) { invoke.reject("background_import_unavailable") } }
+    }
+    @Command
+    fun stopSourceImportService(invoke: Invoke) {
+        activity.runOnUiThread {
+            activity.stopService(Intent(activity, SourceImportService::class.java)); invoke.resolve()
+        }
+    }
+    @Command
+    fun sourceImportServiceState(invoke: Invoke) {
+        invoke.resolve(JSObject().put("stopped", SourceImportService.stopped))
+    }
     @Command
     fun fingerprintDocument(invoke: Invoke) {
         val uri = Uri.parse(invoke.parseArgs(TreeArgs::class.java).uri)

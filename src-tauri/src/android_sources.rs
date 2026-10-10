@@ -153,6 +153,9 @@ pub async fn get_video_source_states(state: State<'_, AppState>) -> AppResult<Ve
 
 #[tauri::command]
 pub async fn scan_video_source(source_id: String, state: State<'_, AppState>) -> AppResult<Value> {
+    if crate::source_imports::source_active(&source_id) {
+        return Err(AppError::Validation("该来源正在后台整理，请等待完成或停止后再扫描".into()));
+    }
     if !list(&state.pool).await?.iter().any(|source| source.id == source_id && source.enabled) {
         return Err(AppError::Validation("请选择启用的 SAF 或 WebDAV 视频来源".into()));
     }

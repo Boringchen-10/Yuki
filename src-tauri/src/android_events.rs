@@ -49,3 +49,7 @@ pub fn reading(snapshot: Value) { publish("reading-progress-updated", snapshot);
 pub fn recognition(media_ids: Vec<String>, work_ids: Vec<String>) {
     publish("recognition-updated", json!({"revision":revision(),"mediaFileIds":media_ids,"workIds":work_ids}));
 }
+
+pub fn source_import(task: &crate::source_imports::ImportTask) {
+    publish("source-import-updated", json!({"revision":revision(),"task":task}));
+}
