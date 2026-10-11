@@ -80,6 +80,43 @@ async fn candidate(
 }
 
 #[tokio::test]
+async fn bracketed_release_search_retries_the_title_and_exposes_preview_metadata() {
+    let (state, _dir) = fixture().await;
+    let raw = "[调音师][2018][中文字幕][4K-2160P][3.8G]";
+    let original = file(&state, "release", &format!("{raw}.mkv")).await;
+    cache(&state.pool, "search/movie", &[("query", raw.into())], json!({"results":[]}), "2999").await;
+    let movie = json!({"id":42,"title":"调音师","original_title":"Andhadhun","release_date":"2018-10-05","overview":"用于核对的电影简介","poster_path":"/poster.jpg","vote_average":8.2,"vote_count":100});
+    cache(&state.pool, "search/movie", &[("query", "调音师".into())], json!({"results":[movie]}), "2999").await;
+    let result = recognize(&state, "release", Some(raw.into()), Kind::Movie, None).await.unwrap();
+    assert_eq!(result.parsed_title.as_deref(), Some("调音师"));
+    assert_eq!(result.candidates.len(), 1);
+    let preview = serde_json::to_value(&result.candidates[0]).unwrap();
+    assert_eq!(preview["description"], "用于核对的电影简介");
+    assert_eq!(preview["score"], 8.2);
+    assert_eq!(preview["airDate"], "2018-10-05");
+    let current: MediaFile = sqlx::query_as("SELECT * FROM media_files WHERE id='release'").fetch_one(&state.pool).await.unwrap();
+    assert_eq!(current.path, original.path); assert_eq!(current.file_name, original.file_name); assert!(current.work_id.is_none());
+    assert_eq!(sqlx::query_scalar::<_, i64>("SELECT count(*) FROM works").fetch_one(&state.pool).await.unwrap(), 0);
+}
+
+#[tokio::test]
+async fn nonempty_literal_search_is_kept_and_television_empty_search_uses_clean_title() {
+    let (state, _dir) = fixture().await;
+    file(&state, "tv", "Show.S02E01.mkv").await;
+    let query = "Show (Subtitle)";
+    cache(&state.pool, "search/tv", &[("query", query.into())], json!({"results":[source(Kind::Tv)]}), "2999").await;
+    let literal = recognize(&state, "tv", Some(query.into()), Kind::Tv, Some(2)).await.unwrap();
+    assert_eq!(literal.parsed_title.as_deref(), Some(query));
+    assert_eq!(literal.candidates[0].season, Some(2));
+    let release = "[绝命毒师][1080p]";
+    cache(&state.pool, "search/tv", &[("query", release.into())], json!({"results":[]}), "2999").await;
+    cache(&state.pool, "search/tv", &[("query", "绝命毒师".into())], json!({"results":[source(Kind::Tv)]}), "2999").await;
+    let cleaned = recognize(&state, "tv", Some(release.into()), Kind::Tv, Some(2)).await.unwrap();
+    assert_eq!(cleaned.parsed_title.as_deref(), Some("绝命毒师"));
+    assert_eq!(cleaned.candidates[0].external_id, "tv/42/season/2");
+}
+
+#[tokio::test]
 async fn parses_mount_tv_and_movie_names_without_turning_title_numbers_into_years() {
     let (state, _dir) = fixture().await;
     for (id, name, season, episode) in [

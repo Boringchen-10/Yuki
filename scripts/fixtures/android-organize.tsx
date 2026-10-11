@@ -5,7 +5,7 @@ import InboxPanel from "../../src/android/InboxPanel";
 import Organize from "../../src/android/Organize";
 import EpisodeSources from "../../src/android/EpisodeSources";
 import SourceImports from "../../src/android/SourceImports";
-import type { AnimeWorkStructure, MatchCandidate, MediaFile, UnassignedMediaGroup } from "../../src/types";
+import type { AnimeWorkStructure, MatchCandidate, MediaFile, RecognitionKind, UnassignedMediaGroup } from "../../src/types";
 import { androidApi, type VideoSource, type SourceImportTask } from "../../src/android/api";
 import "../../src/android/mobile.css";
 import "../../src/android/organize.css";
@@ -26,10 +26,12 @@ const groups = [
   { key: "b", title: "作品乙", folderPath: "webdav://dav/动画/2024/作品乙", representative: file("pending", "dav", "01.mkv") },
   { key: "c", title: "本地作品", folderPath: "saf://local/作品", representative: b },
 ].map(group => ({ ...group, fileCount: 2, missingCount: 0, destination: "media", mediaType: "video", recognitionStatus: "unmatched" })) as UnassignedMediaGroup[];
-const candidate = (id: string) => ({ id: "choice", mediaFileId: id, title: "作品甲", provider: "bangumi", externalId: "test-1", year: 2024, confidence: .91, matchReasons: ["标题相符"] }) as MatchCandidate;
+const candidate = (id: string, kind: RecognitionKind = "anime", season = 1) => ({ id: "choice", mediaFileId: id, title: kind === "movie" ? "调音师" : kind === "tv" ? `示例剧集 · 第 ${season} 季` : "作品甲", originalTitle: kind === "movie" ? "Andhadhun" : "Example", provider: kind === "anime" ? "bangumi" : "tmdb", externalId: kind === "movie" ? "movie/42" : kind === "tv" ? `tv/42/season/${season}` : "test-1", subjectType: kind === "anime" ? "tv" : kind, season: kind === "tv" ? season : null, year: 2018, coverUrl: still, description: "这是用于核对作品身份的完整简介。" + "长简介默认摘要，完整内容可按需展开。".repeat(30), score: 8.2, airDate: "2018-10-05", confidence: .91, matchReasons: ["标题相符"] }) as MatchCandidate;
+let searchMode = "normal";
+Object.assign(window, { __qaSearchMode: (value: string) => { searchMode = value; } });
 api.listRecognitionGroupMembers = async () => ({ scope: "season", title: "作品甲", folderPath: "webdav://dav/动画/作品甲", members: [sub, a, b], linkedWorkId: null, linkedWorkTitle: null });
 api.listMatchCandidates = async () => [];
-api.recognizeMedia = async (id, query) => { calls.push({ type: "search", id, query }); await new Promise(resolve => setTimeout(resolve, 120)); return { mediaFileId: id, status: query === null && id !== "pending" ? "matched" : "candidate_pending", parsedTitle: "作品甲", candidates: query === null && id !== "pending" ? [] : [candidate(id)], error: null }; };
+api.recognizeMedia = async (id, query, kind = "anime", season) => { calls.push({ type: "search", id, query, kind, season }); await new Promise(resolve => setTimeout(resolve, 120)); if (searchMode === "error") throw new Error("受控网络失败，请重试"); return { mediaFileId: id, status: query === null && id !== "pending" ? "matched" : searchMode === "empty" ? "unmatched" : "candidate_pending", parsedTitle: kind === "movie" ? "调音师" : "作品甲", candidates: searchMode === "empty" || query === null && id !== "pending" ? [] : [candidate(id, kind, season)], error: null }; };
 api.confirmMatch = async (id, choice, selected, scope) => { calls.push({ type: "confirm", id, choice, selected, scope }); return "work"; };
 function Fixture() {
   const [mode, setMode] = useState("inbox"), [busy, setBusy] = useState(false), [opened, setOpened] = useState("");

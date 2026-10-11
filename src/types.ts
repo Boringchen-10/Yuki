@@ -137,6 +137,9 @@ export interface MatchCandidate {
   year: number | null;
   season: number | null;
   coverUrl: string | null;
+  description?: string;
+  score?: number | null;
+  airDate?: string | null;
   confidence: number;
   matchReasons: string[];
   createdAt: string;

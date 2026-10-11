@@ -3,3 +3,13 @@
 .android-app .gz-file-choice input { flex: none; width: 22px; min-height: 22px; }
 .android-app .gz-file-name { overflow-wrap: anywhere; }
 .android-app .gz-episode select { width: 100%; min-height: 44px; }
+.android-app .gz-match-summary { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 14px; align-items: start; }
+.android-app .gz-match-poster { display: grid; place-items: center; aspect-ratio: 2/3; overflow: hidden; border-radius: var(--radius-sm); background: var(--bg-raised); }
+.android-app .gz-match-poster img { width: 100%; height: 100%; object-fit: contain; }
+.android-app .gz-match-poster > span { display: grid; justify-items: center; gap: 8px; font-size: 11px; }
+.android-app .gz-match-info { min-width: 0; overflow-wrap: anywhere; }
+.android-app .gz-match-info p { margin: 5px 0; }
+.android-app .gz-match-description { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; font-size: 12px; line-height: 1.6; }
+.android-app .gz-match-synopsis { grid-column: 1 / -1; }
+.android-app .gz-match-synopsis summary { min-height: 44px; line-height: 44px; cursor: pointer; }
+.android-app .gz-match-synopsis p { font-size: 12px; line-height: 1.7; }

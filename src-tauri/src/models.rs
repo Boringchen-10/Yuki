@@ -169,6 +169,9 @@ pub struct MatchCandidate {
     pub year: Option<i64>,
     pub season: Option<i64>,
     pub cover_url: Option<String>,
+    pub description: String,
+    pub score: Option<f64>,
+    pub air_date: Option<String>,
     pub confidence: f64,
     pub match_reasons: Vec<String>,
     pub created_at: String,
@@ -197,6 +200,7 @@ impl TryFrom<MatchCandidateRow> for MatchCandidate {
     type Error = serde_json::Error;
 
     fn try_from(row: MatchCandidateRow) -> Result<Self, Self::Error> {
+        let metadata: serde_json::Value = serde_json::from_str(&row.metadata_json)?;
         Ok(Self {
             id: row.id,
             media_file_id: row.media_file_id,
@@ -209,6 +213,9 @@ impl TryFrom<MatchCandidateRow> for MatchCandidate {
             year: row.year,
             season: row.season,
             cover_url: row.cover_url,
+            description: metadata["description"].as_str().unwrap_or_default().into(),
+            score: metadata["score"].as_f64(),
+            air_date: metadata["airDate"].as_str().map(str::to_owned),
             confidence: row.confidence,
             match_reasons: serde_json::from_str(&row.match_reasons_json)?,
             created_at: row.created_at,

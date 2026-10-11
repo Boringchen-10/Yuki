@@ -411,7 +411,7 @@ pub async fn recognize(
         return Err(AppError::Validation("请选择可用的视频文件".into()));
     }
     let parsed = parse_video(&file, kind);
-    let title = query
+    let mut title = query
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
@@ -435,13 +435,23 @@ pub async fn recognize(
             params.push(("primary_release_year", year.to_string()));
         }
     }
-    let response = request(
+    let mut response = request(
         &state.pool,
         &format!("search/{}", kind.key()),
         &params,
         false,
     )
     .await?;
+    // A manual search often starts with the release folder name. Keep a literal
+    // match first; only retry the existing title cleanup when it returns no hits.
+    if response.data["results"].as_array().is_some_and(Vec::is_empty) {
+        let cleaned = crate::anime_parser::preprocess_folder_name(&title);
+        if !cleaned.is_empty() && cleaned != title {
+            title = cleaned;
+            params[0].1 = title.clone();
+            response = request(&state.pool, &format!("search/{}", kind.key()), &params, false).await?;
+        }
+    }
     let items = response.data["results"]
         .as_array()
         .ok_or_else(|| AppError::Network("TMDB 搜索响应缺少结果列表".into()))?;
