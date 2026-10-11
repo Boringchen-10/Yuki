@@ -1,5 +1,13 @@
 # 第三方依赖与许可证
 
+## 安卓 Anime4K / libmpv（2026-10-11）
+
+- `bloc97/Anime4K@7684e9586f8dcc738af08a1cdceb024cc184f426`：MIT，Copyright (c) 2019 bloc97。直接包含官方 Clamp / Restore CNN M、VL / Upscale CNN x2 S、M、VL / AutoDownscalePre x2、x4 GLSL；全文 [licenses/anime4k-MIT.txt](licenses/anime4k-MIT.txt)。预设以官方低端 / 高端 Mode A 为准，参考 Kazumi 对 mpv shaders 的加载方式。
+- Android Surface JNI 参考 `mpv-android@c2e02fe111541e4063ab8f868bf629649ed937a3`，MIT，Copyright (c) 2016 Ilya Zhuravlev；Copyright (c) 2016 sfan5。全文 [licenses/mpv-android-MIT.txt](licenses/mpv-android-MIT.txt)。Genzo 自行实现 handle 生命周期、控制适配、回退与测试；不复制应用 / 品牌素材。
+- 原生库使用 `Predidit/libmpv-android-video-build` v1.2.7 / `dd2bfba8209bcd22e2d4c79f125b40e619e637ed` 的 default 制品，仅提取 libmpv.so。构建脚本 MIT **不等于原生库全部 MIT**：mpv / libplacebo 为 LGPL2.1+，本次 FFmpeg 配置为 LGPLv3，其他静态依赖的原始声明、精确来源与重建路径见 [licenses/libmpv-1.2.7/SOURCES.md](licenses/libmpv-1.2.7/SOURCES.md)。不嵌入 Dart / Flutter、media-kit helper、encoders-gpl 或 x264。
+- 上述许可证与全部既有第三方说明打包为 Android assets；“超分 → 开源说明”可查看。允许替换 / 调试修改后的 LGPL 库并重新链接本 GPLv3 项目。
+- 解码 / 渲染选项、自动选择与直通 / 超分联动参考同一 Kazumi GPLv3 快照的 `lib/utils/constants.dart`、`lib/services/storage/settings_keys.dart`、`lib/pages/settings/{player_settings,decoder_settings,renderer_settings}.dart`、`lib/pages/player/controller/player_playback_controller.dart`，适配到现有 Kotlin / Tauri 流程，仅提供安卓相关选项。完整 GPLv3 许可仍见 `licenses/kazumi-GPL-3.0.txt`。
+
 Genzo v0.5.0 使用以下直接依赖。具体传递依赖及锁定版本以 `pnpm-lock.yaml` 和 `src-tauri/Cargo.lock` 为准。
 
 ## Android 原生阅读增量

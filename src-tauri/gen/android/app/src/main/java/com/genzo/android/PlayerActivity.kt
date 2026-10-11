@@ -7,7 +7,6 @@ import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.net.Uri
 import android.os.Bundle
-import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelFileDescriptor
@@ -25,11 +24,6 @@ import android.widget.Toast
 import app.tauri.plugin.JSArray
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Invoke
-import org.videolan.libvlc.LibVLC
-import org.videolan.libvlc.Media
-import org.videolan.libvlc.MediaPlayer
-import org.videolan.libvlc.interfaces.IMedia
-import org.videolan.libvlc.util.VLCVideoLayout
 import java.io.File
 import java.security.MessageDigest
 import java.lang.ref.WeakReference
@@ -41,11 +35,20 @@ class PlayerActivity : ComponentActivity() {
         @Volatile var snapshot = JSObject().put("status", "idle")
         var current: WeakReference<PlayerActivity>? = null
     }
-    private lateinit var vlc: LibVLC
-    private lateinit var player: MediaPlayer
+    private lateinit var player: VideoEngine
     private lateinit var label: TextView
     private lateinit var seek: SeekBar
-    private lateinit var video: VLCVideoLayout
+    private lateinit var viewport: FrameLayout
+    private lateinit var superResolutionButton: Button
+    private var superResolutionMode = 0
+    private var fallbackReason: String? = null
+    private var gpuError: String? = null
+    private var restoringTracks: Pair<Int, Int>? = null
+    private var restoreSidecar: String? = null
+    private var engineGeneration = 0
+    private var lastReportMs = 0L
+    private lateinit var playbackSettings: PlaybackSettings
+    private var rendererOverride: String? = null
     private var descriptor: ParcelFileDescriptor? = null
     private var uri = ""
     private var mediaFileId: String? = null
@@ -72,7 +75,11 @@ class PlayerActivity : ComponentActivity() {
     private var subtitleError: String? = null
     private val handler = Handler(Looper.getMainLooper())
     private val ticker = object : Runnable {
-        override fun run() { report(); handler.postDelayed(this, 1000) }
+        override fun run() {
+            if (::player.isInitialized) player.poll()
+            if (android.os.SystemClock.elapsedRealtime() - lastReportMs >= 1000) report()
+            handler.postDelayed(this, 250)
+        }
     }
     private fun identity() = MessageDigest.getInstance("SHA-256").digest(uri.toByteArray())
         .joinToString("") { "%02x".format(it) }
@@ -96,9 +103,9 @@ class PlayerActivity : ComponentActivity() {
         resumeMs = savedInstanceState?.getLong("positionMs") ?: if (intent.getBooleanExtra("restart", false)) 0 else
             intent.getLongExtra("resumeMs", -1L).takeIf { it >= 0 } ?: getSharedPreferences("genzo-prototype-progress", 0).getLong(identity(), 0)
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(0xff101114.toInt()) }
-        video = VLCVideoLayout(this)
-        val viewport = FrameLayout(this)
-        viewport.addView(video, FrameLayout.LayoutParams(-1, -1))
+        viewport = FrameLayout(this)
+        superResolutionMode = getSharedPreferences("genzo-player", 0).getInt("anime4kMode", 0).coerceIn(0, 2)
+        playbackSettings = PlaybackSettings.read(this)
         loadingPanel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; setPadding(24,24,24,24) }
         loadingSpinner = ProgressBar(this)
         loadingPanel.addView(loadingSpinner)
@@ -117,13 +124,13 @@ class PlayerActivity : ComponentActivity() {
             controls.addView(Button(this).apply { this.text = text; textSize = 13f; setOnClickListener { action() } }, LinearLayout.LayoutParams(0, controlHeight, 1f))
         }
         button("暂停/播放") { if (player.isPlaying) player.pause() else player.play() }
-        button("倍速") { AlertDialog.Builder(this).setItems(arrayOf("0.5×", "1×", "1.5×", "2×")) { _, index -> setPlaybackRate(floatArrayOf(.5f, 1f, 1.5f, 2f)[index]) }.show() }
+        button("播放设置") { showPlaybackSettings() }
         button("音轨") { tracks(false) }
         button("字幕") { tracks(true) }
         root.addView(controls)
         mediaControls.add(controls)
         val extra = LinearLayout(this)
-        extra.addView(Button(this).apply { text = "选择外挂字幕"; setOnClickListener { launchSubtitlePicker() } }, LinearLayout.LayoutParams(0, controlHeight, 1f))
+        extra.addView(Button(this).apply { text = "外挂字幕"; setOnClickListener { if (subtitleSupported()) launchSubtitlePicker() } }, LinearLayout.LayoutParams(0, controlHeight, 1f))
         extra.addView(Button(this).apply { text = "字幕偏移"; setOnClickListener {
             AlertDialog.Builder(this@PlayerActivity).setItems(arrayOf("提前 500 ms", "重置", "延后 500 ms")) { _, index ->
                 subtitleDelayMs = if (index == 1) 0 else subtitleDelayMs + if (index == 0) -500 else 500
@@ -133,41 +140,20 @@ class PlayerActivity : ComponentActivity() {
         extra.addView(Button(this).apply { text = "横/竖屏"; setOnClickListener {
             requestedOrientation = if (resources.configuration.orientation == 2) ActivityInfo.SCREEN_ORIENTATION_PORTRAIT else ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
         } }, LinearLayout.LayoutParams(0, controlHeight, 1f))
+        superResolutionButton = Button(this).apply { text = "Anime4K"; setOnClickListener {
+            AlertDialog.Builder(this@PlayerActivity).setTitle("Anime4K 超分辨率")
+                .setSingleChoiceItems(arrayOf("关闭", "流畅 · 适合日常观看", "画质 · 更清晰，耗电更高"), superResolutionMode) { dialog, index ->
+                    dialog.dismiss(); switchSuperResolution(index)
+                }.setNeutralButton("开源说明") { _, _ -> showSuperResolutionLicenses() }.setNegativeButton("取消", null).show()
+        } }
+        extra.addView(superResolutionButton, LinearLayout.LayoutParams(0, controlHeight, 1f))
         root.addView(extra)
         mediaControls.add(extra)
         setContentView(root)
-        vlc = LibVLC(this, arrayListOf("--no-video-title-show", "--network-caching=1500"))
-        player = MediaPlayer(vlc)
-        player.attachViews(video, null, true, false)
-        player.setEventListener { event ->
-            when (event.type) {
-                MediaPlayer.Event.Playing -> {
-                    status = "playing"
-                    pendingRate?.let { pendingRate = null; player.rate = it }
-                    if (resumeMs > 0) { player.setTime(resumeMs, false); resumeMs = 0 }
-                    val initialFile = intent.getStringExtra("subtitleFile")
-                    if (initialSubtitle != null || initialFile != null) {
-                        val selected = initialSubtitle
-                        initialSubtitle = null
-                        intent.removeExtra("subtitleFile")
-                        try {
-                            val file = initialFile?.let { path -> File(path).also {
-                                require(it.canonicalPath.startsWith(File(applicationInfo.dataDir, "player-subtitles").canonicalPath + "/"))
-                                require(it.length() <= 16 * 1024 * 1024)
-                                subtitleFiles.add(it)
-                            } }
-                            if (file != null) selectSidecar(file, intent.getStringExtra("subtitleLabel"), intent.getStringExtra("subtitleId"))
-                            else loadSubtitle(Uri.parse(requireNotNull(selected)), intent.getStringExtra("subtitleId"))
-                        } catch (_: Exception) { subtitleError = "外挂字幕无法加载，请手动选择" }
-                    }
-                }
-                MediaPlayer.Event.Paused -> status = "paused"
-                MediaPlayer.Event.Buffering -> status = if (event.buffering < 100) "buffering" else if (player.isPlaying) "playing" else "paused"
-                MediaPlayer.Event.EndReached -> status = "ended"
-                MediaPlayer.Event.EncounteredError -> status = "playback_error"
-            }
-            report()
-        }
+        // A rule's loading shell must not wait for GPU/decoder initialization.
+        try { createEngine(if (uri.isEmpty()) 0 else superResolutionMode, uri.isEmpty()) }
+        catch (_: LinkageError) { superResolutionMode = 0; rendererOverride = "compat"; fallbackReason = "此设备无法启用GPU播放，已恢复兼容播放"; createEngine(0) }
+        catch (error: Exception) { gpuError = error.message; superResolutionMode = 0; rendererOverride = "compat"; fallbackReason = "GPU初始化失败，已恢复兼容播放"; createEngine(0) }
         seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(bar: SeekBar?, value: Int, fromUser: Boolean) {}
             override fun onStartTrackingTouch(bar: SeekBar?) {}
@@ -178,22 +164,172 @@ class PlayerActivity : ComponentActivity() {
         handler.post(ticker)
     }
 
-    private fun startMedia() {
+    private fun createEngine(mode: Int, loadingShell: Boolean = false) {
+        val generation = ++engineGeneration
+        val stateChanged: (String) -> Unit = { next ->
+            if (generation == engineGeneration && !isFinishing && !isDestroyed) {
+                if (next == "playback_error" && player is MpvEngine) {
+                    handler.post { if (generation == engineGeneration) fallbackToVlc() }
+                } else {
+                    status = next
+                    if (next in listOf("playing", "paused") && player.length > 0) restorePlayback()
+                    report()
+                }
+            }
+        }
+        val renderer = if (loadingShell) "compat" else rendererOverride ?: playbackSettings.resolve(this, mode)
+        player = if (renderer != "compat") MpvEngine(this, mode, stateChanged, playbackSettings, renderer) else VlcEngine(this, stateChanged, playbackSettings.hardware)
+        viewport.addView(player.view, 0, FrameLayout.LayoutParams(-1, -1))
+    }
+
+    private fun showPlaybackSettings() {
+        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 12, 24, 12) }
+        val dialog = AlertDialog.Builder(this).setTitle("播放设置").setView(android.widget.ScrollView(this).apply { addView(body) }).setNegativeButton("关闭", null).create()
+        fun row(text: String, action: () -> Unit) {
+            body.addView(Button(this).apply { this.text = text; setOnClickListener { dialog.dismiss(); action() } }, LinearLayout.LayoutParams(-1, (52 * resources.displayMetrics.density).toInt()))
+        }
+        val hardware = androidx.appcompat.widget.SwitchCompat(this).apply { text = "硬件解码"; isChecked = playbackSettings.hardware; minHeight = (52 * resources.displayMetrics.density).toInt() }
+        body.addView(hardware)
+        hardware.setOnCheckedChangeListener { _, checked ->
+            dialog.dismiss()
+            applyPlaybackSettings(playbackSettings.copy(hardware = checked, renderer = if (!checked && playbackSettings.renderer == "mediacodec_embed") "gpu" else playbackSettings.renderer))
+        }
+        row("硬件解码器 · ${PlaybackSettings.decoders[playbackSettings.decoder]}") {
+            val items = PlaybackSettings.decoders.entries.toList()
+            AlertDialog.Builder(this).setTitle("硬件解码器 · 安卓")
+                .setSingleChoiceItems(items.map { "${it.key} · ${it.value}" }.toTypedArray(), items.indexOfFirst { it.key == playbackSettings.decoder }) { choice, index ->
+                    choice.dismiss(); applyPlaybackSettings(playbackSettings.copy(decoder = items[index].key, renderer = if (playbackSettings.renderer == "compat" || playbackSettings.renderer == "mediacodec_embed") "auto" else playbackSettings.renderer))
+                }.setNegativeButton("取消", null).show()
+        }
+        row("视频渲染器 · ${PlaybackSettings.renderers[playbackSettings.renderer]}") {
+            val items = PlaybackSettings.renderers.entries.toList()
+            AlertDialog.Builder(this).setTitle("视频渲染器")
+                .setSingleChoiceItems(items.map { it.value }.toTypedArray(), items.indexOfFirst { it.key == playbackSettings.renderer }) { choice, index ->
+                    choice.dismiss(); val renderer = items[index].key
+                    applyPlaybackSettings(playbackSettings.copy(renderer = renderer, hardware = if (renderer == "mediacodec_embed") true else playbackSettings.hardware, decoder = if (renderer == "mediacodec_embed") "mediacodec" else playbackSettings.decoder))
+                }.setNegativeButton("取消", null).show()
+        }
+        row("倍速 · ${pendingRate ?: player.rate}×") { AlertDialog.Builder(this).setItems(arrayOf("0.5×", "1×", "1.5×", "2×")) { _, index -> setPlaybackRate(floatArrayOf(.5f, 1f, 1.5f, 2f)[index]) }.show() }
+        body.addView(TextView(this).apply {
+            textSize = 13f; setPadding(0, 16, 0, 12)
+            val mpv = player as? MpvEngine
+            text = if (mpv == null) "当前：兼容播放\n硬件解码器由兼容内核按文件选择。" else "当前渲染器：${mpv.property("current-vo") ?: "正在准备"}\n实际解码器：${mpv.property("hwdec-current") ?: "正在准备"}\n${if (playbackSettings.renderer == "compat" && superResolutionMode > 0) "超分开启时使用GPU，关闭后恢复兼容播放。\n" else ""}硬解不可用时自动尝试软件解码。直通模式不支持超分和字幕。"
+        })
+        dialog.show()
+    }
+
+    private fun applyPlaybackSettings(settings: PlaybackSettings) {
+        settings.save(this); playbackSettings = settings; rendererOverride = null
+        val mode = if (settings.renderer == "mediacodec_embed") 0 else superResolutionMode
+        if (settings.renderer == "mediacodec_embed") {
+            selectedSidecar = null
+            Toast.makeText(this, "直通模式已关闭超分与字幕", Toast.LENGTH_LONG).show()
+        }
+        switchSuperResolution(mode, rebuild = true)
+    }
+
+    private fun subtitleSupported(): Boolean {
+        if ((player as? MpvEngine)?.renderer != "mediacodec_embed") return true
+        Toast.makeText(this, "字幕需要GPU渲染，请在播放设置选择OpenGL或Vulkan", Toast.LENGTH_LONG).show()
+        return false
+    }
+
+    private fun showSuperResolutionLicenses() {
+        val files = listOf("THIRD_PARTY_NOTICES.md", "licenses/anime4k-MIT.txt", "licenses/mpv-android-MIT.txt", "licenses/libmpv-1.2.7/mpv-Copyright.txt", "licenses/libmpv-1.2.7/LGPL-3.0.txt")
+        val text = TextView(this).apply {
+            setPadding(24, 16, 24, 16); textSize = 12f; setTextIsSelectable(true)
+            text = files.joinToString("\n\n") { name -> assets.open(name).bufferedReader().use { it.readText() } }
+        }
+        AlertDialog.Builder(this).setTitle("Anime4K 与播放组件许可")
+            .setView(android.widget.ScrollView(this).apply { addView(text) }).setPositiveButton("关闭", null).show()
+    }
+
+    private fun restorePlayback() {
+        if (startOnResume && lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) { startOnResume = false; player.play() }
+        if (player is MpvEngine || player.isPlaying) pendingRate?.let { pendingRate = null; player.rate = it }
+        if (resumeMs > 0) {
+            val position = resumeMs; resumeMs = 0
+            // mpv already received start=position. A second initial seek can interrupt
+            // its first hardware-decoded frame; LibVLC still needs this restoration.
+            if (player !is MpvEngine) player.setTime(position, false)
+        }
+        restoringTracks?.let { (audio, subtitle) ->
+            restoringTracks = null
+            player.audioTracks.getOrNull(audio)?.let { player.setAudioTrack(it.id) }
+            if ((player as? MpvEngine)?.renderer == "mediacodec_embed") player.setSpuTrack(-1)
+            else if (restoreSidecar == null) player.spuTracks.getOrNull(subtitle)?.let { player.setSpuTrack(it.id) }
+        }
+        restoreSidecar?.let { id ->
+            restoreSidecar = null
+            if ((player as? MpvEngine)?.renderer != "mediacodec_embed") sidecars[id]?.let { if (player.addSubtitle(it.second.absolutePath)) selectedSidecar = id else subtitleError = "外挂字幕恢复失败，请重新选择" }
+        }
+        if (subtitleDelayMs != 0L) player.setSpuDelay(subtitleDelayMs * 1000)
+        val initialFile = intent.getStringExtra("subtitleFile")
+        if (initialSubtitle != null || initialFile != null) {
+            val selected = initialSubtitle
+            initialSubtitle = null
+            intent.removeExtra("subtitleFile")
+            try {
+                val file = initialFile?.let { path -> File(path).also {
+                    require(it.canonicalPath.startsWith(File(applicationInfo.dataDir, "player-subtitles").canonicalPath + "/"))
+                    require(it.length() <= 16 * 1024 * 1024)
+                    subtitleFiles.add(it)
+                } }
+                if ((player as? MpvEngine)?.renderer != "mediacodec_embed") {
+                    if (file != null) selectSidecar(file, intent.getStringExtra("subtitleLabel"), intent.getStringExtra("subtitleId"))
+                    else loadSubtitle(Uri.parse(requireNotNull(selected)), intent.getStringExtra("subtitleId"))
+                }
+            } catch (_: Exception) { subtitleError = "外挂字幕无法加载，请手动选择" }
+        }
+    }
+
+    private fun switchSuperResolution(mode: Int, fallback: Boolean = false, rebuild: Boolean = false) {
+        require(mode in 0..2)
+        if (!mediaReady) return
+        if (!fallback) {
+            rendererOverride = null
+            if (mode > 0 && playbackSettings.renderer == "mediacodec_embed") { playbackSettings = playbackSettings.copy(renderer = "gpu"); playbackSettings.save(this) }
+            fallbackReason = null
+            gpuError = null
+            getSharedPreferences("genzo-player", 0).edit().putInt("anime4kMode", mode).apply()
+        }
+        if (!fallback && !rebuild && mode == superResolutionMode && (mode == 0 || player is MpvEngine)) { report(); return }
+        val paused = (!player.isPlaying && status !in listOf("opening", "buffering")) || startOnResume
+        resumeMs = player.time.takeIf { it > 0 } ?: resumeMs
+        pendingRate = pendingRate ?: player.rate
+        restoringTracks = Pair(player.audioTracks.indexOfFirst { it.id == player.audioTrack }, player.spuTracks.indexOfFirst { it.id == player.spuTrack })
+        restoreSidecar = selectedSidecar
+        engineGeneration++
+        player.release(); viewport.removeView(player.view); descriptor?.close(); descriptor = null
+        superResolutionMode = mode
+        status = "opening"; loadingMessage = "正在切换画面处理…"
+        try { createEngine(mode) }
+        catch (_: LinkageError) { superResolutionMode = 0; rendererOverride = "compat"; fallbackReason = "此设备无法启用GPU播放，已恢复兼容播放"; createEngine(0) }
+        catch (error: Exception) { gpuError = error.message; superResolutionMode = 0; rendererOverride = "compat"; fallbackReason = "GPU初始化失败，已恢复兼容播放"; createEngine(0) }
+        startMedia(paused); report()
+    }
+
+    private fun fallbackToVlc() {
+        if (isFinishing || isDestroyed || player !is MpvEngine) return
+        val openGl = (player as MpvEngine).renderer == "gpu-next"
+        rendererOverride = if (openGl) "gpu" else "compat"
+        fallbackReason = if (openGl) "Vulkan播放不可用，已切换OpenGL" else "此视频或设备无法使用GPU播放，已恢复兼容播放"
+        Toast.makeText(this, fallbackReason, Toast.LENGTH_LONG).show()
+        switchSuperResolution(if (openGl) superResolutionMode else 0, true, true)
+    }
+
+    private fun startMedia(paused: Boolean = false) {
         try {
             val locator = Uri.parse(uri)
-            val media = if (locator.scheme == "content") {
-                descriptor = contentResolver.openFileDescriptor(locator, "r") ?: throw IllegalStateException("Unreadable document")
-                Media(vlc, descriptor!!.fileDescriptor)
-            } else Media(vlc, locator)
-            // The debug emulator's goldfish decoder can keep stale frames after a paused seek.
-            val softwarePreview = BuildConfig.DEBUG && Build.HARDWARE in listOf("ranchu", "goldfish")
-            media.setHWDecoderEnabled(!softwarePreview, false)
-            player.media = media
-            media.release()
-            if (ruleOperation == 0L || lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) player.play()
-            else { startOnResume = true; status = "paused" }
+            if (locator.scheme == "content") descriptor = contentResolver.openFileDescriptor(locator, "r") ?: throw IllegalStateException("Unreadable document")
+            val background = ruleOperation > 0 && !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+            startOnResume = background && !paused
+            player.open(uri, descriptor, resumeMs, paused || background)
         } catch (_: SecurityException) { status = "permission_denied" }
-        catch (_: Exception) { status = "playback_error" }
+        catch (_: Exception) {
+            if (player is MpvEngine) { val generation = engineGeneration; handler.post { if (generation == engineGeneration) fallbackToVlc() } }
+            else status = "playback_error"
+        }
     }
 
     private fun requireRuleSession(args: PlayerArgs) {
@@ -215,7 +351,9 @@ class PlayerActivity : ComponentActivity() {
         initialSubtitle = args.subtitleUri
         intent.putExtra("subtitleFile", args.subtitleFile).putExtra("subtitleLabel", args.subtitleLabel).putExtra("subtitleId", args.subtitleId)
         mediaReady = true; loadingError = null; loadingMessage = "正在连接视频…"; status = "opening"
-        startMedia(); report()
+        if (playbackSettings.resolve(this, superResolutionMode) != "compat" && player is VlcEngine && fallbackReason == null) switchSuperResolution(superResolutionMode, rebuild = true)
+        else startMedia()
+        report()
     }
 
     fun cancelRuleLoading(cancelledThrough: Long) {
@@ -223,7 +361,8 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private fun tracks(subtitle: Boolean) {
-        val items = (if (subtitle) player.spuTracks else player.audioTracks) ?: emptyArray()
+        if (subtitle && !subtitleSupported()) return
+        val items = (if (subtitle) player.spuTracks else player.audioTracks)
         AlertDialog.Builder(this).setItems(items.map { "${it.id}: ${it.name}" }.toTypedArray()) { _, index ->
             val changed = if (subtitle) player.setSpuTrack(items[index].id) else player.setAudioTrack(items[index].id)
             if (changed && subtitle) selectedSidecar = null
@@ -257,6 +396,7 @@ class PlayerActivity : ComponentActivity() {
     fun pickSubtitle(invoke: Invoke, expectedSession: String) {
         if (sessionId != expectedSession || isFinishing || isDestroyed) { invoke.reject("expired_player_session"); return }
         if (subtitlePicker != null) { invoke.reject("subtitle_picker_busy"); return }
+        if (!subtitleSupported()) { invoke.reject("字幕需要GPU渲染"); return }
         subtitlePicker = invoke
         try { launchSubtitlePicker() } catch (_: Exception) { subtitlePicker = null; invoke.resolve(JSObject().put("status", "subtitle_error")) }
     }
@@ -281,7 +421,7 @@ class PlayerActivity : ComponentActivity() {
 
     private fun selectSidecar(file: File, name: String?, trackId: String?): JSObject {
         require(file.extension.lowercase() in listOf("srt", "ass", "ssa"))
-        check(player.addSlave(IMedia.Slave.Type.Subtitle, file.absolutePath, true))
+        check(player.addSubtitle(file.absolutePath))
         val id = trackId ?: "sidecar:${UUID.randomUUID()}"
         sidecars[id] = Pair(name ?: "外挂字幕", file)
         selectedSidecar = id
@@ -304,23 +444,26 @@ class PlayerActivity : ComponentActivity() {
             "rate" -> { require(args.value in .5..2.0); setPlaybackRate(args.value.toFloat()) }
             "audio" -> {
                 val id = args.trackId?.toInt() ?: args.value.toInt()
-                require(player.audioTracks?.any { it.id == id } == true)
+                require(player.audioTracks.any { it.id == id } == true)
                 check(player.setAudioTrack(id))
             }
             "subtitle" -> {
+                require(subtitleSupported())
                 val sidecar = args.trackId?.let { sidecars[it] }
-                if (sidecar != null) { check(player.addSlave(IMedia.Slave.Type.Subtitle, sidecar.second.absolutePath, true)); selectedSidecar = args.trackId }
+                if (sidecar != null) { check(player.addSubtitle(sidecar.second.absolutePath)); selectedSidecar = args.trackId }
                 else {
                     val id = args.trackId?.toInt() ?: args.value.toInt()
-                    require(player.spuTracks?.any { it.id == id } == true)
+                    require(player.spuTracks.any { it.id == id } == true)
                     check(player.setSpuTrack(id)); selectedSidecar = null
                 }
             }
             "subtitleOffset" -> { require(args.value in -60000.0..60000.0); subtitleDelayMs = args.value.toLong(); check(player.setSpuDelay(subtitleDelayMs * 1000)) }
-            "externalSubtitle" -> loadSubtitle(Uri.parse(requireNotNull(args.uri)))
+            "externalSubtitle" -> { require(subtitleSupported()); loadSubtitle(Uri.parse(requireNotNull(args.uri))) }
+            "playbackSettings" -> applyPlaybackSettings(PlaybackSettings(args.hardwareDecoding, args.hardwareDecoder, args.videoRenderer))
             "landscape" -> requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
             "portrait" -> requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             "system" -> requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            "superResolution" -> { require(args.value in 0.0..2.0 && args.value % 1.0 == 0.0); switchSuperResolution(args.value.toInt()) }
             "close" -> { player.pause(); status = "closed"; finish() }
             else -> throw IllegalArgumentException("Unknown action")
         }
@@ -330,12 +473,13 @@ class PlayerActivity : ComponentActivity() {
 
     private fun report() {
         if (!::player.isInitialized) return
-        fun trackList(items: Array<MediaPlayer.TrackDescription>?) = JSArray().apply {
+        lastReportMs = android.os.SystemClock.elapsedRealtime()
+        fun trackList(items: Array<VideoTrack>?) = JSArray().apply {
             items?.forEach { put(JSObject().put("id", it.id).put("name", it.name)) }
         }
         val subtitleTracks = trackList(player.spuTracks)
         sidecars.forEach { (id, entry) -> subtitleTracks.put(JSObject().put("id", id).put("name", entry.first).put("kind", "sidecar")) }
-        snapshot = JSObject().put("status", status).put("engine", "LibVLC 3.7.7").put("positionMs", player.time)
+        snapshot = JSObject().put("status", status).put("engine", player.name).put("positionMs", player.time)
             .put("loadingMessage", loadingMessage).put("ruleOperation", ruleOperation)
             .put("mediaFileId", mediaFileId).put("sessionId", sessionId).put("revision", ++revision)
             .put("updatedAtMs", System.currentTimeMillis())
@@ -343,6 +487,23 @@ class PlayerActivity : ComponentActivity() {
             .put("audioTracks", trackList(player.audioTracks)).put("subtitleTracks", subtitleTracks).put("selectedSidecar", selectedSidecar)
             .put("audioTrack", player.audioTrack).put("subtitleTrack", player.spuTrack).put("subtitleDelayUs", player.spuDelay)
             .put("subtitleOffsetMs", player.spuDelay / 1000)
+        snapshot.put("superResolution", superResolutionMode).put("superResolutionFallback", fallbackReason).put("gpuError", gpuError)
+            .put("playbackSettings", JSObject().put("hardwareDecoding", playbackSettings.hardware).put("hardwareDecoder", playbackSettings.decoder).put("videoRenderer", playbackSettings.renderer))
+        (player as? MpvEngine)?.let { mpv ->
+            snapshot.put("shaderCount", mpv.shaderFiles.size).put("gpuRenderer", mpv.property("current-vo"))
+                .put("decoder", mpv.property("hwdec-current")).put("droppedFrames", mpv.property("frame-drop-count"))
+                .put("videoWidth", mpv.property("video-params/w")).put("videoHeight", mpv.property("video-params/h"))
+            val passes = org.json.JSONObject(mpv.property("vo-passes") ?: "{}").optJSONArray("fresh")
+            val descriptions = JSArray()
+            var gpuTimeNs = 0L
+            if (passes != null) for (index in 0 until passes.length()) {
+                val pass = passes.getJSONObject(index)
+                descriptions.put(pass.optString("desc")); gpuTimeNs += pass.optLong("avg")
+            }
+            snapshot.put("shaderPasses", descriptions).put("gpuTimeMs", gpuTimeNs / 1_000_000.0)
+        }
+        val superResolutionLabel = when (superResolutionMode) { 1 -> "超分·流畅"; 2 -> "超分·画质"; else -> "超分·关" }
+        if (superResolutionButton.text.toString() != superResolutionLabel) superResolutionButton.text = superResolutionLabel
         if (loadingError != null && status != "closed") snapshot.put("error", JSObject().put("code", "unknown").put("message", loadingError).put("retryable", true))
         val loading = status in listOf("opening", "buffering", "playback_error")
         loadingPanel.visibility = if (loading) View.VISIBLE else View.GONE
@@ -351,7 +512,8 @@ class PlayerActivity : ComponentActivity() {
         mediaControls.forEach { it.visibility = if (mediaReady && loadingError == null) View.VISIBLE else View.GONE }
         seek.visibility = if (mediaReady && loadingError == null) View.VISIBLE else View.GONE
         label.visibility = if (mediaReady && status != "playback_error") View.VISIBLE else View.GONE
-        label.text = subtitleError ?: "${status} · ${player.time / 1000}/${player.length / 1000}s · ${player.rate}× · ${subtitleDelayMs}ms"
+        val playbackLabel = fallbackReason ?: subtitleError ?: "${status} · ${player.time / 1000}/${player.length / 1000}s · ${player.rate}× · ${subtitleDelayMs}ms"
+        if (label.text.toString() != playbackLabel) label.text = playbackLabel
         if (player.length > 0 && !seek.isPressed) seek.progress = (player.time * 1000 / player.length).toInt().coerceIn(0, 1000)
         if (player.time >= 0 && player.length > 0) getSharedPreferences("genzo-prototype-progress", 0).edit().putLong(identity(), player.time).apply()
         if (mediaFileId != null && player.time >= 0 && player.length > 0) {
@@ -359,24 +521,16 @@ class PlayerActivity : ComponentActivity() {
         }
     }
 
-    override fun onStart() {
-        super.onStart()
-        // LibVLC detaches automatically when the system picker destroys our surfaces.
-        if (::player.isInitialized && !player.vlcVout.areViewsAttached()) {
-            player.detachViews()
-            player.attachViews(video, null, true, false)
-        }
-    }
-    override fun onResume() { super.onResume(); if (startOnResume && mediaReady) { startOnResume = false; player.play() } }
+    override fun onStart() { super.onStart(); if (::player.isInitialized) player.onStart() }
+    override fun onResume() { super.onResume(); if (startOnResume && mediaReady && player.length > 0) { startOnResume = false; player.play() } }
     override fun onPause() { if (::player.isInitialized) { if (mediaReady) player.pause(); status = if (isFinishing) "closed" else if (mediaReady) "paused" else status; if (isFinishing && ruleOperation > 0) RuleResolver.cancel(ruleOperation); report() }; super.onPause() }
-    override fun onStop() { if (::player.isInitialized) player.detachViews(); super.onStop() }
+    override fun onStop() { if (::player.isInitialized) player.onStop(); super.onStop() }
     override fun onSaveInstanceState(outState: Bundle) { if (::player.isInitialized) outState.putLong("positionMs", player.time); super.onSaveInstanceState(outState) }
     override fun onDestroy() {
         if (ruleOperation > 0) RuleResolver.cancel(ruleOperation)
         subtitlePicker?.resolve(JSObject().put("status", "cancelled")); subtitlePicker = null
         handler.removeCallbacks(ticker)
-        if (::player.isInitialized) { status = "closed"; report(); player.stop(); player.detachViews(); player.release() }
-        if (::vlc.isInitialized) vlc.release()
+        if (::player.isInitialized) { status = "closed"; report(); engineGeneration++; player.release() }
         descriptor?.close()
         subtitleFiles.forEach { it.delete() }
         if (current?.get() === this) current = null

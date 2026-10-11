@@ -41,6 +41,8 @@ pub enum PlayerAction {
     Subtitle { #[serde(rename = "trackId")] track_id: String },
     SubtitleDelay { #[serde(rename = "offsetMs")] offset_ms: i64 },
     Orientation { orientation: String },
+    SuperResolution { mode: u8 },
+    PlaybackSettings { #[serde(rename = "hardwareDecoding")] hardware: bool, #[serde(rename = "hardwareDecoder")] decoder: String, #[serde(rename = "videoRenderer")] renderer: String },
 }
 
 impl PlayerAction {
@@ -72,6 +74,16 @@ impl PlayerAction {
             Self::Orientation { orientation } => {
                 if !["portrait", "landscape", "system"].contains(&orientation.as_str()) { return Err(invalid()); }
                 json!({"action":orientation})
+            }
+            Self::SuperResolution { mode } => {
+                if *mode > 2 { return Err(invalid()); }
+                json!({"action":"superResolution","value":mode})
+            }
+            Self::PlaybackSettings { hardware, decoder, renderer } => {
+                if !["auto", "auto-safe", "auto-copy", "mediacodec", "mediacodec-copy"].contains(&decoder.as_str())
+                    || !["compat", "auto", "gpu", "gpu-next", "mediacodec_embed"].contains(&renderer.as_str())
+                    || (renderer == "mediacodec_embed" && !hardware) { return Err(invalid()); }
+                json!({"action":"playbackSettings","hardwareDecoding":hardware,"hardwareDecoder":decoder,"videoRenderer":renderer})
             }
         })
     }
@@ -126,7 +138,10 @@ fn snapshot(raw: Value) -> Value {
         "durationMs":raw["durationMs"].as_i64().filter(|value| *value>0),"seekable":raw["seekable"].as_bool().unwrap_or(false),
         "rate":raw["rate"].as_f64().unwrap_or(1.),"audioTracks":tracks("audioTracks"),"subtitleTracks":tracks("subtitleTracks"),
         "audioTrackId":raw["audioTrack"].as_i64().map(|id| id.to_string()),"subtitleTrackId":raw["selectedSidecar"].as_str().map(str::to_owned).or_else(|| raw["subtitleTrack"].as_i64().map(|id| id.to_string())),
-        "subtitleOffsetMs":raw["subtitleOffsetMs"].as_i64().unwrap_or_else(|| raw["subtitleDelayUs"].as_i64().unwrap_or(0)/1000),"error":error})
+        "subtitleOffsetMs":raw["subtitleOffsetMs"].as_i64().unwrap_or_else(|| raw["subtitleDelayUs"].as_i64().unwrap_or(0)/1000),
+        "engine":raw["engine"],"superResolution":raw["superResolution"].as_u64().unwrap_or(0),
+        "superResolutionFallback":raw["superResolutionFallback"],"playbackSettings":raw["playbackSettings"],
+        "actualRenderer":raw["gpuRenderer"],"actualDecoder":raw["decoder"],"error":error})
 }
 
 async fn sync_saved(pool: &SqlitePool) -> AppResult<()> {
@@ -418,6 +433,15 @@ mod tests {
         assert!(PlayerAction::Rate { speed:f64::NAN }.native(&current).is_err());
         assert!(PlayerAction::SubtitleDelay { offset_ms:60001 }.native(&current).is_err());
         assert!(PlayerAction::Orientation { orientation:"invalid".into() }.native(&current).is_err());
+        for mode in 0..=2 { assert_eq!(PlayerAction::SuperResolution { mode }.native(&current).unwrap(),json!({"action":"superResolution","value":mode})); }
+        assert!(PlayerAction::SuperResolution { mode:3 }.native(&current).is_err());
+        assert!(serde_json::from_value::<PlayerAction>(json!({"type":"super-resolution","mode":-1})).is_err());
+        assert!(serde_json::from_value::<PlayerAction>(json!({"type":"super-resolution","mode":1,"shader":"https://untrusted"})).is_err());
+        let settings = PlayerAction::PlaybackSettings { hardware:true,decoder:"auto-safe".into(),renderer:"gpu-next".into() };
+        assert_eq!(settings.native(&current).unwrap()["videoRenderer"],"gpu-next");
+        for (hardware,decoder,renderer) in [(true,"d3d11va","gpu"),(true,"auto-safe","https://untrusted"),(false,"mediacodec","mediacodec_embed")] {
+            assert!(PlayerAction::PlaybackSettings { hardware,decoder:decoder.into(),renderer:renderer.into() }.native(&current).is_err());
+        }
         assert!(serde_json::from_value::<PlayerAction>(json!({"type":"play","uri":"content://untrusted"})).is_err());
         let public = snapshot(json!({"sessionId":"new","durationMs":0,"uri":"secret","subtitleTracks":[{"id":"sidecar:1","name":"Test","kind":"sidecar"}],"selectedSidecar":"sidecar:1","subtitleDelayUs":-500000}));
         assert_eq!(public["durationMs"],Value::Null);

@@ -39,7 +39,10 @@ class PlayerArgs {
 @InvokeArg
 class CredentialArgs { lateinit var id: String; var username: String = ""; var password: String = "" }
 @InvokeArg
-class ControlArgs { lateinit var action: String; var value: Double = 0.0; var uri: String? = null; var sessionId: String? = null; var trackId: String? = null }
+class ControlArgs {
+    lateinit var action: String; var value: Double = 0.0; var uri: String? = null; var sessionId: String? = null; var trackId: String? = null
+    var hardwareDecoding: Boolean = true; var hardwareDecoder: String = "auto-safe"; var videoRenderer: String = "compat"
+}
 @InvokeArg
 class SessionArgs { lateinit var sessionId: String }
 @InvokeArg

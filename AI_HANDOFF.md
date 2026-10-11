@@ -1,5 +1,24 @@
 # Codex 与 DeepSeek Harness 项目交接记录
 
+## 安卓 Anime4K 原生 GPU 超分（2026-10-11）
+
+- 基线 `663adfa`，同一 `.tmp/android-first` / `codex/android-first`。用户要求规则视频、WebDAV、本地视频均可超分，并明确优先效果 / 兼容性、接受体积增加、保留原内核回退。当前 OpenDesign 草稿全部参与构建；App / ExplorePanel / mobile.css / FRONTEND_PREVIEW 及人物 / 关联 / 制作人员 / 评论等原有草稿未修改或纳入本次提交。
+- 关闭沿用 LibVLC 3.7.7；开启使用原生 libmpv GPU / Android OpenGL ES / mediacodec-copy，官方 Anime4K 低端 / 高端 Mode A 两档。固定 Anime4K `7684e958…` 8 个原样 shader、MIT mpv-android Surface 思路和 Predidit libmpv default v1.2.7 (`dd2bfba…`)；各 ABI 制品 SHA256 校验，仅取 libmpv.so，JNI 按 handle 隔离，无 Flutter / Dart / helper。许可 / 静态依赖来源写入 THIRD_PARTY_NOTICES、licenses/libmpv-1.2.7，随 APK assets 分发并可从“超分 → 开源说明”查看。
+- 新 VideoEngine 仅适配两内核的当前控制和 Surface，沿用来源 / Rust 代理 / 文件授权 / SQLite 模型，无迁移。切换保留 session、媒体 ID、位置、暂停、倍速、音轨顺序、字幕选择和偏移；异常回 LibVLC，保留下一次希望超分的偏好。规则加载壳不等待 GPU 初始化，地址到达后同一 Activity 切 GPU；取消 / 代次保护保留。
+- default 内核不含 fontconfig，使用私有 cache 中指向可读 Roboto / Noto Sans CJK 的链接，未在 APK 捆绑字体或整目录加载。已查看中文 SRT、内嵌 ASS 动态位置 / 样式和多音轨真实帧。暂停状态 Surface 重建 / 旋转后更新实际尺寸并在原位置重新解码，避免旧纹理尺寸残留 / 画面变形；系统字幕选择器取消后保持暂停、超分与字幕。仅有 player state 不能证明画面正确，脚本对关键截图增加自建色条像素面积检查。
+- TypeScript、98 前端测试通过；Rust 349 通过 / 18 忽略，版本更新后播放器 4 项再次通过，包含无效档位 / 不允许外部 shader 参数 / 过期会话约束。arm64 / arm / x86 / x86_64 原生桥构建均通过，实际播放只验一加 PLK110 Android16 / arm64 / 4KiB 页；新 arm64 ELF / APK ZIP 已校验 16KiB 对齐，不据此宣称 16KiB 设备实际运行。
+- 开启流畅档的既有规则 33 项回归通过，最新证据 `D:/DevTools/Android/Build/qa/rules-native-1791698796802/`，含 MP4 / HLS / 无扩展名、显式头与 Cookie / 分片 / Range、17秒续播、取消慢选集和旧响应、稳定媒体 ID / 规则移除数据保留。Native 加载检查改为在1.5秒内等待本次 Activity session，不能用“前台类名相同”推断新实例已完成创建；受控选集响应仍延迟1.6秒。早期失败目录不作为完成证据。
+- 1080p 自建色条短测 `D:/DevTools/Android/Build/qa/anime4k-1791698200098/`：流畅 GPU 平均8.36ms/帧、画质20.69ms/帧，两次采样 frame-drop-count 0、mediacodec-copy。素材是自建图案放大至1920×1080 / 24fps，不能当成所有动画、芯片、HDR / Dolby Vision、长时间温度或耗电结论；预设适合动画，默认关闭、建议先流畅。
+- 用户补充明确实际参考 Kazumi，给出 `randspace0/Anime4K-rs`。已核对 Rust仓库 `e3b3ff132018d5314462ae4b328a7f4b859b3aa5` 的 image / raster / rayon 图像CLI，不将它当成当前官方CNN视频GPU路径；未复制其第三方示例图片。播放设置按同一 Kazumi GPLv3 快照适配硬解开关、5种安卓解码器、兼容 / 自动 / OpenGL / Vulkan / MediaCodec直通；自动以Android14+ / Vulkan1.2能力为门槛，Vulkan失败可以先回OpenGL再回LibVLC。实际解码器和渲染器与用户请求分别显示。
+- 用户明确选GPU时关闭超分仍保留GPU，升级默认兼容仍保留。直通强制MediaCodec / 硬解并关闭超分及字幕；选择超分从直通转GPU。直通Surface按源比例居中。切换保存会话、位置、暂停、倍速；设置持久化而非只改UI。原生UI避免每秒重复写相同标签，暂停时能正确被无障碍 / UIAutomator读取。
+- 追加设置 **10项全部通过**（含真实GUI）`D:/DevTools/Android/Build/qa/playback-settings-1791711441575/`：软件解码actual=no、5种选项、Vulkan真实vo=gpu-next及Anime4K pass、直通真实MediaCodec及16:9像素检查、非法 / 跨平台选择拒绝、冲突联动、自动设备能力和跨会话记忆、Rust公开控制、Native设置布局。10项前一次失败是测试清理对compat+超分的错误预期，后已改正；GUI首次dump在播放动画中无法idle，改为暂停并减少重复标签事件后实际通过。
+- 追加设置后的超分 **15项通过** `D:/DevTools/Android/Build/qa/anime4k-1791711286823/`，包括三类来源、质量 / 流畅、暂停切换 / exact seek / 倍速 / 音轨、中文SRT / ASS、旋转、系统字幕选择器取消后实际画面、异常流回退、保留下一次偏好及回退后主动关闭能持久保存。设置前最终首帧保护另验证 `anime4k-1791699353544`；mpv start已恢复位置时不重复初始seek，实际GPU pass出现才视为准备完成，30秒无帧回退。早期状态通过但截图变形的目录不作最终证据。
+- 最新设置后的规则 **33项通过** `D:/DevTools/Android/Build/qa/rules-native-1791711329294/`，上述HTTP / Cookie / Range / HLS / 取消 / 身份回归均保持。当前Rust349通过/18忽略、前端98通过与TypeScript通过，测试含新增解码参数边界。没有修改ReaderActivity / reader模块 / ReaderArgs或阅读迁移；不声称重跑所有阅读器实体机长测。
+- 最终普通签名预览 `D:/DevTools/Android/Build/previews/anime4k-20261011/Genzo_0.8.0_Anime4K-preview-final_arm64-v8a.apk`，**96,674,609字节**，SHA256 **235f125bbe2ca8f3360fd637a349e784eeccb858824fbf2345250dae6ecf4702**。0.8.0/code8000、com.genzo.android、arm64/min26/target36、非debuggable、原证书cee90e5f…cdb。v2/v3签名、16KiB ZIP与新增ELF、8官方shader、217生产源码 / 许可资产匹配、3 native与Gradle stripped一致、无DB/EPUB/CBZ/测试视频/helper/JAR，内嵌 `index-_oIcf1ff.js`。汇总 `D:/DevTools/Android/Build/qa/anime4k-20261011/`。同文件夹早期无final后缀预览不包含全部最终设置，使用此文件及哈希。
+- 普通签名包与原readerqa均已install-r覆盖更新，不清库。最终更新前重新读取实际用户 **29作品 / 15来源（14规则）/ 13播放记录**（不是最初28/15/11或中途29/15/12），更新后个人字段、来源 / 规则ID及版本 / 启停、位置 / 时长 / 完成逐项一致；无隐式扫描，没有复制用户DB / 凭据 / Cookie或导入合成测试源到用户包。普通包firstInstallTime仍2026-10-08 23:16:41。共享前端预览及9228/9351已更新，最后停原readerqa来源页，未自动播放真实视频。
+- 新功能按 SemVer 提升本机版本为0.8.0/code8000；公开版仍v0.5.2，本轮不创建公开Release / 标签 / 推送。旧0.7.0预览和旧公开资产保持原状。
+
+
 ## 规则加载移入原生播放界面（2026-10-11）
 
 - 基线 `72905c8`，同一 `.tmp/android-first` / `codex/android-first`，用户要求规则选择后“正在处理”的加载放入视频播放界面。保留完整当前 OpenDesign 工作区；本轮只改 RuleBrowser 的打开提示及相关原生 / Rust 流程，不提交 App / ExplorePanel / mobile.css 等其他 Agent 草稿。无依赖 / 数据库迁移 / 内核替换。

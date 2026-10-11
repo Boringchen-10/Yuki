@@ -139,6 +139,7 @@ async function playing(opened, label) {
     assert.notEqual(sample.status, "error", JSON.stringify(sample));
     return sample.status === "playing" && sample.positionMs > 500 && sample.durationMs > 10000;
   }, label);
+  if (process.env.RULES_TEST_ANIME4K === "1") { assert.equal(sample.superResolution, 1); assert.match(sample.engine, /libmpv/); }
   result.snapshots[label] = sample;
   shot(label); return sample;
 }
@@ -303,7 +304,7 @@ try {
     await until(async () => requests.filter(request => request.path === "/slow/detail").length > requestCount, Boolean, "delayed chapter request begins");
     const foregroundLoading = command("shell", "dumpsys", "activity", "activities");
     assert.ok(foregroundLoading.split("\n").filter(line => /mResumedActivity|topResumedActivity/.test(line)).some(line => line.includes("PlayerActivity")));
-    const loadingState = await invoke("android_native", { command: "playerState", payload: {} });
+    const loadingState = await until(() => invoke("android_native", { command: "playerState", payload: {} }), sample => sample.sessionId === pending.sessionId, "new native loading session", 1500);
     assert.equal(loadingState.sessionId, pending.sessionId); assert.match(loadingState.loadingMessage, /获取剧集/);
     await delay(350);
     shot("native-loading-chapters");

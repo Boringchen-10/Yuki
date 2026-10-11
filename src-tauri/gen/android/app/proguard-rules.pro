@@ -38,3 +38,4 @@
 }
 # LibVLC resolves interface classes and fields from its native library.
 -keep class org.videolan.libvlc.** { *; }
+-keep class com.genzo.android.MpvNative { *; }

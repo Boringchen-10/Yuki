@@ -20,7 +20,13 @@ export interface SubtitleTrack { id: string; label: string; kind: "embedded" | "
 export type PlayerAction = { type: "play" | "pause" | "close" }
   | { type: "seek"; positionMs: number } | { type: "rate"; speed: number }
   | { type: "audio" | "subtitle"; trackId: string } | { type: "subtitle-delay"; offsetMs: number }
-  | { type: "orientation"; orientation: "portrait" | "landscape" | "system" };
+  | { type: "orientation"; orientation: "portrait" | "landscape" | "system" }
+  | { type: "super-resolution"; mode: 0 | 1 | 2 }
+  | ({ type: "playback-settings" } & PlaybackSettings);
+export interface PlaybackSettings {
+  hardwareDecoding: boolean; hardwareDecoder: "auto" | "auto-safe" | "auto-copy" | "mediacodec" | "mediacodec-copy";
+  videoRenderer: "compat" | "auto" | "gpu" | "gpu-next" | "mediacodec_embed";
+}
 export interface PlayerSnapshot {
   sessionId: string | null; mediaFileId: string | null; status: string;
   positionMs: number; durationMs: number | null;
@@ -28,6 +34,8 @@ export interface PlayerSnapshot {
   audioTracks: { id: string; label: string; language?: string }[]; subtitleTracks: SubtitleTrack[];
   audioTrackId: string | null; subtitleTrackId: string | null; subtitleOffsetMs: number;
   error?: Failure | null;
+  engine?: string | null; superResolution?: number; superResolutionFallback?: string | null;
+  playbackSettings?: PlaybackSettings | null; actualRenderer?: string | null; actualDecoder?: string | null;
 }
 export interface DocumentEntry {
   documentId: string; name: string; mimeType: string;
