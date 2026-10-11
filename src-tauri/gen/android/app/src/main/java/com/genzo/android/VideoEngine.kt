@@ -1,23 +1,16 @@
 package com.genzo.android
 
 import android.content.Context
-import android.net.Uri
-import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.View
-import org.videolan.libvlc.LibVLC
-import org.videolan.libvlc.Media
-import org.videolan.libvlc.MediaPlayer
-import org.videolan.libvlc.interfaces.IMedia
-import org.videolan.libvlc.util.VLCVideoLayout
 import java.io.File
 
 data class VideoTrack(val id: Int, val name: String)
 
-// Both source resolution and Activity/session ownership remain shared by both renderers.
+// Shared controls retain the current Activity/session ownership.
 interface VideoEngine {
     val view: View
     val name: String
@@ -45,58 +38,7 @@ interface VideoEngine {
     fun release()
 }
 
-class VlcEngine(context: Context, private val state: (String) -> Unit, private val hardware: Boolean = true) : VideoEngine {
-    private val vlc = LibVLC(context, arrayListOf("--no-video-title-show", "--network-caching=1500"))
-    private val player = MediaPlayer(vlc)
-    override val view = VLCVideoLayout(context)
-    override val name = "LibVLC 3.7.7"
-    override val isPlaying get() = player.isPlaying
-    override val time get() = player.time
-    override val length get() = player.length
-    override val isSeekable get() = player.isSeekable
-    override var rate: Float
-        get() = player.rate
-        set(value) { player.rate = value }
-    private fun tracks(items: Array<MediaPlayer.TrackDescription>?) = items?.map { VideoTrack(it.id, it.name) }?.toTypedArray() ?: emptyArray()
-    override val audioTracks get() = tracks(player.audioTracks)
-    override val spuTracks get() = tracks(player.spuTracks)
-    override val audioTrack get() = player.audioTrack
-    override val spuTrack get() = player.spuTrack
-    override val spuDelay get() = player.spuDelay
-    init {
-        player.attachViews(view, null, true, false)
-        player.setEventListener { event ->
-            when (event.type) {
-                MediaPlayer.Event.Playing -> state("playing")
-                MediaPlayer.Event.Paused -> state("paused")
-                MediaPlayer.Event.Buffering -> state(if (event.buffering < 100) "buffering" else if (player.isPlaying) "playing" else "paused")
-                MediaPlayer.Event.EndReached -> state(if (player.length > 0) "ended" else "playback_error")
-                MediaPlayer.Event.EncounteredError -> state("playback_error")
-            }
-        }
-    }
-    override fun open(uri: String, descriptor: ParcelFileDescriptor?, position: Long, paused: Boolean) {
-        val media = if (descriptor != null) Media(vlc, descriptor.fileDescriptor) else Media(vlc, Uri.parse(uri))
-        val emulator = BuildConfig.DEBUG && Build.HARDWARE in listOf("ranchu", "goldfish")
-        media.setHWDecoderEnabled(hardware && !emulator, false)
-        if (paused) media.addOption(":start-paused")
-        player.media = media; media.release()
-        // Activity restores the LibVLC position on Playing, as before.
-        player.play()
-    }
-    override fun play() { player.play() }
-    override fun pause() { player.pause() }
-    override fun setTime(time: Long, fast: Boolean) { player.setTime(time, fast) }
-    override fun setAudioTrack(id: Int) = player.setAudioTrack(id)
-    override fun setSpuTrack(id: Int) = player.setSpuTrack(id)
-    override fun setSpuDelay(delay: Long) = player.setSpuDelay(delay)
-    override fun addSubtitle(path: String) = player.addSlave(IMedia.Slave.Type.Subtitle, path, true)
-    override fun onStart() { if (!player.vlcVout.areViewsAttached()) { player.detachViews(); player.attachViews(view, null, true, false) } }
-    override fun onStop() { player.detachViews() }
-    override fun release() { player.setEventListener(null); player.stop(); player.detachViews(); player.release(); vlc.release() }
-}
-
-// Small handle-based JNI facade. libmpv is loaded only when Anime4K is selected.
+// Handle-based JNI facade; ordinary playback and Anime4K use the same libmpv.
 object MpvNative {
     init { System.loadLibrary("mpv"); System.loadLibrary("genzompv") }
     external fun create(): Long
@@ -107,10 +49,11 @@ object MpvNative {
     external fun set(handle: Long, key: String, value: String): Int
     external fun surface(handle: Long, surface: Surface?): Int
     external fun poll(handle: Long): Int
+    external fun problem(handle: Long): Int
     external fun destroy(handle: Long)
 }
 
-class MpvEngine(context: Context, mode: Int, private val state: (String) -> Unit, settings: PlaybackSettings, val renderer: String) : VideoEngine, SurfaceHolder.Callback {
+class MpvEngine(context: Context, mode: Int, private val state: (String, String?) -> Unit, settings: PlaybackSettings, val renderer: String) : VideoEngine, SurfaceHolder.Callback {
     override val view = SurfaceView(context)
     override val name = if (mode > 0) "libmpv · Anime4K" else "libmpv"
     private var handle = MpvNative.create().also { check(it != 0L) }
@@ -122,6 +65,11 @@ class MpvEngine(context: Context, mode: Int, private val state: (String) -> Unit
     private var lastStatus = "opening"
     private var firstFrameAt = 0L
     private var attached = false
+    private var foreground = true
+    private var bufferingSince = 0L
+    private var terminalFailure = false
+    private var networkSource = false
+    private var pendingEvents = 0
     val shaderFiles: List<String>
     fun property(key: String) = if (handle != 0L) MpvNative.get(handle, key) else null
     private fun number(key: String) = property(key)?.toDoubleOrNull() ?: 0.0
@@ -176,6 +124,7 @@ class MpvEngine(context: Context, mode: Int, private val state: (String) -> Unit
                 "terminal" to "no",
                 "input-default-bindings" to "no",
                 "cache" to "yes",
+                "network-timeout" to "15",
                 "demuxer-max-bytes" to "67108864",
                 "demuxer-max-back-bytes" to "16777216",
                 "glsl-shaders" to shaderFiles.joinToString(":"),
@@ -202,11 +151,13 @@ class MpvEngine(context: Context, mode: Int, private val state: (String) -> Unit
         } catch (error: Throwable) { android.util.Log.w("GenzoAnime4K", "GPU initialization failed", error); MpvNative.destroy(handle); handle = 0; throw error }
     }
     override fun open(uri: String, descriptor: ParcelFileDescriptor?, position: Long, paused: Boolean) {
+        terminalFailure = false
+        networkSource = uri.startsWith("http://") || uri.startsWith("https://")
         val locator = if (descriptor != null) "fd://${descriptor.fd}" else uri
         pending = {
             check(set("pause", if (paused) "yes" else "no"))
             check(command("loadfile", locator, "replace", "-1", "start=${position / 1000.0}"))
-            opened = true; firstFrameAt = System.currentTimeMillis()
+            opened = true; firstFrameAt = android.os.SystemClock.elapsedRealtime()
         }
         if (view.holder.surface.isValid) { val load = pending; pending = null; load?.invoke() }
     }
@@ -218,7 +169,7 @@ class MpvEngine(context: Context, mode: Int, private val state: (String) -> Unit
             check(set("vo", renderer)); set("force-window", "yes")
             attached = true
             val load = pending; pending = null; load?.invoke()
-        } catch (_: Exception) { state("playback_error") }
+        } catch (_: Exception) { terminalFailure = true; state("playback_error", "render_failed") }
     }
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
         if (handle == 0L) return
@@ -235,9 +186,11 @@ class MpvEngine(context: Context, mode: Int, private val state: (String) -> Unit
     override fun setSpuTrack(id: Int) = set("sid", if (id < 0) "no" else id.toString())
     override fun setSpuDelay(delay: Long) = set("sub-delay", (delay / 1_000_000.0).toString())
     override fun addSubtitle(path: String) = command("sub-add", path, "select")
+    override fun onStart() { foreground = true; firstFrameAt = android.os.SystemClock.elapsedRealtime(); bufferingSince = 0 }
+    override fun onStop() { foreground = false; bufferingSince = 0 }
     override fun poll() {
-        if (handle == 0L || !opened) return
-        val events = MpvNative.poll(handle)
+        if (handle == 0L || !opened || terminalFailure) return
+        val events = pendingEvents or MpvNative.poll(handle)
         if (events and 1 != 0) loaded = true
         if (events and 4 != 0 || flag("eof-reached")) ended = true
         if (loaded && renderer == "mediacodec_embed") {
@@ -252,22 +205,43 @@ class MpvEngine(context: Context, mode: Int, private val state: (String) -> Unit
         }
         // Android may destroy surfaces in the background / document picker. That is
         // not an unsupported GPU and must not trigger a renderer switch.
-        if (!attached) return
+        if (!attached || !foreground) { pendingEvents = events; return }
+        pendingEvents = 0
         if (loaded && !frameRendered) frameRendered = if (renderer == "mediacodec_embed") events and 2 != 0
             else org.json.JSONObject(property("vo-passes") ?: "{}").optJSONArray("fresh")?.length()?.let { it > 0 } == true
+        val waiting = flag("paused-for-cache") && !flag("pause")
+        if (waiting && bufferingSince == 0L) bufferingSince = android.os.SystemClock.elapsedRealtime()
+        if (!waiting) bufferingSince = 0
+        val nativeProblem = MpvNative.problem(handle)
+        var problem = when (nativeProblem) {
+            1 -> "render_failed"; 2 -> "decode_failed"; 3 -> "source_offline"; 4 -> "credential_invalid"; 5 -> "source_missing"
+            6 -> "unsupported_media"; 7 -> "audio_failed"; 8 -> "network_timeout"; 9 -> "file_unavailable"; else -> "playback_failed"
+        }
+        val timedOut = (!frameRendered && android.os.SystemClock.elapsedRealtime() - firstFrameAt > 30_000) ||
+            (bufferingSince > 0 && android.os.SystemClock.elapsedRealtime() - bufferingSince > 45_000)
+        if (timedOut && problem == "playback_failed") problem = "network_timeout"
+        val truncated = events and 4 != 0 && length > 0 && time > 0 && time + 2000 < length
+        if (truncated && problem == "playback_failed") problem = if (networkSource) "source_offline" else "file_unavailable"
         val next = when {
             events and 24 != 0 -> "playback_error"
-            !frameRendered && System.currentTimeMillis() - firstFrameAt > 30_000 -> "playback_error"
+            truncated -> "playback_error"
+            timedOut -> "playback_error"
             ended -> "ended"
             !loaded || !frameRendered -> "opening"
             flag("paused-for-cache") -> "buffering"
             flag("pause") -> "paused"
             else -> "playing"
         }
-        if (lastStatus != next) { lastStatus = next; state(next) }
+        if (lastStatus != next) {
+            lastStatus = next
+            if (next == "playback_error") terminalFailure = true
+            state(next, if (next == "playback_error") problem else null)
+        }
     }
     override fun release() {
         view.holder.removeCallback(this)
-        if (handle != 0L) { MpvNative.destroy(handle); handle = 0 }
+        pending = null; opened = false; attached = false
+        val old = handle; handle = 0
+        if (old != 0L) MpvNative.destroy(old)
     }
 }

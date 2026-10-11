@@ -80,6 +80,7 @@ pub async fn list(pool: &SqlitePool) -> AppResult<Vec<VideoSource>> {
 pub fn failure(message: &str) -> Value {
     let (code,text) = if message.contains("credential_invalid") { ("credential_invalid","来源认证失败，请更新账号和密码") }
         else if message.contains("permission_denied") { ("permission_denied","读取权限已失效，请重新授权或检查服务权限") }
+        else if message.contains("source_missing") { ("source_missing","目录或文件不存在，请检查地址或重新选择视频") }
         else if message.contains("range_unsupported") { ("range_unsupported","服务器未提供有效的 Range 支持，请检查 WebDAV 服务") }
         else if message.contains("network_timeout") { ("network_timeout","连接超时，请检查网络后重试") }
         else if message.contains("source_offline") { ("source_offline","来源暂时离线，索引和个人记录已保留") }

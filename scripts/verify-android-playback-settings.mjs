@@ -39,7 +39,8 @@ async function shot(name, aspect = false) {
 }
 async function change(renderer, hardware = true, decoder = "auto-safe") {
   await control("playbackSettings", { videoRenderer: renderer, hardwareDecoding: hardware, hardwareDecoder: decoder });
-  const state = await until(s => ["playing", "paused"].includes(s.status) && s.playbackSettings?.videoRenderer === renderer && (renderer === "compat" ? s.engine.startsWith("LibVLC") : !!s.gpuRenderer), renderer);
+  const expected = renderer === "compat" ? "auto" : renderer;
+  const state = await until(s => ["playing", "paused"].includes(s.status) && s.playbackSettings?.videoRenderer === expected && s.engine.startsWith("libmpv") && !!s.gpuRenderer, renderer);
   result.snapshots[`${renderer}-${hardware}-${decoder}`] = state; return state;
 }
 async function open() {
@@ -53,7 +54,7 @@ try {
   browser = await chromium.connectOverCDP("http://127.0.0.1:9346", { noDefaults: true }); page = browser.contexts()[0].pages().find(p => p.url().includes("tauri.localhost")); assert.ok(page);
   assert.equal((await invoke("get_app_info")).dataDirectory, `/data/user/0/${app}`); guarded = true;
   await open(); await control("superResolution", { value: 0 });
-  await change("compat"); result.cases.compatibilityRendererRetained = true;
+  await change("compat"); result.cases.legacyCompatibilitySelectionMigratesToMpv = true;
   await control("pause"); await until(s => s.status === "paused", "paused"); await control("seek", { value: 10000 }); await control("rate", { value: 1.5 });
   const software = await change("gpu", false);
   assert.equal(software.decoder, "no"); assert.equal(software.superResolution, 0); assert.equal(software.shaderCount, 0);

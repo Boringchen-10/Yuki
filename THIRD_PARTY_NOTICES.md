@@ -71,9 +71,9 @@ Genzo 的侧栏、首页媒体布局和主题实现基于 Seanime 的 GPLv3 界�
 
 `public/demo` 中的临时主题预览图片来自 Unsplash 图片服务，只能通过开发预览参数使用。正式应用界面不会加载这些图片；没有用户封面时使用 Genzo 自有的类型占位视觉。
 
-Windows 包不捆绑 VLC、mpv、PotPlayer、MPC-BE 等外部程序。自动检测仅检查用户机器上的典型安装路径。Android 的 LibVLC 依赖单独说明如下。
+Windows 包不捆绑 VLC、mpv、PotPlayer、MPC-BE 等外部程序。自动检测仅检查用户机器上的典型安装路径。Android v0.9.0 起仅使用下文说明的 libmpv，旧版 LibVLC 来源保留如下供历史版本核对。
 
-## Android LibVLC
+## 旧版 Android LibVLC（v0.8.x 及以前）
 
 安卓原型使用 VideoLAN 发布的 `org.videolan.android:libvlc-all:3.7.7` AAR，以 JNI / Java API 在进程内播放原始媒体。发布者 [Maven POM](https://repo.maven.apache.org/maven2/org/videolan/android/libvlc-all/3.7.7/libvlc-all-3.7.7.pom) 声明 LGPL-2.1，源码仓库为 [VideoLAN libvlcjni](https://code.videolan.org/videolan/libvlcjni)，核心源码为 [VLC](https://code.videolan.org/videolan/vlc)。Genzo 的集成代码继续使用 GPLv3；不移植上游播放器 UI、商标、Logo 或第三方媒体。
 
@@ -81,7 +81,7 @@ Windows 包不捆绑 VLC、mpv、PotPlayer、MPC-BE 等外部程序。自动检�
 
 ## Android Kazumi 兼容规则来源
 
-本轮安卓规则来源实现核对以下固定源码快照，不捆绑或运行 Kazumi 应用，不引入 Dart / Flutter 运行时。实现范围与验收边界见 [docs/android/KAZUMI_RULE_SOURCES.md](docs/android/KAZUMI_RULE_SOURCES.md)。Genzo 保留自己的 OpenDesign 界面、作品模型与现有 LibVLC 播放器。
+本轮安卓规则来源实现核对以下固定源码快照，不捆绑或运行 Kazumi 应用，不引入 Dart / Flutter 运行时。实现范围与验收边界见 [docs/android/KAZUMI_RULE_SOURCES.md](docs/android/KAZUMI_RULE_SOURCES.md)。Genzo 保留自己的 OpenDesign 界面与作品模型，v0.9.0 起使用原生 libmpv。
 
 | 上游 | 固定提交 | 许可证与使用范围 |
 | --- | --- | --- |
@@ -91,7 +91,7 @@ Windows 包不捆绑 VLC、mpv、PotPlayer、MPC-BE 等外部程序。自动检�
 
 核对的 Kazumi 文件包括 `lib/plugins/plugins.dart`、`lib/services/plugin/xpath_rule_strategy.dart`、`lib/services/plugin/api_rule_strategy.dart`、`lib/plugins/anti_crawler_config.dart`、`lib/webview/video/impl/video_webview_android_impl.dart`、`lib/utils/episode_url.dart` 和 `lib/utils/m3u8_ad_filter.dart`。移植 / 适配代码继续按 Genzo 的 GPLv3 提供对应源码；没有复制上游商标、Logo、截图、作品封面或媒体文件。
 
-规则 HTML 使用既有 `org.jsoup:jsoup:1.18.1`（MIT）转为 W3C DOM，然后由 Android 标准 XPath 引擎执行；许可见既有 [licenses/jsoup-MIT.txt](licenses/jsoup-MIT.txt)。网页媒体发现使用既有 AndroidX WebKit `1.14.0`（Apache-2.0）与系统 WebView，网络与代理使用已有 Rust 依赖。规则功能不增加另一套视频解码内核；上述 LibVLC 许可要求继续适用。
+规则 HTML 使用既有 `org.jsoup:jsoup:1.18.1`（MIT）转为 W3C DOM，然后由 Android 标准 XPath 引擎执行；许可见既有 [licenses/jsoup-MIT.txt](licenses/jsoup-MIT.txt)。网页媒体发现使用既有 AndroidX WebKit `1.14.0`（Apache-2.0）与系统 WebView，网络与代理使用已有 Rust 依赖。规则与本地 / WebDAV 共用下文说明的 libmpv 内核与许可。
 
 规则仓库的代码许可证不等同于来源网站、媒体作品或第三方接口的授权。网站与规则可能失效、改变接口或要求网页验证；Genzo 不据规则目录或一次样本验收承诺全部站点永久可用。
 

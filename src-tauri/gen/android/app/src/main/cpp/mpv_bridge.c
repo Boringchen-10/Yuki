@@ -7,19 +7,19 @@
 #include "mpv/client.h"
 
 extern int mpv_lavc_set_java_vm(void *vm);
-typedef struct { mpv_handle *mpv; jobject surface; } Player;
+typedef struct { mpv_handle *mpv; jobject surface; int problem; int network; } Player;
 #define FN(name) Java_com_genzo_android_MpvNative_##name
 #define P ((Player *)(intptr_t)handle)
 
-JNIEXPORT jlong JNICALL FN(create)(JNIEnv *env, jobject self) {
-    JavaVM *vm = NULL;
-    (*env)->GetJavaVM(env, &vm);
+JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     mpv_lavc_set_java_vm(vm);
+    return JNI_VERSION_1_6;
+}
+JNIEXPORT jlong JNICALL FN(create)(JNIEnv *env, jobject self) {
     Player *p = calloc(1, sizeof(Player));
     if (!p) return 0;
     p->mpv = mpv_create();
     if (!p->mpv) { free(p); return 0; }
-    mpv_request_log_messages(p->mpv, "warn");
     return (jlong)(intptr_t)p;
 }
 JNIEXPORT jint JNICALL FN(option)(JNIEnv *env, jobject self, jlong handle, jstring key, jstring value) {
@@ -29,7 +29,11 @@ JNIEXPORT jint JNICALL FN(option)(JNIEnv *env, jobject self, jlong handle, jstri
     (*env)->ReleaseStringUTFChars(env, key, k); (*env)->ReleaseStringUTFChars(env, value, v);
     return result;
 }
-JNIEXPORT jint JNICALL FN(init)(JNIEnv *env, jobject self, jlong handle) { return mpv_initialize(P->mpv); }
+JNIEXPORT jint JNICALL FN(init)(JNIEnv *env, jobject self, jlong handle) {
+    int result = mpv_initialize(P->mpv);
+    if (result >= 0) mpv_request_log_messages(P->mpv, "warn");
+    return result;
+}
 JNIEXPORT jint JNICALL FN(command)(JNIEnv *env, jobject self, jlong handle, jobjectArray args) {
     int n = (*env)->GetArrayLength(env, args);
     if (n > 32) return MPV_ERROR_INVALID_PARAMETER;
@@ -37,6 +41,10 @@ JNIEXPORT jint JNICALL FN(command)(JNIEnv *env, jobject self, jlong handle, jobj
     for (int i = 0; i < n; i++) {
         strings[i] = (*env)->GetObjectArrayElement(env, args, i);
         values[i] = (*env)->GetStringUTFChars(env, strings[i], NULL);
+    }
+    if (n > 1 && strcmp(values[0], "loadfile") == 0) {
+        P->problem = 0;
+        P->network = strncmp(values[1], "http://", 7) == 0 || strncmp(values[1], "https://", 8) == 0;
     }
     int result = mpv_command(P->mpv, values);
     for (int i = 0; i < n; i++) {
@@ -77,17 +85,34 @@ JNIEXPORT jint JNICALL FN(poll)(JNIEnv *env, jobject self, jlong handle) {
         if (event->event_id == MPV_EVENT_PLAYBACK_RESTART) flags |= 2;
         if (event->event_id == MPV_EVENT_END_FILE) {
             mpv_event_end_file *end = event->data;
-            if (end->reason == MPV_END_FILE_REASON_ERROR) flags |= 8;
+            if (end->reason == MPV_END_FILE_REASON_ERROR) {
+                flags |= 8;
+                if (!P->problem) {
+                    if (end->error == MPV_ERROR_VO_INIT_FAILED) P->problem = 1;
+                    else if (end->error == MPV_ERROR_AO_INIT_FAILED) P->problem = 7;
+                    else if (end->error == MPV_ERROR_UNKNOWN_FORMAT || end->error == MPV_ERROR_UNSUPPORTED) P->problem = 6;
+                    else if (end->error == MPV_ERROR_LOADING_FAILED) P->problem = P->network ? 3 : 9;
+                }
+            }
             else if (end->reason == MPV_END_FILE_REASON_EOF) flags |= 4;
         }
         if (event->event_id == MPV_EVENT_LOG_MESSAGE) {
             mpv_event_log_message *log = event->data;
-            if (log->log_level <= MPV_LOG_LEVEL_ERROR &&
-                (strstr(log->prefix, "vo/gpu") || strstr(log->prefix, "libplacebo"))) flags |= 16;
+            // Keep only bounded categories. Never return or persist log text containing URLs.
+            if (log->log_level <= MPV_LOG_LEVEL_WARN) {
+                if (strstr(log->text, "HTTP error 401") || strstr(log->text, "HTTP error 403") || strstr(log->text, "Server returned 401") || strstr(log->text, "Server returned 403")) P->problem = 4;
+                else if (strstr(log->text, "HTTP error 404") || strstr(log->text, "HTTP error 410") || strstr(log->text, "Server returned 404") || strstr(log->text, "Server returned 410")) P->problem = 5;
+                else if (strstr(log->text, "Connection timed out")) P->problem = 8;
+                else if (log->log_level <= MPV_LOG_LEVEL_ERROR) {
+                    if (strstr(log->prefix, "vo/gpu") || strstr(log->prefix, "libplacebo")) { P->problem = 1; flags |= 16; }
+                    else if (strstr(log->prefix, "vd") && !P->problem) P->problem = 2;
+                }
+            }
         }
     }
     return flags;
 }
+JNIEXPORT jint JNICALL FN(problem)(JNIEnv *env, jobject self, jlong handle) { return handle ? P->problem : 0; }
 JNIEXPORT void JNICALL FN(destroy)(JNIEnv *env, jobject self, jlong handle) {
     if (!handle) return;
     mpv_terminate_destroy(P->mpv);

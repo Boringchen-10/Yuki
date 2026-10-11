@@ -7,7 +7,7 @@ import { episodeArtworkApi } from "../../src/api";
 import { androidSession } from "../../src/android/sessionCache";
 import "../../src/android/mobile.css";
 
-let preferences: PlaybackPreferences = { hardwareDecoding: true, hardwareDecoder: "auto-safe", videoRenderer: "compat", superResolution: 0 };
+let preferences: PlaybackPreferences = { hardwareDecoding: true, hardwareDecoder: "auto-safe", videoRenderer: "auto", superResolution: 0 };
 let failSave = false, failRefresh = false;
 const calls: { type: string; [key: string]: unknown }[] = [];
 const record = (type: string, extra: Record<string, unknown> = {}) => calls.push({ type, ...structuredClone(extra) });

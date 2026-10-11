@@ -19,8 +19,9 @@ fn current_sample(mut raw: Value) -> Value {
     if let Ok(session) = SESSION.lock() {
         if let Some(session) = session.as_ref() {
             if raw["sessionId"].as_str() != Some(&session.id) { return session.initial.clone(); }
-            if raw["status"] != "closed" {
-                if let Some(error) = session.stream.as_ref().and_then(|stream| stream.failure.as_ref()).and_then(|failure| failure.lock().ok().and_then(|error| error.clone())) {
+            if let Some(error) = session.stream.as_ref().and_then(|stream| stream.failure.as_ref()).and_then(|failure| failure.lock().ok().and_then(|error| error.clone())) {
+                raw["failed"] = json!(true); raw["streamError"] = error.clone();
+                if raw["status"] != "closed" {
                     raw["status"] = json!("error"); raw["error"] = error;
                 }
             }
@@ -133,7 +134,7 @@ async fn persist(pool: &SqlitePool, sample: &Value) -> AppResult<()> {
     let valid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM media_files m WHERE m.id=? AND m.media_type='video' AND (EXISTS(SELECT 1 FROM android_documents d WHERE d.media_file_id=m.id) OR EXISTS(SELECT 1 FROM remote_files f WHERE f.media_file_id=m.id) OR EXISTS(SELECT 1 FROM rule_episodes e WHERE e.media_file_id=m.id)))")
         .bind(id).fetch_one(&mut *tx).await?;
     if valid {
-        let completed = !matches!(sample["status"].as_str(), Some("error" | "permission_denied" | "playback_error"))
+        let completed = sample["failed"] != true && !matches!(sample["status"].as_str(), Some("error" | "permission_denied" | "playback_error"))
             && (sample["status"] == "ended" || position >= duration.saturating_sub(2000));
         sqlx::query("INSERT INTO playback_progress(media_file_id,tool_id,position_ms,duration_ms,completed,updated_at) VALUES(?,NULL,?,?,?,?) ON CONFLICT(media_file_id) DO UPDATE SET tool_id=NULL,position_ms=excluded.position_ms,duration_ms=excluded.duration_ms,completed=excluded.completed,updated_at=excluded.updated_at WHERE excluded.updated_at>playback_progress.updated_at")
             .bind(id).bind(position).bind(duration).bind(completed)
@@ -281,7 +282,9 @@ pub(crate) async fn rule_loading_phase(loading: &RuleLoading, message: &str, fai
         let native = android_bridge::call("playerState", json!({})).await?;
         if native["sessionId"] == loading.id {
             if native["status"] == "closed" { crate::rule_sources::cancel_resolve_if_current(loading.operation); return Err(AppError::Validation("播放解析已取消".into())); }
-            android_bridge::call("updateRulePlayer", json!({"sessionId":loading.id,"ruleOperation":loading.operation,"loadingMessage":message,"loadingError":failed})).await?;
+            let error = resolution_failure(message);
+            android_bridge::call("updateRulePlayer", json!({"sessionId":loading.id,"ruleOperation":loading.operation,
+                "loadingMessage":if failed { error["message"].as_str().unwrap() } else { message },"loadingError":failed,"loadingErrorCode":error["code"]})).await?;
             return Ok(());
         }
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
@@ -289,9 +292,22 @@ pub(crate) async fn rule_loading_phase(loading: &RuleLoading, message: &str, fai
     Err(AppError::Validation("播放器未能打开，请重试".into()))
 }
 
+fn resolution_failure(message: &str) -> Value {
+    let (code, text) = if message.contains("HTTP 401") || message.contains("HTTP 403") || message.contains("credential_invalid") {
+        ("credential_invalid", "来源认证失败或播放地址已过期，请返回选集重新获取视频。")
+    } else if message.contains("超时") || message.contains("timeout") {
+        ("network_timeout", "获取播放地址超时，请返回选集重试或切换线路。")
+    } else if message.contains("连接") || message.contains("网络") || message.contains("source_offline") {
+        ("source_offline", "来源连接失败，请检查网络后返回选集重试。")
+    } else {
+        ("resolve_failed", "未能获取播放地址，请返回选集重试或切换线路。")
+    };
+    json!({"code":code,"message":text,"retryable":true})
+}
+
 pub(crate) async fn rule_loading_failed(loading: &RuleLoading, error: &AppError) {
     if rule_loading_phase(loading, &error.to_string(), true).await.is_ok() {
-        crate::android_events::player(snapshot(json!({"sessionId":loading.id,"status":"playback_error","error":{"code":"unknown","message":error.to_string(),"retryable":true}})));
+        crate::android_events::player(snapshot(json!({"sessionId":loading.id,"status":"playback_error","error":resolution_failure(&error.to_string())})));
     }
 }
 
@@ -372,6 +388,7 @@ fn monitor(pool: SqlitePool, owned_session: String, owned_source: String, subtit
     tauri::async_runtime::spawn(async move {
         let mut last_saved = tokio::time::Instant::now() - std::time::Duration::from_secs(5);
         let mut last_status = String::new();
+        let mut last_error = String::new();
         for attempt in 0.. {
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             if !SESSION.lock().ok().is_some_and(|value| value.as_ref().is_some_and(|session| session.id == owned_session)) { break; }
@@ -382,18 +399,27 @@ fn monitor(pool: SqlitePool, owned_session: String, owned_source: String, subtit
             }
             crate::android_events::player(snapshot(sample.clone()));
             let status = sample["status"].as_str().unwrap_or("");
-            if status == "playing" && last_status != "playing" {
-                let _ = sqlx::query("UPDATE library_roots SET availability='online' WHERE id=? AND path LIKE 'rule://%'").bind(&owned_source).execute(&pool).await;
+            if let Some(error) = sample.get("streamError") {
+                let code = error["code"].as_str().unwrap_or("source_offline");
+                if code != last_error || status == "closed" {
+                    let _ = android_bridge::call("playerSourceFailure", json!({"sessionId":owned_session,"code":code})).await;
+                }
             }
-            if status != last_status || last_saved.elapsed().as_secs() >= 5 {
+            if status == "playing" && last_status != "playing" {
+                let _ = sqlx::query("UPDATE library_roots SET availability='online' WHERE id=?").bind(&owned_source).execute(&pool).await;
+                let _ = crate::android_sources::notify(&pool, &owned_source).await;
+            }
+            if status != last_status || (!sample["error"].is_object() && last_saved.elapsed().as_secs() >= 5) {
                 if persist(&pool, &sample).await.is_ok() { last_saved = tokio::time::Instant::now(); last_status = status.into(); }
             }
             if sample["error"].is_object() {
-                let _ = crate::android_sources::set_failure(&pool, &owned_source, &sample["error"]).await;
-                if let Ok(session) = SESSION.lock() { if let Some(stream) = session.as_ref().and_then(|session| session.stream.as_ref()) { stream.abort.abort(); } }
-                break;
-            }
-            if matches!(status, "closed" | "permission_denied" | "playback_error") {
+                let code = sample["error"]["code"].as_str().unwrap_or("");
+                if code != last_error && ["credential_invalid","permission_denied","source_offline","network_timeout","range_unsupported"].contains(&code) {
+                    let _ = crate::android_sources::set_failure(&pool, &owned_source, &sample["error"]).await;
+                }
+                last_error = code.into();
+            } else { last_error.clear(); }
+            if status == "closed" {
                 if let Ok(mut session) = SESSION.lock() { if session.as_ref().is_some_and(|session| session.id == owned_session) { *session = None; } }
                 break;
             }
@@ -423,6 +449,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn resolution_failures_are_actionable_and_do_not_echo_private_locators() {
+        for (raw, code) in [("HTTP 401 https://secret/?token=private", "credential_invalid"), ("请求超时 https://secret", "network_timeout"), ("网络连接失败 https://secret", "source_offline"), ("解析失败 https://secret", "resolve_failed")] {
+            let value = resolution_failure(raw); assert_eq!(value["code"],code);
+            assert!(!value.to_string().contains("secret")); assert!(!value.to_string().contains("private"));
+        }
+    }
+
+    #[test]
     fn global_preferences_validate_without_a_player_session() {
         let valid = json!({"hardwareDecoding":true,"hardwareDecoder":"auto-safe","videoRenderer":"gpu-next","superResolution":2});
         assert!(serde_json::from_value::<PlaybackPreferences>(valid.clone()).unwrap().validate().is_ok());
@@ -438,11 +472,15 @@ mod tests {
     async fn upstream_interruption_overrides_native_end_and_stops_the_proxy_on_close() {
         let task = tokio::spawn(std::future::pending::<()>());
         let failure = std::sync::Arc::new(Mutex::new(Some(crate::android_sources::failure("source_offline"))));
-        let stream = crate::remote_transfer::AndroidStream { uri:"private-resource".into(), failure:Some(failure), abort:task.abort_handle() };
+        let stream = crate::remote_transfer::AndroidStream { uri:"private-resource".into(), failure:Some(failure.clone()), abort:task.abort_handle() };
         *SESSION.lock().unwrap() = Some(Session { id:"network".into(),initial:json!({"sessionId":"network","status":"opening"}),stream:Some(stream) });
         let sample = current_sample(json!({"sessionId":"network","status":"ended","positionMs":10000,"durationMs":40000}));
         assert_eq!(sample["status"],"error");
         assert_eq!(sample["error"]["code"],"source_offline");
+        let closed = current_sample(json!({"sessionId":"network","status":"closed"}));
+        assert_eq!(closed["failed"],true); assert_eq!(snapshot(closed)["status"],"closed");
+        *failure.lock().unwrap() = None;
+        assert_eq!(current_sample(json!({"sessionId":"network","status":"playing"}))["status"],"playing");
         assert_eq!(snapshot(current_sample(json!({"sessionId":"network","status":"closed"})))["status"],"closed");
         *SESSION.lock().unwrap() = None;
         assert!(task.await.unwrap_err().is_cancelled());
@@ -505,6 +543,8 @@ mod tests {
         assert_eq!(sqlx::query_scalar::<_,i64>("SELECT COUNT(*) FROM playback_progress").fetch_one(&pool).await.unwrap(),1);
         let interrupted = json!({"mediaFileId":"f","positionMs":39500,"durationMs":40000,"updatedAtMs":110000,"status":"error"});
         persist(&pool,&interrupted).await.unwrap();
+        assert!(!sqlx::query_scalar::<_,bool>("SELECT completed FROM playback_progress WHERE media_file_id='f'").fetch_one(&pool).await.unwrap());
+        persist(&pool,&json!({"mediaFileId":"f","positionMs":39500,"durationMs":40000,"updatedAtMs":120000,"status":"closed","failed":true})).await.unwrap();
         assert!(!sqlx::query_scalar::<_,bool>("SELECT completed FROM playback_progress WHERE media_file_id='f'").fetch_one(&pool).await.unwrap());
     }
 }

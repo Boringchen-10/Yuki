@@ -12,7 +12,6 @@ const decoders: { value: PlaybackPreferences["hardwareDecoder"]; title: string; 
   { value: "mediacodec-copy", title: "mediacodec-copy", hint: "Android MediaCodec 拷贝模式" },
 ];
 const renderers: { value: PlaybackPreferences["videoRenderer"]; title: string; hint: string }[] = [
-  { value: "compat", title: "兼容播放", hint: "使用 LibVLC；开启超分时使用 OpenGL" },
   { value: "auto", title: "自动", hint: "按安卓版本与设备能力选择 Vulkan 或 OpenGL" },
   { value: "gpu", title: "OpenGL · gpu", hint: "通用 GPU 渲染，支持超分和字幕" },
   { value: "gpu-next", title: "Vulkan · gpu-next", hint: "支持超分和字幕，不可用时尝试 OpenGL" },

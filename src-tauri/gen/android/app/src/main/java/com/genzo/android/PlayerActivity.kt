@@ -35,7 +35,17 @@ class PlayerActivity : ComponentActivity() {
         @Volatile var snapshot = JSObject().put("status", "idle")
         var current: WeakReference<PlayerActivity>? = null
     }
-    private lateinit var player: VideoEngine
+    private lateinit var player: MpvEngine
+    private var engineActive = false
+    private var problem: PlaybackFailure? = null
+    private var playbackFailed = false
+    private var lastPosition = 0L
+    private var lastDuration = 0L
+    private var desiredPaused = false
+    private var softwareOverride = false
+    private var attemptRenderer = "gpu"
+    private var attemptHardware = true
+    private val recoveryAttempts = mutableSetOf<String>()
     private lateinit var label: TextView
     private lateinit var seek: SeekBar
     private lateinit var viewport: FrameLayout
@@ -66,6 +76,8 @@ class PlayerActivity : ComponentActivity() {
     private lateinit var loadingPanel: LinearLayout
     private lateinit var loadingText: TextView
     private lateinit var loadingSpinner: ProgressBar
+    private lateinit var retryButton: Button
+    private lateinit var detailsButton: Button
     private val mediaControls = mutableListOf<View>()
     private val subtitleFiles = mutableListOf<File>()
     private val sidecars = linkedMapOf<String, Pair<String, File>>()
@@ -76,7 +88,8 @@ class PlayerActivity : ComponentActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private val ticker = object : Runnable {
         override fun run() {
-            if (::player.isInitialized) player.poll()
+            if (isFinishing || isDestroyed || current?.get() !== this@PlayerActivity) return
+            if (engineActive) player.poll()
             if (android.os.SystemClock.elapsedRealtime() - lastReportMs >= 1000) report()
             handler.postDelayed(this, 250)
         }
@@ -111,6 +124,10 @@ class PlayerActivity : ComponentActivity() {
         loadingPanel.addView(loadingSpinner)
         loadingText = TextView(this).apply { setTextColor(0xffffffff.toInt()); textSize = 16f; gravity = Gravity.CENTER; setPadding(16,24,16,24) }
         loadingPanel.addView(loadingText)
+        retryButton = Button(this).apply { text = "重试播放"; setOnClickListener { if (ruleOperation > 0) finish() else retryPlayback() } }
+        loadingPanel.addView(retryButton)
+        detailsButton = Button(this).apply { text = "错误详情"; setOnClickListener { showFailureDetails() } }
+        loadingPanel.addView(detailsButton)
         loadingPanel.addView(Button(this).apply { text = if (ruleOperation > 0) "返回选集" else "返回"; setOnClickListener { finish() } })
         viewport.addView(loadingPanel, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER))
         root.addView(viewport, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -150,39 +167,43 @@ class PlayerActivity : ComponentActivity() {
         mediaControls.add(extra)
         setContentView(root)
         // A rule's loading shell must not wait for GPU/decoder initialization.
-        try { createEngine(if (uri.isEmpty()) 0 else superResolutionMode, uri.isEmpty()) }
-        catch (_: LinkageError) { superResolutionMode = 0; rendererOverride = "compat"; fallbackReason = "此设备无法启用GPU播放，已恢复兼容播放"; createEngine(0) }
-        catch (error: Exception) { gpuError = error.message; superResolutionMode = 0; rendererOverride = "compat"; fallbackReason = "GPU初始化失败，已恢复兼容播放"; createEngine(0) }
         seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(bar: SeekBar?, value: Int, fromUser: Boolean) {}
             override fun onStartTrackingTouch(bar: SeekBar?) {}
-            override fun onStopTrackingTouch(bar: SeekBar?) { if (player.isSeekable) player.setTime(player.length * seek.progress / 1000, false) }
+            override fun onStopTrackingTouch(bar: SeekBar?) { if (engineActive && player.isSeekable) runCatching { player.setTime(player.length * seek.progress / 1000, false) }.onFailure { fail("playback_failed") } }
         })
-        if (uri.isNotEmpty()) { mediaReady = true; startMedia() }
+        if (uri.isNotEmpty()) { mediaReady = true; createEngine(superResolutionMode) }
         report()
         handler.post(ticker)
     }
 
-    private fun createEngine(mode: Int, loadingShell: Boolean = false) {
+    private fun createEngine(mode: Int, paused: Boolean = false) {
         val generation = ++engineGeneration
-        val stateChanged: (String) -> Unit = { next ->
+        val stateChanged: (String, String?) -> Unit = { next, failure ->
             if (generation == engineGeneration && !isFinishing && !isDestroyed) {
-                if (next == "playback_error" && player is MpvEngine) {
-                    handler.post { if (generation == engineGeneration) fallbackToVlc() }
-                } else {
+                if (next == "playback_error") {
+                    handler.post { if (generation == engineGeneration && !isFinishing && !isDestroyed) fail(failure ?: "playback_failed") }
+                } else if (problem == null) {
                     status = next
-                    if (next in listOf("playing", "paused") && player.length > 0) restorePlayback()
+                    if (next in listOf("playing", "paused") && engineActive && player.length > 0) { playbackFailed = false; restorePlayback() }
                     report()
                 }
             }
         }
-        val renderer = if (loadingShell) "compat" else rendererOverride ?: playbackSettings.resolve(this, mode)
-        player = if (renderer != "compat") MpvEngine(this, mode, stateChanged, playbackSettings, renderer) else VlcEngine(this, stateChanged, playbackSettings.hardware)
-        viewport.addView(player.view, 0, FrameLayout.LayoutParams(-1, -1))
+        attemptRenderer = rendererOverride ?: playbackSettings.resolve(this, mode)
+        attemptHardware = playbackSettings.hardware && !softwareOverride
+        try {
+            player = MpvEngine(this, mode, stateChanged, playbackSettings.copy(hardware = attemptHardware), attemptRenderer)
+            engineActive = true
+            viewport.addView(player.view, 0, FrameLayout.LayoutParams(-1, -1))
+            startMedia(paused)
+        } catch (_: LinkageError) { fail("player_unavailable") }
+        catch (_: Exception) { fail("render_failed") }
     }
 
     private fun applyPlaybackSettings(settings: PlaybackSettings) {
-        settings.save(this); playbackSettings = settings; rendererOverride = null
+        val normalized = settings.copy(renderer = if (settings.renderer == "compat") "auto" else settings.renderer)
+        normalized.save(this); playbackSettings = normalized; rendererOverride = null; softwareOverride = false; recoveryAttempts.clear()
         val mode = if (settings.renderer == "mediacodec_embed") 0 else superResolutionMode
         if (settings.renderer == "mediacodec_embed") {
             selectedSidecar = null
@@ -209,13 +230,9 @@ class PlayerActivity : ComponentActivity() {
 
     private fun restorePlayback() {
         if (startOnResume && lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) { startOnResume = false; player.play() }
-        if (player is MpvEngine || player.isPlaying) pendingRate?.let { pendingRate = null; player.rate = it }
-        if (resumeMs > 0) {
-            val position = resumeMs; resumeMs = 0
-            // mpv already received start=position. A second initial seek can interrupt
-            // its first hardware-decoded frame; LibVLC still needs this restoration.
-            if (player !is MpvEngine) player.setTime(position, false)
-        }
+        pendingRate?.let { pendingRate = null; player.rate = it }
+        // mpv loadfile already received the resume position; do not interrupt its first frame.
+        resumeMs = 0
         restoringTracks?.let { (audio, subtitle) ->
             restoringTracks = null
             player.audioTracks.getOrNull(audio)?.let { player.setAudioTrack(it.id) }
@@ -251,48 +268,95 @@ class PlayerActivity : ComponentActivity() {
         if (!mediaReady) return
         if (!fallback) {
             rendererOverride = null
+            softwareOverride = false; recoveryAttempts.clear(); problem = null; loadingError = null
             if (mode > 0 && playbackSettings.renderer == "mediacodec_embed") { playbackSettings = playbackSettings.copy(renderer = "gpu"); playbackSettings.save(this) }
             fallbackReason = null
             gpuError = null
             getSharedPreferences("genzo-player", 0).edit().putInt("anime4kMode", mode).apply()
         }
-        if (!fallback && !rebuild && mode == superResolutionMode && (mode == 0 || player is MpvEngine)) { report(); return }
-        val paused = (!player.isPlaying && status !in listOf("opening", "buffering")) || startOnResume
-        resumeMs = player.time.takeIf { it > 0 } ?: resumeMs
-        pendingRate = pendingRate ?: player.rate
-        restoringTracks = Pair(player.audioTracks.indexOfFirst { it.id == player.audioTrack }, player.spuTracks.indexOfFirst { it.id == player.spuTrack })
+        if (!fallback && !rebuild && mode == superResolutionMode && engineActive) { report(); return }
+        val paused = if (status == "opening") desiredPaused else (engineActive && !player.isPlaying && status != "buffering") || startOnResume
+        if (engineActive) {
+            resumeMs = player.time.takeIf { it > 0 } ?: lastPosition
+            pendingRate = pendingRate ?: player.rate
+            restoringTracks = Pair(player.audioTracks.indexOfFirst { it.id == player.audioTrack }, player.spuTracks.indexOfFirst { it.id == player.spuTrack })
+        }
         restoreSidecar = selectedSidecar
-        engineGeneration++
-        player.release(); viewport.removeView(player.view); descriptor?.close(); descriptor = null
+        releaseEngine()
         superResolutionMode = mode
         status = "opening"; loadingMessage = "正在切换画面处理…"
-        try { createEngine(mode) }
-        catch (_: LinkageError) { superResolutionMode = 0; rendererOverride = "compat"; fallbackReason = "此设备无法启用GPU播放，已恢复兼容播放"; createEngine(0) }
-        catch (error: Exception) { gpuError = error.message; superResolutionMode = 0; rendererOverride = "compat"; fallbackReason = "GPU初始化失败，已恢复兼容播放"; createEngine(0) }
-        startMedia(paused); report()
+        createEngine(mode, paused); report()
     }
 
-    private fun fallbackToVlc() {
-        if (isFinishing || isDestroyed || player !is MpvEngine) return
-        val openGl = (player as MpvEngine).renderer == "gpu-next"
-        rendererOverride = if (openGl) "gpu" else "compat"
-        fallbackReason = if (openGl) "Vulkan播放不可用，已切换OpenGL" else "此视频或设备无法使用GPU播放，已恢复兼容播放"
-        Toast.makeText(this, fallbackReason, Toast.LENGTH_LONG).show()
-        switchSuperResolution(if (openGl) superResolutionMode else 0, true, true)
+    private fun releaseEngine() {
+        engineGeneration++
+        if (engineActive) {
+            engineActive = false
+            val old = player
+            old.release(); viewport.removeView(old.view)
+        }
+        descriptor?.close(); descriptor = null
+    }
+
+    fun closeForReplacement() {
+        status = "closed"; report()
+        handler.removeCallbacksAndMessages(null)
+        releaseEngine(); finish()
+    }
+
+    private fun fail(code: String) {
+        if (isFinishing || isDestroyed || current?.get() !== this) return
+        if (problem?.code in listOf("credential_invalid", "permission_denied", "source_missing") && code in listOf("source_offline", "playback_failed", "unsupported_media")) return
+        playbackFailed = true
+        val failure = PlaybackFailure.from(code)
+        val details = JSObject().put("code", failure.code).put("sessionId", sessionId).put("timeMs", System.currentTimeMillis())
+            .put("renderer", attemptRenderer).put("hardwareDecoding", attemptHardware).put("superResolution", superResolutionMode)
+            .put("positionMs", lastPosition).put("recoveryAttempts", recoveryAttempts.joinToString(","))
+        getSharedPreferences("genzo-player", 0).edit().putString("lastFailure", details.toString()).apply()
+        val recovery = nextPlaybackRecovery(code, attemptRenderer, superResolutionMode, attemptHardware, recoveryAttempts)
+        if (recovery != null) {
+            recoveryAttempts.add(when { recovery.mode != superResolutionMode -> "no-shaders"; recovery.renderer != attemptRenderer -> "opengl"; else -> "software" })
+            if (recovery.software) recoveryAttempts.add("software")
+            rendererOverride = recovery.renderer; softwareOverride = recovery.software; fallbackReason = recovery.message; gpuError = code
+            val generation = engineGeneration
+            handler.post { if (generation == engineGeneration && !isFinishing && !isDestroyed) switchSuperResolution(recovery.mode, true, true) }
+        } else {
+            problem = failure; loadingError = failure.message; status = if (failure.code == "permission_denied") "permission_denied" else "playback_error"
+            if (engineActive) player.pause()
+        }
+        report()
+    }
+
+    fun sourceFailure(expectedSession: String, code: String): Boolean {
+        if (sessionId != expectedSession || isFinishing || isDestroyed || problem?.code == code) return false
+        fail(code); return true
+    }
+
+    private fun retryPlayback() {
+        problem = null; loadingError = null; recoveryAttempts.clear(); rendererOverride = null; softwareOverride = false
+        resumeMs = lastPosition
+        desiredPaused = false; status = "opening"
+        switchSuperResolution(getSharedPreferences("genzo-player", 0).getInt("anime4kMode", 0).coerceIn(0, 2), true, true)
+    }
+
+    private fun showFailureDetails() {
+        val details = getSharedPreferences("genzo-player", 0).getString("lastFailure", "{}").orEmpty()
+        AlertDialog.Builder(this).setTitle("播放错误详情").setMessage(details)
+            .setPositiveButton("复制详情") { _, _ ->
+                (getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText("播放错误详情", details))
+            }.setNegativeButton("关闭", null).show()
     }
 
     private fun startMedia(paused: Boolean = false) {
+        desiredPaused = paused
         try {
             val locator = Uri.parse(uri)
             if (locator.scheme == "content") descriptor = contentResolver.openFileDescriptor(locator, "r") ?: throw IllegalStateException("Unreadable document")
-            val background = ruleOperation > 0 && !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+            val background = !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
             startOnResume = background && !paused
             player.open(uri, descriptor, resumeMs, paused || background)
-        } catch (_: SecurityException) { status = "permission_denied" }
-        catch (_: Exception) {
-            if (player is MpvEngine) { val generation = engineGeneration; handler.post { if (generation == engineGeneration) fallbackToVlc() } }
-            else status = "playback_error"
-        }
+        } catch (_: SecurityException) { fail("permission_denied") }
+        catch (_: Exception) { fail("file_unavailable") }
     }
 
     private fun requireRuleSession(args: PlayerArgs) {
@@ -303,7 +367,7 @@ class PlayerActivity : ComponentActivity() {
         requireRuleSession(args)
         require(!mediaReady)
         loadingMessage = args.loadingMessage
-        if (args.loadingError) { loadingError = args.loadingMessage; status = "playback_error" }
+        if (args.loadingError) fail(args.loadingErrorCode)
         report()
     }
 
@@ -314,8 +378,7 @@ class PlayerActivity : ComponentActivity() {
         initialSubtitle = args.subtitleUri
         intent.putExtra("subtitleFile", args.subtitleFile).putExtra("subtitleLabel", args.subtitleLabel).putExtra("subtitleId", args.subtitleId)
         mediaReady = true; loadingError = null; loadingMessage = "正在连接视频…"; status = "opening"
-        if (playbackSettings.resolve(this, superResolutionMode) != "compat" && player is VlcEngine && fallbackReason == null) switchSuperResolution(superResolutionMode, rebuild = true)
-        else startMedia()
+        createEngine(superResolutionMode)
         report()
     }
 
@@ -393,13 +456,12 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private fun setPlaybackRate(rate: Float) {
-        // Changing rate while paused can discard the active subtitle cue in LibVLC 3.7.7.
-        // Retain the chosen speed and apply it when playback resumes.
-        if (status == "paused" || !player.isPlaying) pendingRate = rate else player.rate = rate
+        player.rate = rate
     }
 
     fun control(args: ControlArgs): JSObject {
         require(args.sessionId == null || (args.sessionId == sessionId && !isFinishing && !isDestroyed))
+        require((engineActive && problem == null) || args.action in listOf("close", "landscape", "portrait", "system", "retry", "playbackSettings"))
         when (args.action) {
             "play" -> player.play()
             "pause" -> player.pause()
@@ -427,7 +489,8 @@ class PlayerActivity : ComponentActivity() {
             "portrait" -> requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             "system" -> requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             "superResolution" -> { require(args.value in 0.0..2.0 && args.value % 1.0 == 0.0); switchSuperResolution(args.value.toInt()) }
-            "close" -> { player.pause(); status = "closed"; finish() }
+            "retry" -> { require(ruleOperation == 0L && mediaReady); retryPlayback() }
+            "close" -> { if (engineActive) player.pause(); status = "closed"; engineGeneration++; finish() }
             else -> throw IllegalArgumentException("Unknown action")
         }
         report()
@@ -435,24 +498,29 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private fun report() {
-        if (!::player.isInitialized) return
+        if (current?.get() !== this) return
+        val active = if (engineActive) player else null
+        if (active != null && active.length > 0 && status !in listOf("opening", "playback_error", "permission_denied")) {
+            lastDuration = active.length; lastPosition = active.time.coerceIn(0, lastDuration)
+        }
         lastReportMs = android.os.SystemClock.elapsedRealtime()
         fun trackList(items: Array<VideoTrack>?) = JSArray().apply {
             items?.forEach { put(JSObject().put("id", it.id).put("name", it.name)) }
         }
-        val subtitleTracks = trackList(player.spuTracks)
+        val subtitleTracks = trackList(active?.spuTracks)
         sidecars.forEach { (id, entry) -> subtitleTracks.put(JSObject().put("id", id).put("name", entry.first).put("kind", "sidecar")) }
-        snapshot = JSObject().put("status", status).put("engine", player.name).put("positionMs", player.time)
+        snapshot = JSObject().put("status", status).put("engine", active?.name).put("positionMs", resumeMs.takeIf { status == "opening" && it > 0 } ?: lastPosition)
+            .put("engineInitialized", engineActive).put("failed", playbackFailed)
             .put("loadingMessage", loadingMessage).put("ruleOperation", ruleOperation)
             .put("mediaFileId", mediaFileId).put("sessionId", sessionId).put("revision", ++revision)
             .put("updatedAtMs", System.currentTimeMillis())
-            .put("durationMs", player.length).put("seekable", player.isSeekable).put("rate", pendingRate ?: player.rate)
-            .put("audioTracks", trackList(player.audioTracks)).put("subtitleTracks", subtitleTracks).put("selectedSidecar", selectedSidecar)
-            .put("audioTrack", player.audioTrack).put("subtitleTrack", player.spuTrack).put("subtitleDelayUs", player.spuDelay)
-            .put("subtitleOffsetMs", player.spuDelay / 1000)
+            .put("durationMs", lastDuration).put("seekable", active?.isSeekable ?: false).put("rate", pendingRate ?: active?.rate ?: 1f)
+            .put("audioTracks", trackList(active?.audioTracks)).put("subtitleTracks", subtitleTracks).put("selectedSidecar", selectedSidecar)
+            .put("audioTrack", active?.audioTrack ?: -1).put("subtitleTrack", active?.spuTrack ?: -1).put("subtitleDelayUs", active?.spuDelay ?: 0)
+            .put("subtitleOffsetMs", (active?.spuDelay ?: subtitleDelayMs * 1000) / 1000)
         snapshot.put("superResolution", superResolutionMode).put("superResolutionFallback", fallbackReason).put("gpuError", gpuError)
             .put("playbackSettings", JSObject().put("hardwareDecoding", playbackSettings.hardware).put("hardwareDecoder", playbackSettings.decoder).put("videoRenderer", playbackSettings.renderer))
-        (player as? MpvEngine)?.let { mpv ->
+        active?.let { mpv ->
             snapshot.put("shaderCount", mpv.shaderFiles.size).put("gpuRenderer", mpv.property("current-vo"))
                 .put("decoder", mpv.property("hwdec-current")).put("droppedFrames", mpv.property("frame-drop-count"))
                 .put("videoWidth", mpv.property("video-params/w")).put("videoHeight", mpv.property("video-params/h"))
@@ -467,34 +535,43 @@ class PlayerActivity : ComponentActivity() {
         }
         val superResolutionLabel = when (superResolutionMode) { 1 -> "超分·流畅"; 2 -> "超分·画质"; else -> "超分·关" }
         if (superResolutionButton.text.toString() != superResolutionLabel) superResolutionButton.text = superResolutionLabel
-        if (loadingError != null && status != "closed") snapshot.put("error", JSObject().put("code", "unknown").put("message", loadingError).put("retryable", true))
-        val loading = status in listOf("opening", "buffering", "playback_error")
+        if (status != "closed") problem?.let { snapshot.put("error", JSObject().put("code", it.code).put("message", it.message).put("retryable", it.retryable)) }
+        val loading = status in listOf("opening", "buffering", "playback_error", "permission_denied")
         loadingPanel.visibility = if (loading) View.VISIBLE else View.GONE
         loadingSpinner.visibility = if (loadingError != null || status == "playback_error") View.GONE else View.VISIBLE
-        loadingText.text = loadingError ?: if (status == "playback_error") "视频播放失败，请返回选集重试或切换线路。" else if (status == "buffering") "正在缓冲视频…" else loadingMessage
-        mediaControls.forEach { it.visibility = if (mediaReady && loadingError == null) View.VISIBLE else View.GONE }
-        seek.visibility = if (mediaReady && loadingError == null) View.VISIBLE else View.GONE
-        label.visibility = if (mediaReady && status != "playback_error") View.VISIBLE else View.GONE
-        val playbackLabel = fallbackReason ?: subtitleError ?: "${status} · ${player.time / 1000}/${player.length / 1000}s · ${player.rate}× · ${subtitleDelayMs}ms"
+        val loadingLabel = loadingError ?: if (status == "playback_error") "视频播放失败，请返回选集重试或切换线路。" else if (status == "buffering") "正在缓冲视频…" else loadingMessage
+        if (loadingText.text.toString() != loadingLabel) loadingText.text = loadingLabel
+        val retryLabel = if (ruleOperation > 0) "返回选集重试" else "重试播放"
+        if (retryButton.text.toString() != retryLabel) retryButton.text = retryLabel
+        retryButton.visibility = if (problem != null && (ruleOperation > 0 || problem?.retryable == true)) View.VISIBLE else View.GONE
+        detailsButton.visibility = if (problem != null) View.VISIBLE else View.GONE
+        mediaControls.forEach { it.visibility = if (mediaReady && engineActive && problem == null) View.VISIBLE else View.GONE }
+        seek.visibility = if (mediaReady && engineActive && problem == null) View.VISIBLE else View.GONE
+        label.visibility = if (mediaReady && problem == null) View.VISIBLE else View.GONE
+        val playbackLabel = fallbackReason ?: subtitleError ?: "${status} · ${lastPosition / 1000}/${lastDuration / 1000}s · ${active?.rate ?: 1f}× · ${subtitleDelayMs}ms"
         if (label.text.toString() != playbackLabel) label.text = playbackLabel
-        if (player.length > 0 && !seek.isPressed) seek.progress = (player.time * 1000 / player.length).toInt().coerceIn(0, 1000)
-        if (player.time >= 0 && player.length > 0) getSharedPreferences("genzo-prototype-progress", 0).edit().putLong(identity(), player.time).apply()
-        if (mediaFileId != null && player.time >= 0 && player.length > 0) {
+        if (lastDuration > 0 && !seek.isPressed) seek.progress = (lastPosition * 1000 / lastDuration).toInt().coerceIn(0, 1000)
+        if (lastDuration > 0) getSharedPreferences("genzo-prototype-progress", 0).edit().putLong(identity(), lastPosition).apply()
+        if (mediaFileId != null && lastDuration > 0) {
             getSharedPreferences("genzo-player", 0).edit().putString("lastProgress", snapshot.toString()).apply()
         }
     }
 
-    override fun onStart() { super.onStart(); if (::player.isInitialized) player.onStart() }
-    override fun onResume() { super.onResume(); if (startOnResume && mediaReady && player.length > 0) { startOnResume = false; player.play() } }
-    override fun onPause() { if (::player.isInitialized) { if (mediaReady) player.pause(); status = if (isFinishing) "closed" else if (mediaReady) "paused" else status; if (isFinishing && ruleOperation > 0) RuleResolver.cancel(ruleOperation); report() }; super.onPause() }
-    override fun onStop() { if (::player.isInitialized) player.onStop(); super.onStop() }
-    override fun onSaveInstanceState(outState: Bundle) { if (::player.isInitialized) outState.putLong("positionMs", player.time); super.onSaveInstanceState(outState) }
+    override fun onStart() { super.onStart(); if (engineActive) player.onStart() }
+    override fun onResume() { super.onResume(); if (startOnResume && engineActive && player.length > 0) { startOnResume = false; player.play() } }
+    override fun onPause() {
+        if (engineActive) player.pause()
+        if (isFinishing) { status = "closed"; if (ruleOperation > 0) RuleResolver.cancel(ruleOperation) }
+        else if (engineActive && status !in listOf("opening", "playback_error", "permission_denied")) status = "paused"
+        report(); super.onPause()
+    }
+    override fun onStop() { if (engineActive) player.onStop(); super.onStop() }
+    override fun onSaveInstanceState(outState: Bundle) { outState.putLong("positionMs", if (engineActive) player.time else lastPosition); super.onSaveInstanceState(outState) }
     override fun onDestroy() {
         if (ruleOperation > 0) RuleResolver.cancel(ruleOperation)
         subtitlePicker?.resolve(JSObject().put("status", "cancelled")); subtitlePicker = null
-        handler.removeCallbacks(ticker)
-        if (::player.isInitialized) { status = "closed"; report(); engineGeneration++; player.release() }
-        descriptor?.close()
+        handler.removeCallbacksAndMessages(null)
+        status = "closed"; report(); releaseEngine()
         subtitleFiles.forEach { it.delete() }
         if (current?.get() === this) current = null
         super.onDestroy()

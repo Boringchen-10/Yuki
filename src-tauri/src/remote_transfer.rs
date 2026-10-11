@@ -565,6 +565,9 @@ async fn serve(
         stream.write_all(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await?;
         return Ok(());
     }
+    if status.is_success() {
+        if let Some(failure) = failure { *failure.lock().unwrap() = None; }
+    }
     let mut headers = format!(
         "HTTP/1.1 {} {}\r\nConnection: close\r\n",
         status.as_u16(),

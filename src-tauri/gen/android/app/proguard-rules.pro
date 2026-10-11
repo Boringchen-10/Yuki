@@ -5,6 +5,7 @@
 -keep class com.genzo.android.CredentialArgs { *; }
 -keep class com.genzo.android.ControlArgs { *; }
 -keep class com.genzo.android.PlaybackPreferencesArgs { *; }
+-keep class com.genzo.android.PlayerFailureArgs { *; }
 -keep class com.genzo.android.ReaderArgs { *; }
 -keep class com.genzo.android.ReaderControlArgs { *; }
 # You can control the set of applied configuration files using the
@@ -37,6 +38,4 @@
 -keep class com.genzo.android.TauriActivity {
     app.tauri.plugin.PluginManager getPluginManager();
 }
-# LibVLC resolves interface classes and fields from its native library.
--keep class org.videolan.libvlc.** { *; }
 -keep class com.genzo.android.MpvNative { *; }

@@ -1,5 +1,15 @@
 # Codex 与 DeepSeek Harness 项目交接记录
 
+## 安卓单 libmpv / 播放稳定性 v0.9.0 本机预览（2026-10-11）
+
+- 基线 `1b43dad`，工作树 `.tmp/android-first` / `codex/android-first`。用户确认移除 LibVLC、保留 libmpv，优先播放稳定性和失败反馈，并要求继续基于当前 OpenDesign；最新安排是简单实机测试后自行私下使用，不做长时间播放测试。本轮构建包含全部当前 OpenDesign 工作区，包括新人物 / 评论 / 来源选择等草稿；提交仅纳入自己的增量。`GenzoPlugin.kt` 原有 safeArea / Insets 草稿通过修改前快照剥离，其他 Agent 的未提交源码和脚本保留。
+- 移除 LibVLC 依赖、实现和 ProGuard 项；普通播放与超分共用 libmpv。默认自动渲染，旧 compat 偏好仅迁移渲染器字段，硬解 / 解码器 / 超分保留。规则加载壳取得视频地址后才初始化内核。播放替换先关闭旧实例，代次 / 当前实例检查阻止旧回调覆盖新会话，释放和 Handler 清理幂等；前后台暂存播放事件，超时只计算前台 / 已附着 Surface 的有效等待。JNI JavaVM 只初始化一次。
+- 固定错误类别、建议操作、重试 / 返回选集和可复制详情；详情仅含错误码、会话ID、时间、位置和配置，禁止地址 / Cookie / Token / 原始日志。只有渲染 / 解码错误做有限的本次回退，不覆盖原偏好；错误保持到重试或关闭，失败退出不误记看完。WebDAV 代理错误经 Rust monitor 传入原生界面，重试期间保留代理、成功读取后清除旧失败，退出 / 替换时释放；HTTP 404 和 5xx 分别提供缺失和离线类别。
+- 最终检查：TypeScript、前端 **98项**通过；Rust **354通过 / 18忽略**；Kotlin **5项**通过；播放设置 / 续播 UI **8项 / 60组布局**通过，证据 `D:/DevTools/Android/Build/qa/home-player-ui-1791733838162/`。独立 organizeqa 实机 **9项短测**通过，最终 `mpv-smoke-1791734051562`：普通播放、暂停切超分保留位置、格式失败保持、WebDAV 401 / 404、真实重试按钮恢复503、连续替换5次、加载壳无解码器、慢连接退出响应48ms。另 **15项** `anime4k-1791733827440` 通过：本地content FD / WebDAV / 规则HLS、两档shader实际pass、暂停 / 位置 / 倍速 / 音轨、外挂中文SRT / 内嵌ASS、方向 / 系统选择器取消 / 续播 / 失败后下一次偏好。已查看实际帧截图。最后两处404 / 5xx错误映射与完整 OpenDesign 资源重建后，再跑上述最终9项通过；没有重复整个15项。
+- 失败 / 限制记录：较早设置测试因手机切回日常包而中断，不作为通过证据。早期直接HTTP401夹具期望从mpv日志取得状态码，但固定内核只给加载失败；改用已有来源代理的类型化错误，不用原始日志猜测。临时D副本仅对自己的localhost夹具加过日志，最终C源码与H一致且APK无诊断写文件代码。升级验收旧脚本错误地假定历史任务列表为空、以及把 OpenDesign 标题当成heading，已改为核对终态任务更新时间早于升级快照和实际硬解控件；一次ADB重绑定超时后重试成功。最终结果已通过，不以这些旧尝试宣称缺陷复现。仅一加PLK110 / Android16 / arm64 / 4KiB页短测；其他芯片、16KiB实机、特殊编码和长时温度 / 功耗未验证；渲染 / 解码故障回退计划有单测，未在手机强制制造GPU故障。
+- 最终普通签名预览 `D:/DevTools/Android/Build/previews/mpv-stability-20261011/Genzo_0.9.0_mpv-stability-preview_arm64-v8a.apk`，**49,149,595字节**，SHA256 **2aef4f82b8903dffee84381b7f4ad3a351a5bcda63d127d0932cb5a16c010c84**。相比上一份96,674,609字节约缩减49%，包含移除VLC及改用全新Gradle输出消除增量ZIP空洞，不能把全部差值归因于VLC。0.9.0 / code9000 / com.genzo.android / arm64 / min26 / target36 / 非debuggable / 原证书 cee90e5f…cdb；v2/v3与16KiB ZIP校验通过，346份生产源与完整当前构建副本匹配，原生仅 libgenzo_lib / libmpv / libgenzompv 三个且匹配Gradle stripped，无VLC / helper / libc++shared。内嵌最终 `index-Ci0m4tIz.js` / `index-CDhOjwTu.css`；官方8个shader / 许可匹配，无用户数据库、图书或测试媒体。汇总 `D:/DevTools/Android/Build/qa/mpv-stability-20261011/`。
+- 普通包与原readerqa均覆盖安装，无清库。最终升级前后原readerqa **34作品 / 17来源 / 16播放记录**，个人字段、来源 / 规则ID / 版本 / 启停、观看位置 / 时长 / 完成、四项播放偏好逐项一致；两个历史扫描为completed / cancelled且更新时间早于升级，无隐式新扫描。旧compat迁移另在独立包从旧0.8.1实际偏好升级验证，其余字段保留。没有读取 / 复制用户DB、密钥或Cookie，也没有将测试媒体写入日常包。普通包firstInstallTime保留 `2026-10-08 23:16:41`。最终原readerqa停留“播放设置”，9228 / 9351指向新PID；共享前端预览资源已同步，其他预览进程保留。只作本机预览和功能提交，不创建公开Release、标签或推送，公开版仍v0.5.2。
+
 ## 安卓 TMDB 空候选 / 作品核对预览 v0.8.2（2026-10-11）
 
 - 基线 `19a25c2`，工作树 `.tmp/android-first` / `codex/android-first`。用户澄清是选 TMDB 后“查找候选”没有选项，并要求候选 / 确认预览显示封面、片名等资料，暂不展开集数对应；随后明确简介不要长篇展示。当前 OpenDesign 草稿全部参与构建，原 App / ExplorePanel / mobile.css / FRONTEND_PREVIEW 和人物等未提交草稿没有改动或纳入本轮提交。

@@ -237,7 +237,8 @@ pub fn status_error(code: u16) -> AppError {
     AppError::Network(match code {
         401 => "credential_invalid：WebDAV 认证失败，请更新凭据".into(),
         403 => "permission_denied：WebDAV 无权访问此目录或文件".into(),
-        404 => "WebDAV 目录或文件不存在".into(),
+        404 => "source_missing：WebDAV 目录或文件不存在".into(),
+        500..=599 => format!("source_offline：WebDAV 服务返回 HTTP {code}"),
         301 | 302 | 307 | 308 => "WebDAV 目录地址发生重定向，请填写最终服务地址".into(),
         _ => format!("WebDAV 服务返回 HTTP {code}"),
     })

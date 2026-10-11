@@ -48,7 +48,7 @@ const server = createServer((req, res) => {
 await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
 const port = server.address().port;
 command("reverse", `tcp:${port}`, `tcp:${port}`);
-let browser, page, guarded = false;
+let browser, page, guarded = false, originalSettings;
 const result = { output, cases: {}, snapshots: {} };
 let sourceId, pluginId;
 const invoke = (name, args = {}) => page.evaluate(({ name, args }) => window.__TAURI_INTERNALS__.invoke(name, args), { name, args });
@@ -77,6 +77,8 @@ try {
   page = browser.contexts()[0].pages().find(candidate => candidate.url().includes("tauri.localhost")); assert.ok(page);
   const info = await invoke("get_app_info"); assert.equal(info.dataDirectory, `/data/user/0/${app}`);
   guarded = true;
+  originalSettings = await invoke("get_android_playback_preferences");
+  await invoke("set_android_playback_preferences", { settings: { hardwareDecoding: true, hardwareDecoder: "mediacodec-copy", videoRenderer: "gpu", superResolution: 0 } });
   result.cases.isolatedPackage = true;
   // Own cache fixtures only; the FileProvider opens the same content FD path used by SAF.
   writeFileSync(`${output}/${fileName}`, media); writeFileSync(`${output}/${subtitleName}`, "1\n00:00:00,000 --> 00:00:39,000\nGenzo Anime4K 字幕测试\n");
@@ -90,7 +92,7 @@ try {
   await native("openPlayer", { uri: `http://127.0.0.1:${port}/video.mp4`, sessionId, resumeMs: 0 });
   await until(s => s.sessionId === sessionId && s.status === "playing" && s.positionMs > 500, "initial playback");
   await native("playerControl", { action: "superResolution", value: 0, sessionId });
-  result.snapshots.initial = await until(s => s.engine === "LibVLC 3.7.7" && s.status === "playing", "ordinary playback"); result.cases.libVlcRetained = true;
+  result.snapshots.initial = await until(s => s.engine === "libmpv" && s.shaderCount === 0 && s.status === "playing", "ordinary playback"); result.cases.ordinaryPlaybackUsesMpvWithoutShaders = true;
   await native("playerControl", { action: "superResolution", value: 1, sessionId });
   result.snapshots.fast = await gpu("fast");
   await delay(1500); await native("playerControl", { action: "pause", sessionId });
@@ -106,8 +108,8 @@ try {
   assert.ok(Math.abs(result.snapshots.qualityPaused.positionMs - 8000) < 300); assert.equal(result.snapshots.qualityPaused.rate, 1.5); assert.equal(result.snapshots.qualityPaused.audioTrack, -1);
   await delay(800); shot("quality-paused"); result.cases.qualityRestoresPauseSeekRateAudio = true;
   await native("playerControl", { action: "superResolution", value: 0, sessionId });
-  result.snapshots.offPaused = await until(s => s.engine === "LibVLC 3.7.7" && s.status === "paused" && Math.abs(s.positionMs - 8000) < 700, "off preserves paused position");
-  result.cases.offReturnsToVlcAtSamePosition = true;
+  result.snapshots.offPaused = await until(s => s.engine === "libmpv" && s.shaderCount === 0 && s.status === "paused" && Math.abs(s.positionMs - 8000) < 700, "off preserves paused position");
+  result.cases.offKeepsMpvAtSamePositionWithoutShaders = true;
   await native("playerControl", { action: "superResolution", value: 1, sessionId });
   await native("playerControl", { action: "play", sessionId }); await gpu("fast-after-off"); await close();
   const localSession = randomUUID();
@@ -154,20 +156,23 @@ try {
   const reopened = await invoke("open_internal_player", { mediaFileId: file.id, restart: false, subtitleId: null }); await gpu("webdav-resumed");
   assert.ok((await native("playerState")).positionMs >= 16000); result.cases.webdavAuthSeekResume = true;
   await invoke("control_internal_player", { sessionId: reopened.sessionId, action: { type: "super-resolution", mode: 0 } });
-  await until(s => s.superResolution === 0 && s.engine === "LibVLC 3.7.7", "public shader control"); result.cases.publicSessionControl = true;
+  await until(s => s.superResolution === 0 && s.engine === "libmpv", "public shader control"); result.cases.publicSessionControl = true;
   await native("playerControl", { action: "superResolution", value: 1 }); await gpu("final-fast"); await close();
   await native("openPlayer", { uri: `http://127.0.0.1:${port}/invalid.mp4`, sessionId: randomUUID(), resumeMs: 0 });
-  const failed = await until(s => s.engine === "LibVLC 3.7.7" && s.status === "playback_error" && s.superResolutionFallback, "mpv runtime failure falls back once");
-  result.snapshots.fallback = failed; result.cases.runtimeFallback = true; await close();
+  const failed = await until(s => s.status === "playback_error" && s.error?.code === "unsupported_media", "invalid media gives a format error");
+  assert.equal(failed.failed, true); assert.equal(failed.superResolution, 1); assert.equal(failed.superResolutionFallback, undefined);
+  await delay(1000); assert.equal((await native("playerState")).status, "playback_error");
+  result.snapshots.failure = failed; result.cases.formatFailureDoesNotLoopOrDisablePreferences = true; await close();
   await native("openPlayer", { uri: `http://127.0.0.1:${port}/video.mp4`, sessionId: randomUUID(), resumeMs: 0 }); await gpu("next-session-after-fallback");
-  result.cases.fallbackDoesNotDisableNextSessionPreference = true;
+  result.cases.failureDoesNotDisableNextSessionPreference = true;
   await close();
   await native("openPlayer", { uri: `http://127.0.0.1:${port}/invalid.mp4`, sessionId: randomUUID(), resumeMs: 0 });
-  await until(s => s.superResolution === 0 && s.superResolutionFallback, "second fallback");
-  await native("playerControl", { action: "superResolution", value: 0 }); await close();
+  await until(s => s.status === "playback_error" && s.error?.code === "unsupported_media", "second format failure");
+  await close();
+  const preferences = await invoke("get_android_playback_preferences"); await invoke("set_android_playback_preferences", { settings: { ...preferences, superResolution: 0 } });
   await native("openPlayer", { uri: `http://127.0.0.1:${port}/video.mp4`, sessionId: randomUUID(), resumeMs: 0 });
-  await until(s => s.engine === "LibVLC 3.7.7" && s.status === "playing", "explicit off after fallback persists");
-  result.cases.explicitOffAfterFallbackPersists = true;
+  await until(s => s.engine === "libmpv" && s.shaderCount === 0 && s.status === "playing", "explicit off after failure persists");
+  result.cases.explicitOffAfterFailurePersists = true;
   await native("playerControl", { action: "superResolution", value: 1 }); await gpu("restore-fast-for-regression");
   await close(); assert.ok(!requests.some(request => request.method === "DELETE"));
   writeFileSync(`${output}/result.json`, JSON.stringify(result, null, 2));
@@ -175,6 +180,7 @@ try {
 } catch (error) { result.error = String(error); shot("failure"); throw error; }
 finally {
   if (page && guarded) await native("playerControl", { action: "close" }).catch(() => {});
+  if (page && guarded && originalSettings) await invoke("set_android_playback_preferences", { settings: originalSettings }).catch(() => {});
   writeFileSync(`${output}/result.json`, JSON.stringify(result, null, 2));
   if (pluginId) await invoke("remove_rule_plugin", { id: pluginId }).catch(() => {});
   if (sourceId) {

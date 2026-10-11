@@ -35,20 +35,23 @@ class PlayerArgs {
     var loading: Boolean = false
     var loadingMessage: String = "正在准备视频…"
     var loadingError: Boolean = false
+    var loadingErrorCode: String = "resolve_failed"
 }
 @InvokeArg
 class CredentialArgs { lateinit var id: String; var username: String = ""; var password: String = "" }
 @InvokeArg
 class ControlArgs {
     lateinit var action: String; var value: Double = 0.0; var uri: String? = null; var sessionId: String? = null; var trackId: String? = null
-    var hardwareDecoding: Boolean = true; var hardwareDecoder: String = "auto-safe"; var videoRenderer: String = "compat"
+    var hardwareDecoding: Boolean = true; var hardwareDecoder: String = "auto-safe"; var videoRenderer: String = "auto"
 }
 @InvokeArg
 class SessionArgs { lateinit var sessionId: String }
 @InvokeArg
+class PlayerFailureArgs { lateinit var sessionId: String; var code: String = "source_offline" }
+@InvokeArg
 class PlaybackPreferencesArgs {
     var hardwareDecoding: Boolean = true; var hardwareDecoder: String = "auto-safe"
-    var videoRenderer: String = "compat"; var superResolution: Int = 0
+    var videoRenderer: String = "auto"; var superResolution: Int = 0
 }
 @InvokeArg
 class AppearanceArgs { var dark: Boolean = true }
@@ -366,6 +369,7 @@ class GenzoPlugin(private val activity: Activity) : Plugin(activity) {
             }
             val uri = Uri.parse(args.uri)
             if (!args.loading && uri.scheme !in listOf("content", "https", "http")) { invoke.reject("Unsupported locator"); return@runOnUiThread }
+            PlayerActivity.current?.get()?.closeForReplacement()
             activity.startActivity(Intent(activity, PlayerActivity::class.java).putExtra("uri", args.uri)
                 .putExtra("ruleOperation", args.ruleOperation).putExtra("loading", args.loading).putExtra("loadingMessage", args.loadingMessage)
                 .putExtra("restart", args.restart).putExtra("mediaFileId", args.mediaFileId)
@@ -388,6 +392,18 @@ class GenzoPlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun playerState(invoke: Invoke) { invoke.resolve(PlayerActivity.snapshot) }
     @Command
+    fun playerSourceFailure(invoke: Invoke) {
+        val args = invoke.parseArgs(PlayerFailureArgs::class.java)
+        activity.runOnUiThread {
+            val prefs = activity.getSharedPreferences("genzo-player", 0)
+            val saved = JSObject(prefs.getString("lastProgress", "{}")!!)
+            if (saved.optString("sessionId") == args.sessionId) prefs.edit().putString("lastProgress", saved.put("failed", true).toString()).apply()
+            val last = PlayerActivity.snapshot
+            if (last.optString("sessionId") == args.sessionId && last.optString("status") == "closed") PlayerActivity.snapshot = JSObject(last.toString()).put("failed", true)
+            invoke.resolve(JSObject().put("accepted", PlayerActivity.current?.get()?.sourceFailure(args.sessionId, args.code) ?: false))
+        }
+    }
+    @Command
     fun savedPlayerProgress(invoke: Invoke) {
         invoke.resolve(JSObject(activity.getSharedPreferences("genzo-player", 0).getString("lastProgress", "{}")!!))
     }
@@ -402,7 +418,7 @@ class GenzoPlugin(private val activity: Activity) : Plugin(activity) {
     fun setPlaybackPreferences(invoke: Invoke) {
         val args = invoke.parseArgs(PlaybackPreferencesArgs::class.java)
         try {
-            PlaybackSettings(args.hardwareDecoding, args.hardwareDecoder, args.videoRenderer).save(activity, args.superResolution)
+            PlaybackSettings(args.hardwareDecoding, args.hardwareDecoder, if (args.videoRenderer == "compat") "auto" else args.videoRenderer).save(activity, args.superResolution)
             invoke.resolve(playbackPreferences())
         } catch (_: Exception) { invoke.reject("播放设置无效，请检查解码、渲染与超分选项") }
     }

@@ -75,7 +75,6 @@ dependencies {
     implementation("com.davemorrissey.labs:subsampling-scale-image-view:3.10.0")
     implementation("androidx.recyclerview:recyclerview:1.4.0")
     implementation("androidx.viewpager2:viewpager2:1.1.0")
-    implementation("org.videolan.android:libvlc-all:3.7.7")
     implementation("androidx.webkit:webkit:1.14.0")
     implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("androidx.core:core-splashscreen:1.0.1")
