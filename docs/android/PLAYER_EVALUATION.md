@@ -46,3 +46,23 @@ LibVLC 在当前样本中同时打通 H.264/H.265、MKV、双音轨、内嵌与�
 本阶段调试 APK 约 147 MiB；包含共享 Rust 数据 / 索引和未压缩原生库，并可能带 Gradle 增量打包留空，不能作为优化后正式包承诺。当前仅 arm64，工程 minSdk 26 / targetSdk 36，只实测 API36。
 
 APK 已做 `zipalign -c -P 16`；Rust、VLC、JNI、libc++ 的 ELF LOAD 对齐均为 `0x4000`。这只证明静态对齐，真机为 4 KiB 页，尚未在 16 KiB 页设备 / 模拟器验收。Rust 链接标志见 `scripts/build-android.ps1`，NDK r27；最终发布还需 ABI / Release 签名 / 精确许可证源码清单。
+
+
+## 规则播放与 media-kit / avbuild 核对（2026-10-11）
+
+Kazumi 使用自己的 media-kit 分支；media-kit 的原生后端是 libmpv，Dart / Flutter 负责封装、事件和画面嵌入。Kazumi 另明确采用 avbuild 的 FFmpeg 树外补丁支持非标准流。avbuild 既是 FFmpeg 构建工具，也包含 HLS 图片伪装分片、非标准扩展名清单等补丁，不能把它当成独立的播放器组件。
+
+本轮只核对其实现，没有把 media-kit、libmpv 或 avbuild 的 FFmpeg 二进制引入 Genzo。当前 LibVLC 继续保留，先修正能用失败样本证明的取流兼容差异。
+
+| 方向 | 对现有项目的影响 | 当前判断 |
+| --- | --- | --- |
+| 保留 LibVLC，修正取流 / 清单适配 | 沿用 Kotlin Activity、字幕、音轨、续播和包体；无法自动获得所有 FFmpeg 树外补丁 | 本次具体故障已在该路径解决 |
+| 直接原生接入 libmpv | Kotlin / JNI 对接其 C API 与 Surface，重接事件、字幕、拖动和生命周期；需验证包体与精确原生库构建 | 可作为确认解码 / 非标准流缺口后的候选，未实施 |
+| 嵌入完整 media-kit | Dart / Flutter 封装与当前 Tauri / React / Kotlin 架构不直接兼容，需要额外运行时或嵌入模块 | 当前没有引入整套封装的必要 |
+| avbuild 定制 FFmpeg | 可参考补丁与编译配置；不能把其库直接替换 LibVLC 内部依赖而假定 ABI / 行为兼容 | 对非标准 HLS 有参考价值，须以失败样本与受控回归决定移植范围 |
+
+用户提供 7sefun《相反的你和我》第 1 集作为失败样本：旧包线路 1 收到取流错误，线路 2 正常；隔离对照发现 Genzo 自动把网页 / iframe Referer 加到媒体请求，而 Kazumi 仅发送规则显式配置的 Referer。去掉自动继承后两条线路均播放，时长 1,447,090 ms。本例不能据此归因于视频解码器或非标准 HLS。
+
+同时修正解析器把任意 mp4 / m3u8 资源请求抢先当作正片的路径，改由实际媒体节点或已确认的 HLS 响应发现地址，排除广告容器中的视频；受控广告占位回归单独检查。规则显式 UA / Referer、Cookie、HLS 子资源和 Range 继续保留。
+
+源码核对：Kazumi `2768c230407d5fd8a57716160ba1a85a99161581` 的 `lib/pages/video/video_controller.dart`、Android 解析器和 README；avbuild `2f17eb8f64fe540e11b5d89c9a3fd9db6e5fa4b3` 的 `patches/master/0027-hls-support-segments-pretend-to-be-gif-png.patch` 与 `0033-hls-allow-playlist-w-o-extension.patch`。本次未复制 avbuild 补丁或捆绑其库。资料见 [media-kit 实现](https://github.com/media-kit/media-kit#implementation)、[Kazumi 致谢](https://github.com/Predidit/Kazumi#致谢)、[avbuild 补丁](https://github.com/wang-bin/avbuild/tree/master/patches/master)。

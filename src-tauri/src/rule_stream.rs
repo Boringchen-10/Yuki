@@ -54,11 +54,9 @@ pub(crate) async fn for_page(rule: &Value, page: &str, operation: u64) -> AppRes
     } else {
         field(rule, "userAgent")
     };
-    let referer = if field(rule, "referer").is_empty() {
-        field(&resolved, "referer")
-    } else {
-        field(rule, "referer")
-    };
+    // Kazumi only sends a media Referer explicitly configured by the rule.
+    // Reusing an iframe/page Referer can make an otherwise valid CDN URL fail.
+    let referer = field(rule, "referer");
     start(url, user_agent, referer, flag(rule, "adBlocker")).await
 }
 pub(crate) async fn for_media(
@@ -426,6 +424,46 @@ async fn serve(mut socket: TcpStream, proxy: &Proxy) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn omitted_rule_referer_does_not_leak_the_page_origin_to_media_requests() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let upstream = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut header = Vec::new();
+            loop {
+                let mut byte = [0];
+                socket.read_exact(&mut byte).await.unwrap();
+                header.push(byte[0]);
+                if header.ends_with(b"\r\n\r\n") {
+                    break;
+                }
+            }
+            assert!(!String::from_utf8_lossy(&header)
+                .to_lowercase()
+                .contains("referer:"));
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: video/mp4\r\nContent-Length: 4\r\nConnection: close\r\n\r\ntest").await.unwrap();
+        });
+        let rule = json!({"baseURL":"https://page.example.org/","useWebview":false,"referer":""});
+        let stream = for_page(
+            &rule,
+            &format!("http://{address}/video.mp4"),
+            rule_sources::begin_resolve(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            reqwest::get(&stream.uri)
+                .await
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap()
+                .as_ref(),
+            b"test"
+        );
+        upstream.await.unwrap();
+    }
     #[test]
     fn hls_rewrites_nested_playlists_maps_and_keys_and_keeps_encrypted_manifests() {
         let proxy = Proxy {

@@ -48,7 +48,7 @@
 
 ## 网络与播放边界
 
-规则网页请求、解析 WebView 与验证 WebView 使用一致的桌面浏览器标识，对齐 Kazumi 的来源访问行为，避免部分站点给 Android 标识返回 App 下载页。API 规则显式请求头可以覆盖默认值；媒体请求继续保留规则指定的 UA / Referer。
+规则网页请求、解析 WebView 与验证 WebView 使用一致的桌面浏览器标识，对齐 Kazumi 的来源访问行为，避免部分站点给 Android 标识返回 App 下载页。API 规则显式请求头可以覆盖默认值；媒体请求继续保留规则指定的 UA / Referer；Referer 未填写时不自动继承网页 / iframe 地址，对齐 Kazumi 的媒体请求行为。
 
 导入的规则可以明确使用 `http://`，因此安卓网络配置允许规则 HTTP 明文来源；用户选择 HTTP 时该连接按 HTTP 传输。HTTPS 请求继续验证证书，没有忽略证书错误或把 HTTPS 静默降级为 HTTP。
 
@@ -66,11 +66,11 @@
 - 同名规则更新 / 停用 / 移除 / 重新导入，以及签名刷新后媒体 ID 和个人记录保留。
 - 存量迁移升级、现有本地 / WebDAV 来源选择回归；常用手机 / 平板宽度及深浅主题无溢出。
 
-2026-10-11 完成 TypeScript / 98 前端测试、Rust 348 通过 / 18 忽略；规则界面 33 项交互与 24 组宽度 / 主题检查通过。实体机独立 `com.genzo.android.organizeqa` 30 项通过，使用自建 MP4 / HLS，包含取消旧请求后新播放不受干扰、稳定身份、17 秒续播、网页验证及三个环节桌面 UA 一致性。证据 `D:/DevTools/Android/Build/qa/rules-native-1791689670173/`。
+2026-10-11 完成 TypeScript / 98 前端测试、Rust 349 通过 / 18 忽略；规则界面 33 项交互与 24 组宽度 / 主题检查通过。实体机独立 `com.genzo.android.organizeqa` 31 项通过，使用自建 MP4 / HLS，包含取消旧请求后新播放不受干扰、稳定身份、17 秒续播、网页验证及三个环节桌面 UA 一致性。证据 `D:/DevTools/Android/Build/qa/rules-native-1791692013329/`。
 
-官方目录实时取得 16 项。7sefun（XPath）搜索 2 条、2 线路 / 20 集；sorani（API）搜索 2 条、1 线路 / 28 集。公共来源只验证搜索 / 选集，未播放第三方媒体，不能推断全部规则或全部线路永久可用。
+官方目录实时取得 16 项。7sefun（XPath）搜索 2 条、2 线路 / 20 集；sorani（API）搜索 2 条、1 线路 / 28 集。目录样本只验证搜索 / 选集；针对用户反馈另行实际试播 7sefun《相反的你和我》第 1 集，两条线路均正常，真实时长 1,447,090 ms。不能推断全部规则或全部线路永久可用。
 
-普通签名预览 `Genzo_0.7.0_rules-preview-final_arm64-v8a.apk`，SHA256 `c7d24fa89d25c66bc179057714506d9167a22d90651a35f09d5bec5d091c44c7`；包名 `com.genzo.android`，版本 0.7.0 / code7000，arm64 / min26 / target36 / 非 debuggable。已覆盖安装实体机，原 readerqa 的 28 作品 / 1 来源 / 5 播放记录及个人字段逐项保留；测试库 / Cookie 未复制进用户包。构建、签名、对齐与完整 OpenDesign 源码比对见 `D:/DevTools/Android/Build/qa/kazumi-rules-20261010/`。
+普通签名预览 `Genzo_0.7.0_playback-fix-preview_arm64-v8a.apk`，SHA256 `50053f6f622e07a9eecc61cbc73b7cc862176991b509afd98e8cd75eec9b76fa`；包名 `com.genzo.android`，版本 0.7.0 / code7000，arm64 / min26 / target36 / 非 debuggable。已覆盖安装实体机，原 readerqa 的 28 作品 / 15 来源（14 条规则）/ 6 播放记录及个人字段逐项保留；测试库 / Cookie 未复制进用户包。构建、签名、对齐与完整 OpenDesign 源码比对见 `D:/DevTools/Android/Build/qa/playback-headers-20261011/`。
 
 ## 上游与许可
 

@@ -6,13 +6,11 @@ import android.os.Handler
 import android.os.Looper
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import org.json.JSONObject
-import java.io.ByteArrayInputStream
 
 /** Isolated source-page renderer. It never receives the Tauri bridge or app credentials. */
 object RuleResolver {
@@ -90,7 +88,7 @@ object RuleResolver {
                 const found=u=>{try{if(u&&!String(u).startsWith('blob:'))GenzoRuleVideo.found(JSON.stringify({url:new URL(u,location.href).href,referer:location.href}))}catch{}};
                 const text=Response.prototype.text;Response.prototype.text=function(){return text.call(this).then(s=>{if(s.trim().startsWith('#EXTM3U'))found(this.url);return s})};
                 const open=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(...a){this.addEventListener('load',()=>{try{if(this.responseText.trim().startsWith('#EXTM3U'))found(a[1])}catch{}});return open.apply(this,a)};
-                const scan=()=>{document.querySelectorAll('video,video source,audio source').forEach(v=>found(v.getAttribute('src')));document.querySelectorAll('iframe').forEach(f=>{try{GenzoRuleVideo.frame(new URL(f.getAttribute('src'),location.href).href)}catch{}})};
+                const scan=()=>{document.querySelectorAll('video,video source,audio source').forEach(v=>{if(!v.closest('.action-ad,.vod-ad,.ad-video,.video-ad,[data-ad]'))found(v.getAttribute('src'))});document.querySelectorAll('iframe').forEach(f=>{try{GenzoRuleVideo.frame(new URL(f.getAttribute('src'),location.href).href)}catch{}})};
                 const watch=()=>{scan();new MutationObserver(scan).observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['src']})};
                 if(document.documentElement)watch();else document.addEventListener('DOMContentLoaded',watch,{once:true});
               })();
@@ -101,14 +99,6 @@ object RuleResolver {
                 override fun onPageStarted(v: WebView, address: String, icon: android.graphics.Bitmap?) { if (!documentStart) v.evaluateJavascript(script, null); legacyUrl(address) }
                 override fun onPageFinished(v: WebView, address: String) { if (!documentStart) v.evaluateJavascript(script, null) }
                 override fun shouldOverrideUrlLoading(v: WebView, request: WebResourceRequest): Boolean = request.url.scheme !in listOf("http", "https")
-                override fun shouldInterceptRequest(v: WebView, request: WebResourceRequest): WebResourceResponse? {
-                    val address = request.url.toString()
-                    if (Regex("(?i)\\.(m3u8|mp4|mpd|flv|mkv|webm|mov|m4v)$").containsMatchIn(request.url.path.orEmpty())) {
-                        main.post { report(address, request.requestHeaders["Referer"]) }
-                        return WebResourceResponse("application/octet-stream", null, ByteArrayInputStream(ByteArray(0)))
-                    }
-                    return null
-                }
             }
             view.setDownloadListener { address, _, _, mime, _ ->
                 if (mime?.startsWith("video/") == true || mime?.contains("mpegurl") == true) report(address)

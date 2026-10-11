@@ -67,6 +67,7 @@ const server = createServer(async (request, response) => {
       return html(response, chapterHtml());
     }
     if (path === "/slow/detail") { await delay(1600); return html(response, chapterHtml()); }
+    if (path === "/html/ad-detail") return html(response, '<div class="road"><a href="/play/ad-before-content">第1集</a></div>');
     if (path === "/cancel/detail") return html(response, '<div class="road"><a href="/play/cancel">第1集</a></div>');
     if (path === "/api/search") return json(response, { data: { records: [{ id: 42, title: "API受控视频" }] } });
     if (path === "/api/nested/42") return json(response, { data: { revision: 8, roads: [{ name: "高清", episodes: [{ name: "第13集", id: "video" }, { name: "第14集", id: "fetch" }] }, { name: "旧解析", episodes: [{ name: "第15集", id: "legacy" }] }] } });
@@ -74,6 +75,7 @@ const server = createServer(async (request, response) => {
     if (path === "/api/direct/42") return json(response, { data: { roads: [{ name: "直接流", episodes: [{ name: "第16集", url: `${base}media/video.mp4?signature=${signedGeneration}` }] }] } });
     if (path === "/api/extensionless/42") return json(response, { data: { roads: [{ name: "直接流", episodes: [{ name: "第17集", url: `${base}media/extensionless?signature=${signedGeneration}` }] }] } });
     if (path === "/play/video") return html(response, `<video controls></video><script>setTimeout(()=>document.querySelector('video').src='/media/video.mp4',120)</script>`);
+    if (path === "/play/ad-before-content") return html(response, `<div class="action-ad"><video src="/media/advertisement.mp4" preload="auto"></video></div><script>setTimeout(()=>document.body.insertAdjacentHTML('beforeend','<video controls src="/media/video.mp4"></video>'),180)</script>`);
     // No extension: this must be captured through Kazumi's Response.text hook.
     if (path === "/play/fetch") return html(response, `<script>setTimeout(()=>fetch('/media/manifest').then(r=>r.text()).then(x=>window.playlist=x),120)</script>`);
     if (path === "/play/xhr") return html(response, `<script>setTimeout(()=>{let r=new XMLHttpRequest;r.open('GET','/media/manifest');r.send()},120)</script>`);
@@ -226,6 +228,13 @@ try {
   assert.deepEqual((await invoke("get_playback_progress", { workId: null })).items, recordBefore.items);
   assert.deepEqual((await invoke("list_works")).map(work => work.id), existingIds);
   result.cases.modernVideoTrialHasNoLibraryOrWatchRecords = true;
+  const adSource = `${base}html/ad-detail`;
+  await chapters(xpath, adSource);
+  const adTrial = await preview(xpath, adSource, 0);
+  await playing(adTrial, "content-after-ad-placeholder");
+  assert.ok(!requests.some(request => request.path === "/media/advertisement.mp4" && request.userAgent === "Genzo QA Rules Native"));
+  await closePlayer(adTrial);
+  result.cases.adVideoCannotReplaceEpisode = true;
   const hlsTrial = await preview(xpath, source, 1); await playing(hlsTrial, "modern-fetch-hls");
   const hlsReady = await until(() => state(hlsTrial.sessionId), sample => sample.seekable, "HLS seekable"); assert.ok(hlsReady.durationMs > 30000);
   await control(hlsTrial.sessionId, { type: "seek", positionMs: 22000 });

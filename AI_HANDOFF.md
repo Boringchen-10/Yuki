@@ -1,5 +1,17 @@
 # Codex 与 DeepSeek Harness 项目交接记录
 
+## 规则媒体 Referer / playback_error 修复与内核核对（2026-10-11）
+
+- 基线 `83895f5`，同一 `.tmp/android-first` / `codex/android-first`。用户询问 media-kit / avbuild 是否需要借用，并给出 7sefun《相反的你和我》第 1 集在 Genzo 失败、Kazumi 正常的具体案例。工作区 OpenDesign 未提交草稿全部保留；本轮不改 App / 主题 / 原有业务页面、不引入新内核或迁移。
+- 在独立 organizeqa 复现正确同名作品（搜索首条是“第二季”，已排除），12 集两线路：旧包线路1取流失败、线路2正常。旧日志为代理502 / source_offline，尚未进入解码，不能归因于编码器。源码核对 Kazumi 只发送规则显式 Referer，Genzo却自动补上网页 / iframe Referer。临时隔离对照去掉默认头即成功；最终 Rust for_page 仅取规则 referer 字段，保留显式 UA / Referer / Cookie / Range / HLS 子资源。
+- 解析器另取消仅凭 mp4 / m3u8 扩展名抢先认定媒体的资源拦截，改由已有媒体节点、Response / XHR 确认 HLS 及 download listener 定位；排除 action-ad / vod-ad 等广告容器视频。受控广告占位必须跳过，不能让它替代正片；不是按广告域名硬编码。临时 D 构建副本的调试日志 / 空 referer 原型已恢复为实际源码，再构建最终包，162 个生产文件哈希一致。
+- 最终实际源码包复测用户案例两线路均 playing、时长 **1,447,090 ms**；已实际查看线路1画面，证据 `D:/DevTools/Android/Build/qa/7sefun-playback-1791692125890/`。实际试播只在独立包、不绑定用户作品或写真实观看记录。旧失败对照 `7sefun-playback-1791691039164`，隔离无默认Referer对照 `7sefun-playback-1791691629137`。诊断中的签名URL仅留本机临时证据，没有打印或放入Git / APK。
+- 最终 Rust **349 通过 / 18 忽略**，新增无规则Referer不向媒体送页面来源的HTTP回归，既有显式头、Range / HLS 测试保留。原生 **31 项通过**，新广告占位检查与此前解析、验证、显式头、MP4 / HLS / 无扩展名、拖动续播、取消、身份与数据保留均通过，证据 `D:/DevTools/Android/Build/qa/rules-native-1791692013329/`；服务 / 反向端口 / CDP9346已关闭。前端未修改，本轮没有声称重跑其33项界面或98项单测。
+- 核对 media-kit 为 Dart / Flutter 的 libmpv 封装；Kazumi 用其分支，并借用 avbuild 的非标准 FFmpeg 补丁（PNG/GIF伪装分片与非标准清单扩展名）。本轮未复制 / 捆绑它们。评估追加到 `docs/android/PLAYER_EVALUATION.md`，继续用LibVLC修取流；未来只有真实样本证明内核 / 非标准流缺口才评估原生libmpv或定向补丁，不因本例整体加入Flutter。avbuild只读快照 `2f17eb8f64fe540e11b5d89c9a3fd9db6e5fa4b3` 在 `D:/DevTools/Android/References/avbuild-playback-20261011/`。
+- 本机修复预览（仍0.7.0 / code7000，无公开发布）`D:/DevTools/Android/Build/previews/playback-headers-20261011/Genzo_0.7.0_playback-fix-preview_arm64-v8a.apk`，**74,465,497字节**，SHA256 **50053f6f622e07a9eecc61cbc73b7cc862176991b509afd98e8cd75eec9b76fa**；com.genzo.android / arm64 / min26 / target36 / 非debuggable / 原证书 `cee90e5f…cdb`。签名、16KiB ZIP、无DB/EPUB/CBZ、native与Gradle stripped匹配、内嵌 `index-BpRF95l3.js`、162源文件比对通过。汇总 `D:/DevTools/Android/Build/qa/playback-headers-20261011/`，旧 `c7d24fa8…` 规则预览未覆盖但不含此修复。
+- 普通包与原readerqa已覆盖安装，不清库。更新前重新读取实际用户状态，此时已是 **28作品 / 15来源（14规则）/ 6播放记录**，不能套用上一轮28/1/5。更新后作品个人字段、来源ID / kind / enabled、规则ID / 名称 / 版本 / enabled与进度逐项一致，没有隐式扫描；没有复制用户DB、凭据、Cookie或种测试数据到用户包。最后原readerqa在7sefun《相反的你和我》试播选集界面，未自动播放 / 生成记录，方便用户点第01集；普通签名包也已更新。共享9228 / 9351已指向新readerqa进程，其他预览进程保留。
+
+
 ## 安卓 Kazumi 兼容规则来源 v0.7.0 本机预览（2026-10-11）
 
 - 基线 `7d463d1`，工作树 `.tmp/android-first` / `codex/android-first`。用户明确作废旧内容来源限制，要求接入所给 Kazumi / KazumiRules / XPath 核心行为；根工作树仅边界文档已单独提交 `d8176a3`。本轮完整当前 OpenDesign 草稿参与 APK 构建，Git 仅纳入本轮 App 的 8 处增量差异；其他 Agent 的人物 / 关联 / 制作人员 / 评论 / 外观未提交部分继续保留。
