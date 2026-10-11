@@ -71,6 +71,22 @@ Windows 包不捆绑 VLC、mpv、PotPlayer、MPC-BE 等外部程序。自动检�
 
 最终公开分发前须归档与精确 AAR 构建匹配的核心 / JNI / 编解码依赖源码、许可证与构建说明，保留 LGPL 修改 / 重新链接要求；不能把 JNI sources.jar 当全部核心对应源码。本阶段仅生成本机 / 用户设备调试 APK，未做正式公开发布。包体与内核评估见 `docs/android/PLAYER_EVALUATION.md`。
 
+## Android Kazumi 兼容规则来源
+
+本轮安卓规则来源实现核对以下固定源码快照，不捆绑或运行 Kazumi 应用，不引入 Dart / Flutter 运行时。实现范围与验收边界见 [docs/android/KAZUMI_RULE_SOURCES.md](docs/android/KAZUMI_RULE_SOURCES.md)。Genzo 保留自己的 OpenDesign 界面、作品模型与现有 LibVLC 播放器。
+
+| 上游 | 固定提交 | 许可证与使用范围 |
+| --- | --- | --- |
+| [Predidit/Kazumi](https://github.com/Predidit/Kazumi) | `2768c230407d5fd8a57716160ba1a85a99161581` | GNU GPL v3.0。参考并适配规则字段、XPath 上下文、API 请求 / 受限 JSONPath / 模板 / 选集语义、Android 网页媒体地址发现，以及可选 HLS discontinuity 广告片段判断。许可全文见 [licenses/kazumi-GPL-3.0.txt](licenses/kazumi-GPL-3.0.txt)。 |
+| [Predidit/KazumiRules](https://github.com/Predidit/KazumiRules) | `fce5e15a2e6b57500912d41b3f1c65bb3eb7d392` | MIT，Copyright (c) 2024 Predidit。兼容规则仓库目录与 JSON 格式，用户可按需安装 / 导入 / 更新；仓库内容随上游变化，不作为固定可用站点清单。许可全文见 [licenses/kazumi-rules-MIT.txt](licenses/kazumi-rules-MIT.txt)。 |
+| [simonkimi/xpath_selector](https://github.com/simonkimi/xpath_selector) | `5b3d178d06bafd445e03f8f2de9c06088546f3ef` | BSD-3-Clause，Copyright (c) 2021 simonkimi。本轮仅研究 XPath 的选择与节点上下文行为，没有复制或打包该 Dart 库的实现。实际解析使用 Android 标准 `javax.xml.xpath` 与已有 jsoup / W3CDom。 |
+
+核对的 Kazumi 文件包括 `lib/plugins/plugins.dart`、`lib/services/plugin/xpath_rule_strategy.dart`、`lib/services/plugin/api_rule_strategy.dart`、`lib/plugins/anti_crawler_config.dart`、`lib/webview/video/impl/video_webview_android_impl.dart`、`lib/utils/episode_url.dart` 和 `lib/utils/m3u8_ad_filter.dart`。移植 / 适配代码继续按 Genzo 的 GPLv3 提供对应源码；没有复制上游商标、Logo、截图、作品封面或媒体文件。
+
+规则 HTML 使用既有 `org.jsoup:jsoup:1.18.1`（MIT）转为 W3C DOM，然后由 Android 标准 XPath 引擎执行；许可见既有 [licenses/jsoup-MIT.txt](licenses/jsoup-MIT.txt)。网页媒体发现使用既有 AndroidX WebKit `1.14.0`（Apache-2.0）与系统 WebView，网络与代理使用已有 Rust 依赖。规则功能不增加另一套视频解码内核；上述 LibVLC 许可要求继续适用。
+
+规则仓库的代码许可证不等同于来源网站、媒体作品或第三方接口的授权。网站与规则可能失效、改变接口或要求网页验证；Genzo 不据规则目录或一次样本验收承诺全部站点永久可用。
+
 PotPlayer 进度适配使用其 Windows 消息协议及安装目录的 `CmdLine64.txt` 参数说明；接口常量核对自 [PotPlayerControl 的 InternalSimpleCmd.h](https://github.com/ld3l/PotPlayerControl/blob/main/InternalSimpleCmd.h)。适配器为独立 Rust 实现，未复制该项目的控制器实现、商标或素材，也未捆绑 PotPlayer。该接口在不同播放器版本中可能变化，连接或文件核对失败时保留旧进度。
 
 ## Kira 漫画与轻小说接口参考

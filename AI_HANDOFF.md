@@ -1,5 +1,21 @@
 # Codex 与 DeepSeek Harness 项目交接记录
 
+## 安卓 Kazumi 兼容规则来源 v0.7.0 本机预览（2026-10-11）
+
+- 基线 `7d463d1`，工作树 `.tmp/android-first` / `codex/android-first`。用户明确作废旧内容来源限制，要求接入所给 Kazumi / KazumiRules / XPath 核心行为；根工作树仅边界文档已单独提交 `d8176a3`。本轮完整当前 OpenDesign 草稿参与 APK 构建，Git 仅纳入本轮 App 的 8 处增量差异；其他 Agent 的人物 / 关联 / 制作人员 / 评论 / 外观未提交部分继续保留。
+- 入口“我的 → 资料库 → 规则视频来源”，支持官方目录安装、JSON / URL 导入、编辑、更新、启停 / 软移除与独立试播；作品详情“剧集 → 关联规则来源”可并行搜索、选线路 / 剧集、单集播放或逐集预览确认批量关联。四个搜索并发、部分成功立即可用；每页 96 集、跨页选择保留，最多批量 500 集；13 → 1 的显式编号偏移与已有人工对应默认保护。
+- Rust 兼容 Kazumi API 1–8 的 XPath GET / POST、API typed template / restricted JSONPath / nested / delimited / episodePage；Android 既有 jsoup / W3CDom + 标准 XPath 执行 HTML。私有 WebView 对齐现代 video / Response / XHR 及旧 iframe url / base64 媒体发现；独立验证网页使用 CookieManager，不暴露 Tauri 桥或 Cookie 给 React。复用已有 LibVLC，没有新 Dart / Flutter / 解码运行时依赖。
+- 默认网页 Referer 与 API 自定义 HeaderMap 覆盖、相对播放页模板 / query 覆盖、正则忽略大小写与跨行、验证码 fallback 与章节挑战实际地址均对齐。真实 7sefun 曾因 Android UA 返回 APP 引导页而没有结果；经同解析器 HTML 对照证实原 XPath 有效，已让规则 HTTP / 解析 / 验证统一稳定桌面 UA，媒体规则显式 UA / Referer 继续保留。不要通过改官方规则掩盖此问题。
+- 会话内 MP4 / HLS 转发为子清单、分片、key / map 加正确 Cookie / UA / Referer，支持 Range、seek 与有限请求时限；可选广告启发式只用于非加密普通 VOD。Rust 操作代次贯穿慢选集 / 绑定 / 解析 / 播放，Kotlin main 队列 claim / cancelledThrough 与 Rust SESSION 锁内代次检查阻止旧响应抢新播放器或释放新代理。
+- 新增迁移 0031（不改旧迁移），规则以 `rule://` 虚拟 root 与 rule_plugins 区分，沿用旧 source_type CHECK。新剧集复用 media_files / 官方分集 / 人工覆盖 / 识别历史；同名更新、重复关联、域名变更保留 ID 和观看位置。直接 / 签名媒体用稳定目录定位键，重新播放刷新地址，时效媒体 URL 不持久化；来源移除保留作品和个人记录，不请求远程 DELETE。扫描器和待整理排除规则虚拟文件；本地 / WebDAV / 规则来源在剧集页并列，禁用规则不抢可用本地版本。
+- 验证：TypeScript 与 98 前端测试通过；最终 Rust **348 通过 / 18 忽略**，含旧 schema30→31 升级、原迁移 checksum / root schema / 个人字段与进度保留、绑定过期 / 归属冲突 / 原人工对应保护、签名身份、HLS / Range / API 模板。前端规则 **33 项交互 / 24 组布局**通过，证据 `D:/DevTools/Android/Build/qa/rules-ui-1791688640544/`；既有目录整理 / 剧集来源和批量对应 UI 也通过。
+- 实体机一加 PLK110 / Android16 / `3B164M00Z0500000`，只在独立 `com.genzo.android.organizeqa` 用自建 MP4 / HLS 和受控 HTTP 写入。最终 **30 项通过**：真实帧、拖动 / 暂停 / 系统返回 / 17 秒续播、trial 无记录、单集绑定、签名刷新、验证 Cookie / 路径 Cookie、无扩展名直链、旧取消响应不干扰新播放、移除保留。证据 `D:/DevTools/Android/Build/qa/rules-native-1791689670173/`；该轮规则软移除，服务、反向端口和 CDP9346 已关闭，没有复制任何用户凭据 / DB / Cookie。
+- 官方规则仓库实时 **16 项**；7sefun XPath 搜索2条、2线路共20集，sorani API 搜索2条、1线路28集。公共来源只搜索 / 选集，未播放第三方媒体。上游快照与 GPL / MIT / BSD 说明已写 THIRD_PARTY_NOTICES；可靠播放目标 MP4 / HLS，DASH 嵌套重写、DRM、下载、弹幕、超分及所有站点可用性不属于本轮承诺，详见 `docs/android/KAZUMI_RULE_SOURCES.md`。
+- 最终普通签名预览 `D:/DevTools/Android/Build/previews/kazumi-rules-20261011/Genzo_0.7.0_rules-preview-final_arm64-v8a.apk`，**74,465,497 字节**，SHA256 **c7d24fa89d25c66bc179057714506d9167a22d90651a35f09d5bec5d091c44c7**。0.7.0 / code7000 / com.genzo.android / arm64 / min26 / target36 / 非 debuggable，原证书 `cee90e5f49edc18217ec2d1f7cdf360f50b61af1e99e4eefdb0837b549c13cdb`。签名 / 16KiB ZIP / 包内无 DB、EPUB、CBZ / native 与最终 Gradle stripped 产物一致；嵌入 `index-BpRF95l3.js`，162 个完整当前生产源码与构建副本一致。汇总 `D:/DevTools/Android/Build/qa/kazumi-rules-20261010/`；旧中间预览勿当最终 UA 版本。
+- 普通包和原 readerqa 已 install -r 覆盖更新，无清库。按本轮更新前实际快照核对原调试库 **28作品 / 1来源 / 5播放记录及 title/status/favorite/rating/notes**逐项一致，没有隐式扫描或合成规则。普通包 firstInstallTime 仍为 **2026-10-08 23:16:41**，本次冷启动 crash buffer 无本进程错误；最后普通 Genzo 在前台，已实际导航“我的 → 资料库 → 规则视频来源”。共享预览更新同一最新前端并重指向9228 / 9351，既有预览进程未关闭。普通包内的视频库与 readerqa 是独立数据，不把调试库28部误称普通包数据。
+- 本轮只交付本机0.7.0预览与功能提交，未创建公开 Release / 标签 / 推送；v0.5.2公开APK校验仍 `0ec1456354f755d827e5acb27e28c6bb703d950623d22827e9574f6f19c4af05`。自动审批曾拦截重复开发测试工具目录清理及含旧APK删除的重建命令（仅返回 blocked by policy）；旧目录 / 文件均保留，后续改用全新构建输出目录，没有重试删除或把它们打入APK。
+
+
 ## 安卓详情批量剧集匹配 / 续季编号对应（2026-10-10）
 
 - 基线 `caa8063`，工作树 `.tmp/android-first` / `codex/android-first`。用户要求移除详情“个人记录”选择项（已明确指按钮，保留数据），作品匹配后增加批量匹配官方剧集；明确指出续季文件 13–24、作品官方 1–12 的编号差异。本轮继续包含 OpenDesign 当前草稿构建，Git 仅纳入本轮 App 差异。

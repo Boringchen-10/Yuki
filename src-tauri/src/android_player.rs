@@ -90,7 +90,7 @@ async fn persist(pool: &SqlitePool, sample: &Value) -> AppResult<()> {
     let Some(updated) = chrono::DateTime::from_timestamp_millis(timestamp) else { return Ok(()) };
     let (_guard, mut tx) = crate::db::begin_write(pool).await?;
     // Only indexed Android-accessible videos may contribute playback records.
-    let valid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM media_files m WHERE m.id=? AND m.media_type='video' AND (EXISTS(SELECT 1 FROM android_documents d WHERE d.media_file_id=m.id) OR EXISTS(SELECT 1 FROM remote_files f WHERE f.media_file_id=m.id)))")
+    let valid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM media_files m WHERE m.id=? AND m.media_type='video' AND (EXISTS(SELECT 1 FROM android_documents d WHERE d.media_file_id=m.id) OR EXISTS(SELECT 1 FROM remote_files f WHERE f.media_file_id=m.id) OR EXISTS(SELECT 1 FROM rule_episodes e WHERE e.media_file_id=m.id)))")
         .bind(id).fetch_one(&mut *tx).await?;
     if valid {
         let completed = !matches!(sample["status"].as_str(), Some("error" | "permission_denied" | "playback_error"))
@@ -200,17 +200,29 @@ fn select_candidate(candidates: &[Value], requested: Option<String>) -> AppResul
 
 #[tauri::command]
 pub async fn open_internal_player(media_file_id: String, restart: bool, subtitle_id: Option<String>, state: State<'_, AppState>) -> AppResult<Value> {
+    open_player(media_file_id, restart, subtitle_id, &state, None).await
+}
+
+pub(crate) async fn open_rule_player(media_file_id: String, state: &AppState, operation: u64) -> AppResult<Value> {
+    open_player(media_file_id, false, None, state, Some(operation)).await
+}
+
+async fn open_player(media_file_id: String, restart: bool, subtitle_id: Option<String>, state: &AppState, rule_operation: Option<u64>) -> AppResult<Value> {
     sync_saved(&state.pool).await?;
-    let row: Option<(Option<String>, bool, bool, String, String)> = sqlx::query_as("SELECT d.uri,m.missing,r.enabled,r.source_type,r.id FROM media_files m JOIN library_roots r ON r.id=m.library_root_id LEFT JOIN android_documents d ON d.media_file_id=m.id WHERE m.id=? AND m.media_type='video' AND (d.uri IS NOT NULL OR EXISTS(SELECT 1 FROM remote_files f WHERE f.media_file_id=m.id))")
+    let row: Option<(Option<String>, bool, bool, String, String)> = sqlx::query_as("SELECT d.uri,m.missing,r.enabled,CASE WHEN EXISTS(SELECT 1 FROM rule_episodes e WHERE e.media_file_id=m.id) THEN 'rule' ELSE r.source_type END,r.id FROM media_files m JOIN library_roots r ON r.id=m.library_root_id LEFT JOIN android_documents d ON d.media_file_id=m.id WHERE m.id=? AND m.media_type='video' AND (d.uri IS NOT NULL OR EXISTS(SELECT 1 FROM remote_files f WHERE f.media_file_id=m.id) OR EXISTS(SELECT 1 FROM rule_episodes e WHERE e.media_file_id=m.id))")
         .bind(&media_file_id).fetch_optional(&state.pool).await?;
     let (local_uri, missing, enabled, kind, source_id) = row.ok_or_else(|| AppError::Validation("请选择已索引的 SAF 或 WebDAV 视频".into()))?;
+    let rule_operation = (kind == "rule").then(|| rule_operation.unwrap_or_else(crate::rule_sources::begin_resolve));
     if missing || !enabled { return Err(AppError::Validation("文件缺失或来源已停用，请检查来源后重试".into())); }
     let previous: Option<(i64, bool)> = sqlx::query_as("SELECT position_ms,completed FROM playback_progress WHERE media_file_id=?")
         .bind(&media_file_id).fetch_optional(&state.pool).await?;
     let resume = if restart { 0 } else { previous.filter(|(_, completed)| !completed).map(|(position, _)| position).unwrap_or(0) };
     let session = Uuid::new_v4().to_string();
     let mut remote_stream = None;
-    let uri = if kind == "webdav" {
+    let uri = if kind == "rule" {
+        let stream = crate::rule_stream::for_media(state, &media_file_id, rule_operation.unwrap()).await?;
+        let uri = stream.uri.clone(); remote_stream = Some(stream); uri
+    } else if kind == "webdav" {
         match crate::remote_transfer::stream_only(&state, &media_file_id).await {
             Ok(stream) => {
                 sqlx::query("UPDATE library_roots SET availability='online' WHERE id=?").bind(&source_id).execute(&state.pool).await?;
@@ -240,16 +252,25 @@ pub async fn open_internal_player(media_file_id: String, restart: bool, subtitle
         if uri.is_none() { subtitle_file = Some(crate::remote_transfer::subtitle_file(&state, id).await?); }
         uri
     } else { None };
-    let opened = android_bridge::call("openPlayer", json!({"uri":uri,"restart":restart,"resumeMs":resume,"mediaFileId":media_file_id,"sessionId":session,"subtitleUri":subtitle_uri,"subtitleFile":subtitle_file,"subtitleLabel":subtitle_label,"subtitleId":selected})).await;
+    if let Some(operation) = rule_operation { crate::rule_sources::check_resolve(operation)?; }
+    let opened = android_bridge::call("openPlayer", json!({"uri":uri,"restart":restart,"resumeMs":resume,"mediaFileId":media_file_id,"sessionId":session,"subtitleUri":subtitle_uri,"subtitleFile":subtitle_file,"subtitleLabel":subtitle_label,"subtitleId":selected,"ruleOperation":rule_operation.unwrap_or(0)})).await;
     if let Err(error) = opened {
         if let Some(path) = subtitle_file { let _ = tokio::fs::remove_file(path).await; }
         return Err(error);
     }
     let initial = json!({"sessionId":session,"mediaFileId":media_file_id,"status":"opening","positionMs":resume});
-    *SESSION.lock().map_err(|_| AppError::System("播放会话不可用".into()))? = Some(Session { id:session.clone(), initial:initial.clone(), stream:remote_stream });
-    let pool = state.pool.clone();
-    let owned_session = session.clone();
-    let owned_source = source_id;
+    {
+        let mut current = SESSION.lock().map_err(|_| AppError::System("播放会话不可用".into()))?;
+        if let Some(operation) = rule_operation { crate::rule_sources::check_resolve(operation)?; }
+        *current = Some(Session { id:session.clone(), initial:initial.clone(), stream:remote_stream });
+    }
+    monitor(state.pool.clone(), session.clone(), source_id, subtitle_file);
+    let opening = snapshot(initial);
+    crate::android_events::player(opening.clone());
+    Ok(opening)
+}
+
+fn monitor(pool: SqlitePool, owned_session: String, owned_source: String, subtitle_file: Option<std::path::PathBuf>) {
     tauri::async_runtime::spawn(async move {
         let mut last_saved = tokio::time::Instant::now() - std::time::Duration::from_secs(5);
         let mut last_status = String::new();
@@ -263,6 +284,9 @@ pub async fn open_internal_player(media_file_id: String, restart: bool, subtitle
             }
             crate::android_events::player(snapshot(sample.clone()));
             let status = sample["status"].as_str().unwrap_or("");
+            if status == "playing" && last_status != "playing" {
+                let _ = sqlx::query("UPDATE library_roots SET availability='online' WHERE id=? AND path LIKE 'rule://%'").bind(&owned_source).execute(&pool).await;
+            }
             if status != last_status || last_saved.elapsed().as_secs() >= 5 {
                 if persist(&pool, &sample).await.is_ok() { last_saved = tokio::time::Instant::now(); last_status = status.into(); }
             }
@@ -278,9 +302,21 @@ pub async fn open_internal_player(media_file_id: String, restart: bool, subtitle
         }
         if let Some(path) = subtitle_file { let _ = tokio::fs::remove_file(path).await; }
     });
-    let opening = snapshot(initial);
-    crate::android_events::player(opening.clone());
-    Ok(opening)
+}
+
+pub(crate) async fn preview_stream(state: &AppState, stream: crate::remote_transfer::AndroidStream, source_id: String, operation: u64) -> AppResult<Value> {
+    sync_saved(&state.pool).await?;
+    crate::rule_sources::check_resolve(operation)?;
+    let session=Uuid::new_v4().to_string();
+    android_bridge::call("openPlayer",json!({"uri":stream.uri,"restart":true,"resumeMs":0,"sessionId":session,"ruleOperation":operation})).await?;
+    let initial=json!({"sessionId":session,"mediaFileId":null,"status":"opening","positionMs":0});
+    {
+        let mut current=SESSION.lock().map_err(|_|AppError::System("播放会话不可用".into()))?;
+        crate::rule_sources::check_resolve(operation)?;
+        *current=Some(Session{id:session.clone(),initial:initial.clone(),stream:Some(stream)});
+    }
+    monitor(state.pool.clone(),session,source_id,None);
+    let value=snapshot(initial);crate::android_events::player(value.clone());Ok(value)
 }
 
 #[cfg(test)]

@@ -31,6 +31,7 @@ class PlayerArgs {
     var subtitleFile: String? = null
     var subtitleLabel: String? = null
     var subtitleId: String? = null
+    var ruleOperation: Long = 0
 }
 @InvokeArg
 class CredentialArgs { lateinit var id: String; var username: String = ""; var password: String = "" }
@@ -48,9 +49,39 @@ class ReaderControlArgs { lateinit var sessionId: String; lateinit var action: S
 class DataPackageArgs { lateinit var data: String }
 @InvokeArg
 class ImportServiceArgs { var text: String = "正在整理目录" }
+@InvokeArg
+class RuleArgs { var html: String = ""; var rule: String = "{}"; var operation: String = "search"; var resolveOperation: Long = 0; var url: String = ""; var legacy: Boolean = false; var method: String = "GET"; var body: String = "" }
 
 @TauriPlugin
 class GenzoPlugin(private val activity: Activity) : Plugin(activity) {
+    @Command
+    fun parseRuleHtml(invoke: Invoke) {
+        val args = invoke.parseArgs(RuleArgs::class.java)
+        worker.execute { try { invoke.resolve(JSObject(RuleHtml.parse(args.html, org.json.JSONObject(args.rule), args.operation).toString())) }
+            catch (error: Exception) { invoke.resolve(JSObject().put("error", error.message?.take(160) ?: "规则 XPath 解析失败")) } }
+    }
+    @Command
+    fun ruleEnvironment(invoke: Invoke) {
+        val args = invoke.parseArgs(RuleArgs::class.java)
+        activity.runOnUiThread { invoke.resolve(JSObject().put("userAgent", RuleResolver.USER_AGENT)
+            .put("cookie", android.webkit.CookieManager.getInstance().getCookie(args.url) ?: "")) }
+    }
+    @Command
+    fun resolveRuleVideo(invoke: Invoke) {
+        val args = invoke.parseArgs(RuleArgs::class.java)
+        RuleResolver.resolve(activity, args.url, args.legacy, args.resolveOperation) { invoke.resolve(JSObject(it.toString())) }
+    }
+    @Command
+    fun cancelRuleVideo(invoke: Invoke) { val args = invoke.parseArgs(RuleArgs::class.java); RuleResolver.cancel(args.resolveOperation); invoke.resolve() }
+    @Command
+    fun verifyRuleSource(invoke: Invoke) {
+        val args = invoke.parseArgs(RuleArgs::class.java)
+        activity.runOnUiThread {
+            activity.startActivity(Intent(activity, RuleVerificationActivity::class.java).putExtra("url", args.url)
+                .putExtra("method", args.method).putExtra("body", args.body).putExtra("config", args.rule))
+            invoke.resolve()
+        }
+    }
     @Command
     fun startSourceImportService(invoke: Invoke) {
         activity.runOnUiThread { try {
@@ -311,14 +342,17 @@ class GenzoPlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun openPlayer(invoke: Invoke) {
         val args = invoke.parseArgs(PlayerArgs::class.java)
-        val uri = Uri.parse(args.uri)
-        if (uri.scheme !in listOf("content", "https", "http")) { invoke.reject("Unsupported locator"); return }
-        activity.startActivity(Intent(activity, PlayerActivity::class.java).putExtra("uri", args.uri)
-            .putExtra("restart", args.restart).putExtra("mediaFileId", args.mediaFileId)
-            .putExtra("sessionId", args.sessionId).putExtra("resumeMs", args.resumeMs ?: -1L)
-            .putExtra("subtitleUri", args.subtitleUri).putExtra("subtitleFile", args.subtitleFile)
-            .putExtra("subtitleLabel", args.subtitleLabel).putExtra("subtitleId", args.subtitleId))
-        invoke.resolve(JSObject().put("status", "opening"))
+        activity.runOnUiThread {
+            if (args.ruleOperation > 0 && !RuleResolver.claim(args.ruleOperation)) { invoke.reject("播放解析已取消"); return@runOnUiThread }
+            val uri = Uri.parse(args.uri)
+            if (uri.scheme !in listOf("content", "https", "http")) { invoke.reject("Unsupported locator"); return@runOnUiThread }
+            activity.startActivity(Intent(activity, PlayerActivity::class.java).putExtra("uri", args.uri)
+                .putExtra("restart", args.restart).putExtra("mediaFileId", args.mediaFileId)
+                .putExtra("sessionId", args.sessionId).putExtra("resumeMs", args.resumeMs ?: -1L)
+                .putExtra("subtitleUri", args.subtitleUri).putExtra("subtitleFile", args.subtitleFile)
+                .putExtra("subtitleLabel", args.subtitleLabel).putExtra("subtitleId", args.subtitleId))
+            invoke.resolve(JSObject().put("status", "opening"))
+        }
     }
 
     @Command

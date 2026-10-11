@@ -383,6 +383,17 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn v060_rule_source_upgrade_preserves_existing_library_and_migration_checksums(){
+        let pool=SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+        let mut previous=sqlx::migrate!("./migrations");previous.migrations=Cow::Owned(previous.migrations.into_owned().into_iter().filter(|m|m.version<=30).collect());previous.run(&pool).await.unwrap();
+        sqlx::raw_sql("INSERT INTO works(id,title,type,favorite,rating,notes,created_at,updated_at) VALUES('w','旧作品','video',1,8.5,'保留笔记','t','t');INSERT INTO library_roots(id,path,kind,created_at,updated_at) VALUES('root','webdav://root','video','t','t');INSERT INTO media_files(id,work_id,library_root_id,path,file_name,extension,media_type,created_at,updated_at) VALUES('media','w','root','webdav://root/01.mkv','01.mkv','mkv','video','t','t');INSERT INTO playback_progress(media_file_id,position_ms,duration_ms,updated_at) VALUES('media',3456,40000,'t');INSERT INTO app_settings(key,value,updated_at) VALUES('qa.keep','preserved','t');").execute(&pool).await.unwrap();
+        let ledger:Vec<(i64,Vec<u8>)>=sqlx::query_as("SELECT version,checksum FROM _sqlx_migrations ORDER BY version").fetch_all(&pool).await.unwrap();let root_schema= schema_sql(&pool,"library_roots").await.unwrap();run(&pool).await.unwrap();run(&pool).await.unwrap();
+        assert_eq!(sqlx::query_as::<_,(bool,f64,String)>("SELECT favorite,rating,notes FROM works WHERE id='w'").fetch_one(&pool).await.unwrap(),(true,8.5,"保留笔记".into()));assert_eq!(sqlx::query_scalar::<_,i64>("SELECT position_ms FROM playback_progress WHERE media_file_id='media'").fetch_one(&pool).await.unwrap(),3456);
+        assert_eq!(schema_sql(&pool,"library_roots").await.unwrap(),root_schema);assert_eq!(sqlx::query_as::<_,(i64,Vec<u8>)>("SELECT version,checksum FROM _sqlx_migrations WHERE version<=30 ORDER BY version").fetch_all(&pool).await.unwrap(),ledger);
+        assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('rule_plugins','rule_work_sources','rule_episodes')").fetch_one(&pool).await.unwrap(),3);
+        assert_eq!(sqlx::query_scalar::<_,String>("SELECT value FROM app_settings WHERE key='qa.keep'").fetch_one(&pool).await.unwrap(),"preserved");
+    }
+    #[tokio::test]
     async fn missing_legacy_relocation_view_is_repaired_without_rewriting_data_or_ledger() {
         for valid_checksum in [true, false] {
             let pool = SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();

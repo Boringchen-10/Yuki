@@ -2,6 +2,10 @@ mod anime_details;
 mod android_probe;
 mod android_bridge;
 mod android_sources;
+mod rule_format;
+mod rule_sources;
+mod rule_bindings;
+mod rule_stream;
 mod source_imports;
 mod android_player;
 mod android_events;
@@ -91,6 +95,23 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            rule_sources::list_rule_plugins,
+            rule_sources::get_rule_definition,
+            rule_sources::get_rule_catalog,
+            rule_sources::import_rule_plugin,
+            rule_sources::import_rule_url,
+            rule_sources::install_catalog_rule,
+            rule_sources::update_rule_plugin,
+            rule_sources::set_rule_plugin_enabled,
+            rule_sources::search_rule_source,
+            rule_sources::get_rule_chapters,
+            rule_sources::verify_rule_source,
+            rule_sources::cancel_rule_resolve,
+            rule_sources::preview_rule_episode,
+            rule_bindings::preview_rule_binding,
+            rule_bindings::bind_rule_episodes,
+            rule_bindings::play_rule_episode,
+            rule_bindings::list_work_rule_sources,
             commands::test_tmdb_connection,
             source_imports::start_source_import,
             source_imports::list_source_imports,

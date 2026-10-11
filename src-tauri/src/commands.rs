@@ -115,7 +115,7 @@ async fn work_list_items(pool: &SqlitePool) -> AppResult<Vec<WorkListItem>> {
     for work in works {
         let tags = tags_for_work(pool, &work.id).await?;
         let (media_count, missing_count, local_count, network_count): (i64, i64, i64, i64) = sqlx::query_as(
-            "SELECT COUNT(*), COALESCE(SUM(CASE WHEN m.missing = 1 THEN 1 ELSE 0 END), 0), COALESCE(SUM(CASE WHEN COALESCE(r.source_type, 'local') != 'webdav' THEN 1 ELSE 0 END), 0), COALESCE(SUM(CASE WHEN r.source_type = 'webdav' THEN 1 ELSE 0 END), 0) FROM media_files m LEFT JOIN library_roots r ON r.id = m.library_root_id WHERE m.work_id = ?",
+            "SELECT COUNT(*), COALESCE(SUM(CASE WHEN m.missing = 1 THEN 1 ELSE 0 END), 0), COALESCE(SUM(CASE WHEN COALESCE(r.source_type, 'local') != 'webdav' AND COALESCE(r.path,'') NOT LIKE 'rule://%' THEN 1 ELSE 0 END), 0), COALESCE(SUM(CASE WHEN r.source_type = 'webdav' OR r.path LIKE 'rule://%' THEN 1 ELSE 0 END), 0) FROM media_files m LEFT JOIN library_roots r ON r.id = m.library_root_id WHERE m.work_id = ?",
         )
         .bind(&work.id)
         .fetch_one(pool)
@@ -654,7 +654,8 @@ pub async fn set_root_destination_in_pool(pool: &SqlitePool, id: &str, destinati
 #[tauri::command]
 pub async fn delete_library_root(id: String, state: State<'_, AppState>) -> AppResult<()> {
     let remote: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM remote_sources WHERE id = ? UNION ALL SELECT 1 FROM android_saf_sources WHERE source_id = ?)")
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM remote_sources WHERE id = ? UNION ALL SELECT 1 FROM android_saf_sources WHERE source_id = ? UNION ALL SELECT 1 FROM rule_plugins WHERE id=?)")
+            .bind(&id)
             .bind(&id)
             .bind(&id)
             .fetch_one(&state.pool)

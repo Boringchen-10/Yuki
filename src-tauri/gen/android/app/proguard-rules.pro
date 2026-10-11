@@ -30,6 +30,8 @@
 -keep class com.genzo.android.SessionArgs { *; }
 -keep class com.genzo.android.AppearanceArgs { *; }
 -keep class com.genzo.android.ImportServiceArgs { *; }
+-keep class com.genzo.android.RuleArgs { *; }
+-keepclassmembers class * { @android.webkit.JavascriptInterface <methods>; }
 # Tauri's Rust JNI resolves this generated method by its original name.
 -keep class com.genzo.android.TauriActivity {
     app.tauri.plugin.PluginManager getPluginManager();

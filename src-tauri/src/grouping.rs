@@ -309,7 +309,7 @@ async fn roots_by_id(pool: &SqlitePool) -> AppResult<HashMap<String, String>> {
 
 async fn unassigned_media(pool: &SqlitePool) -> AppResult<Vec<MediaFile>> {
     Ok(sqlx::query_as::<_, MediaFile>(&format!(
-        "SELECT {MEDIA_COLUMNS} FROM media_files WHERE work_id IS NULL AND NOT EXISTS(SELECT 1 FROM remote_sources s WHERE s.id=media_files.library_root_id AND s.removed_at IS NOT NULL) ORDER BY path COLLATE NOCASE"
+        "SELECT {MEDIA_COLUMNS} FROM media_files WHERE work_id IS NULL AND NOT EXISTS(SELECT 1 FROM remote_sources s WHERE s.id=media_files.library_root_id AND s.removed_at IS NOT NULL) AND NOT EXISTS(SELECT 1 FROM rule_episodes e WHERE e.media_file_id=media_files.id) ORDER BY path COLLATE NOCASE"
     ))
     .fetch_all(pool)
     .await?)

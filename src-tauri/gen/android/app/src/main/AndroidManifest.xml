@@ -35,6 +35,7 @@
         <service android:name=".SourceImportService" android:exported="false" android:foregroundServiceType="dataSync" />
         <activity android:name=".ReaderActivity" android:exported="false"
             android:configChanges="keyboardHidden|uiMode" />
+        <activity android:name=".RuleVerificationActivity" android:exported="false" />
         <provider
           android:name="androidx.core.content.FileProvider"
           android:authorities="${applicationId}.fileprovider"

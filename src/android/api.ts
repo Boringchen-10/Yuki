@@ -5,7 +5,7 @@ import { api } from "../api";
 import type { ScanTask } from "../scanTasks";
 
 export interface VideoSource {
-  id: string; kind: "saf" | "webdav"; label: string; enabled: boolean;
+  id: string; kind: "saf" | "webdav" | "rule"; label: string; enabled: boolean;
   state: string; lastScannedAt: string | null;
   error?: Failure;
 }

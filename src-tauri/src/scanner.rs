@@ -502,6 +502,7 @@ pub async fn prepare_scan(
     if !root.enabled {
         return Err(AppError::Validation("该扫描目录已停用".to_string()));
     }
+    if root.path.starts_with("rule://") { return Err(AppError::Validation("规则来源通过搜索与选集更新，无需扫描目录".into())); }
 
     let scope_key = crate::scan_tasks::scope_key(pool, &root).await?;
     if retry

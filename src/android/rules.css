@@ -1,0 +1,11 @@
+.android-app .gz-rule-plugin, .android-app .gz-rule-import { margin-top: 14px; }
+.android-app .gz-rule-browser > * + * { margin-top: 12px; }
+.android-app .gz-rule-browser label { display: block; }
+.android-app .gz-rule-offset { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+.android-app .gz-rule-episode { display: flex; gap: 10px; align-items: center; border-bottom: 1px solid var(--line); padding: 5px 0; }
+.android-app .gz-rule-episode > input { width: 22px; min-height: 22px; flex: none; }
+.android-app .gz-rule-episode > span { flex: 1; }
+.android-app .gz-rule-catalog { max-height: 480px; overflow: auto; }
+.android-app .gz-rule-catalog-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.android-app .gz-rule-dialog { width: min(680px,calc(100% - 20px)); max-height: calc(100dvh - 32px); padding: 16px; overflow: auto; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); }
+.android-app .gz-rule-dialog::backdrop { background: #0009; }
