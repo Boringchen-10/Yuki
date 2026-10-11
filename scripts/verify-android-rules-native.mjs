@@ -67,6 +67,7 @@ const server = createServer(async (request, response) => {
       return html(response, chapterHtml());
     }
     if (path === "/slow/detail") { await delay(1600); return html(response, chapterHtml()); }
+    if (path === "/fail/detail") return html(response, "受控来源加载失败", 503);
     if (path === "/html/ad-detail") return html(response, '<div class="road"><a href="/play/ad-before-content">第1集</a></div>');
     if (path === "/cancel/detail") return html(response, '<div class="road"><a href="/play/cancel">第1集</a></div>');
     if (path === "/api/search") return json(response, { data: { records: [{ id: 42, title: "API受控视频" }] } });
@@ -295,35 +296,42 @@ try {
   if (process.env.RULES_TEST_CANCEL === "1") {
     const cancel = await install(htmlRule("Cancel during chapter request"));
     const requestCount = requests.filter(request => request.path === "/slow/detail").length;
-    await page.evaluate(({ pluginId, source }) => {
-      window.__qaPendingRulePreview = window.__TAURI_INTERNALS__.invoke("preview_rule_episode", { pluginId, source, roadIndex: 0, episodeIndex: 0 }).then(data => ({ data }), error => ({ error: String(error) }));
-    }, { pluginId: cancel, source: `${base}slow/detail` });
+    const begin = Date.now();
+    const pending = await preview(cancel, `${base}slow/detail`, 0);
+    assert.ok(Date.now() - begin < 1200, "opening must not wait for the delayed chapter response");
+    assert.equal(pending.status, "opening");
     await until(async () => requests.filter(request => request.path === "/slow/detail").length > requestCount, Boolean, "delayed chapter request begins");
-    await invoke("cancel_rule_resolve");
-    const cancelled = await page.evaluate(() => window.__qaPendingRulePreview);
-    assert.match(cancelled.error ?? "", /取消|超时/); assert.equal(cancelled.data, undefined);
-    await delay(800);
+    const foregroundLoading = command("shell", "dumpsys", "activity", "activities");
+    assert.ok(foregroundLoading.split("\n").filter(line => /mResumedActivity|topResumedActivity/.test(line)).some(line => line.includes("PlayerActivity")));
+    const loadingState = await invoke("android_native", { command: "playerState", payload: {} });
+    assert.equal(loadingState.sessionId, pending.sessionId); assert.match(loadingState.loadingMessage, /获取剧集/);
+    await delay(350);
+    shot("native-loading-chapters");
+    result.cases.nativePlayerOpensBeforeChapterResponse = true;
+    command("shell", "input", "keyevent", "KEYCODE_BACK");
+    await until(() => state(null), sample => ["idle", "closed"].includes(sample.status), "pending player back closes");
+    await delay(1800);
     const foreground = command("shell", "dumpsys", "activity", "activities");
     assert.ok(!foreground.split("\n").filter(line => /mResumedActivity|topResumedActivity/.test(line)).some(line => line.includes("PlayerActivity")));
     assert.ok(["idle", "closed"].includes((await state(null)).status));
     result.cases.cancelledChapterResponseCannotOpenNativePlayer = true;
-    await page.evaluate(({ pluginId, source }) => {
-      window.__qaPendingRulePreview = window.__TAURI_INTERNALS__.invoke("preview_rule_episode", { pluginId, source, roadIndex: 0, episodeIndex: 0 }).then(data => ({ data }), error => ({ error: String(error) }));
-    }, { pluginId: cancel, source: `${base}cancel/detail` });
+    const failed = await preview(cancel, `${base}fail/detail`, 0);
+    const failure = await until(() => state(failed.sessionId), sample => sample.status === "error", "loading failure stays in player");
+    assert.match(failure.error.message, /503/); shot("native-loading-failure");
+    await closePlayer(failed, true);
+    result.cases.loadingFailureDisplayedInPlayer = true;
+    await preview(cancel, `${base}cancel/detail`, 0);
     await until(async () => requests.some(request => request.path === "/play/cancel"), Boolean, "headless source renderer begins");
     await invoke("cancel_rule_resolve");
-    assert.match((await page.evaluate(() => window.__qaPendingRulePreview)).error ?? "", /取消|超时/);
-    assert.ok(["idle", "closed"].includes((await state(null)).status));
+    await until(() => state(null), sample => ["idle", "closed"].includes(sample.status), "headless player cancellation");
     result.cases.headlessWebviewCancellation = true;
     const slowBefore = requests.filter(request => request.path === "/slow/detail").length;
-    await page.evaluate(({ pluginId, source }) => {
-      window.__qaPendingRulePreview = window.__TAURI_INTERNALS__.invoke("preview_rule_episode", { pluginId, source, roadIndex: 0, episodeIndex: 0 }).then(data => ({ data }), error => ({ error: String(error) }));
-    }, { pluginId: cancel, source: `${base}slow/detail?race=new-player` });
+    await preview(cancel, `${base}slow/detail?race=new-player`, 0);
     await until(async () => requests.filter(request => request.path === "/slow/detail").length > slowBefore, Boolean, "old chapter request begins");
     await invoke("cancel_rule_resolve");
     const newPlayer = await preview(xpath, source, 0);
     await playing(newPlayer, "new-player-after-cancel");
-    assert.match((await page.evaluate(() => window.__qaPendingRulePreview)).error ?? "", /取消|超时/);
+    await delay(1800);
     const newState = await state(newPlayer.sessionId); assert.equal(newState.sessionId, newPlayer.sessionId); assert.equal(newState.status, "playing");
     await closePlayer(newPlayer, true);
     result.cases.oldCancelledResponseCannotDisruptNewPlayer = true;

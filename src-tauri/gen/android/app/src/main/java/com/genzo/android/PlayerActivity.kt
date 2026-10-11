@@ -13,9 +13,12 @@ import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
 import android.view.View
+import android.view.Gravity
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.FrameLayout
+import android.widget.ProgressBar
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
@@ -52,6 +55,15 @@ class PlayerActivity : ComponentActivity() {
     private var subtitleDelayMs = 0L
     private var pendingRate: Float? = null
     private var status = "opening"
+    private var ruleOperation = 0L
+    private var mediaReady = false
+    private var startOnResume = false
+    private var loadingMessage = "正在准备视频…"
+    private var loadingError: String? = null
+    private lateinit var loadingPanel: LinearLayout
+    private lateinit var loadingText: TextView
+    private lateinit var loadingSpinner: ProgressBar
+    private val mediaControls = mutableListOf<View>()
     private val subtitleFiles = mutableListOf<File>()
     private val sidecars = linkedMapOf<String, Pair<String, File>>()
     private var selectedSidecar: String? = null
@@ -70,10 +82,14 @@ class PlayerActivity : ComponentActivity() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() { finish() }
         })
-        current = WeakReference(this)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-        uri = intent.getStringExtra("uri") ?: run { finish(); return }
+        uri = intent.getStringExtra("uri").orEmpty()
+        ruleOperation = intent.getLongExtra("ruleOperation", 0)
+        if (ruleOperation > 0 && !RuleResolver.allowed(ruleOperation)) { finish(); return }
+        if (uri.isEmpty() && !intent.getBooleanExtra("loading", false)) { finish(); return }
+        current = WeakReference(this)
+        loadingMessage = intent.getStringExtra("loadingMessage") ?: loadingMessage
         mediaFileId = intent.getStringExtra("mediaFileId")
         sessionId = intent.getStringExtra("sessionId")
         initialSubtitle = intent.getStringExtra("subtitleUri")
@@ -81,7 +97,16 @@ class PlayerActivity : ComponentActivity() {
             intent.getLongExtra("resumeMs", -1L).takeIf { it >= 0 } ?: getSharedPreferences("genzo-prototype-progress", 0).getLong(identity(), 0)
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(0xff101114.toInt()) }
         video = VLCVideoLayout(this)
-        root.addView(video, LinearLayout.LayoutParams(-1, 0, 1f))
+        val viewport = FrameLayout(this)
+        viewport.addView(video, FrameLayout.LayoutParams(-1, -1))
+        loadingPanel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; setPadding(24,24,24,24) }
+        loadingSpinner = ProgressBar(this)
+        loadingPanel.addView(loadingSpinner)
+        loadingText = TextView(this).apply { setTextColor(0xffffffff.toInt()); textSize = 16f; gravity = Gravity.CENTER; setPadding(16,24,16,24) }
+        loadingPanel.addView(loadingText)
+        loadingPanel.addView(Button(this).apply { text = if (ruleOperation > 0) "返回选集" else "返回"; setOnClickListener { finish() } })
+        viewport.addView(loadingPanel, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER))
+        root.addView(viewport, LinearLayout.LayoutParams(-1, 0, 1f))
         label = TextView(this).apply { setTextColor(0xffffffff.toInt()); textSize = 12f }
         root.addView(label)
         seek = SeekBar(this).apply { max = 1000 }
@@ -96,6 +121,7 @@ class PlayerActivity : ComponentActivity() {
         button("音轨") { tracks(false) }
         button("字幕") { tracks(true) }
         root.addView(controls)
+        mediaControls.add(controls)
         val extra = LinearLayout(this)
         extra.addView(Button(this).apply { text = "选择外挂字幕"; setOnClickListener { launchSubtitlePicker() } }, LinearLayout.LayoutParams(0, controlHeight, 1f))
         extra.addView(Button(this).apply { text = "字幕偏移"; setOnClickListener {
@@ -108,6 +134,7 @@ class PlayerActivity : ComponentActivity() {
             requestedOrientation = if (resources.configuration.orientation == 2) ActivityInfo.SCREEN_ORIENTATION_PORTRAIT else ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
         } }, LinearLayout.LayoutParams(0, controlHeight, 1f))
         root.addView(extra)
+        mediaControls.add(extra)
         setContentView(root)
         vlc = LibVLC(this, arrayListOf("--no-video-title-show", "--network-caching=1500"))
         player = MediaPlayer(vlc)
@@ -146,6 +173,12 @@ class PlayerActivity : ComponentActivity() {
             override fun onStartTrackingTouch(bar: SeekBar?) {}
             override fun onStopTrackingTouch(bar: SeekBar?) { if (player.isSeekable) player.setTime(player.length * seek.progress / 1000, false) }
         })
+        if (uri.isNotEmpty()) { mediaReady = true; startMedia() }
+        report()
+        handler.post(ticker)
+    }
+
+    private fun startMedia() {
         try {
             val locator = Uri.parse(uri)
             val media = if (locator.scheme == "content") {
@@ -157,10 +190,36 @@ class PlayerActivity : ComponentActivity() {
             media.setHWDecoderEnabled(!softwarePreview, false)
             player.media = media
             media.release()
-            player.play()
+            if (ruleOperation == 0L || lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) player.play()
+            else { startOnResume = true; status = "paused" }
         } catch (_: SecurityException) { status = "permission_denied" }
         catch (_: Exception) { status = "playback_error" }
-        handler.post(ticker)
+    }
+
+    private fun requireRuleSession(args: PlayerArgs) {
+        require(!isFinishing && !isDestroyed && args.sessionId == sessionId && args.ruleOperation == ruleOperation && RuleResolver.allowed(ruleOperation))
+    }
+
+    fun updateRuleLoading(args: PlayerArgs) {
+        requireRuleSession(args)
+        require(!mediaReady)
+        loadingMessage = args.loadingMessage
+        if (args.loadingError) { loadingError = args.loadingMessage; status = "playback_error" }
+        report()
+    }
+
+    fun acceptRuleMedia(args: PlayerArgs) {
+        requireRuleSession(args)
+        require(!mediaReady && Uri.parse(args.uri).scheme in listOf("http", "https"))
+        uri = args.uri; mediaFileId = args.mediaFileId; resumeMs = args.resumeMs ?: 0
+        initialSubtitle = args.subtitleUri
+        intent.putExtra("subtitleFile", args.subtitleFile).putExtra("subtitleLabel", args.subtitleLabel).putExtra("subtitleId", args.subtitleId)
+        mediaReady = true; loadingError = null; loadingMessage = "正在连接视频…"; status = "opening"
+        startMedia(); report()
+    }
+
+    fun cancelRuleLoading(cancelledThrough: Long) {
+        if (ruleOperation > 0 && ruleOperation <= cancelledThrough && !mediaReady) { status = "closed"; report(); finish() }
     }
 
     private fun tracks(subtitle: Boolean) {
@@ -277,12 +336,21 @@ class PlayerActivity : ComponentActivity() {
         val subtitleTracks = trackList(player.spuTracks)
         sidecars.forEach { (id, entry) -> subtitleTracks.put(JSObject().put("id", id).put("name", entry.first).put("kind", "sidecar")) }
         snapshot = JSObject().put("status", status).put("engine", "LibVLC 3.7.7").put("positionMs", player.time)
+            .put("loadingMessage", loadingMessage).put("ruleOperation", ruleOperation)
             .put("mediaFileId", mediaFileId).put("sessionId", sessionId).put("revision", ++revision)
             .put("updatedAtMs", System.currentTimeMillis())
             .put("durationMs", player.length).put("seekable", player.isSeekable).put("rate", pendingRate ?: player.rate)
             .put("audioTracks", trackList(player.audioTracks)).put("subtitleTracks", subtitleTracks).put("selectedSidecar", selectedSidecar)
             .put("audioTrack", player.audioTrack).put("subtitleTrack", player.spuTrack).put("subtitleDelayUs", player.spuDelay)
             .put("subtitleOffsetMs", player.spuDelay / 1000)
+        if (loadingError != null && status != "closed") snapshot.put("error", JSObject().put("code", "unknown").put("message", loadingError).put("retryable", true))
+        val loading = status in listOf("opening", "buffering", "playback_error")
+        loadingPanel.visibility = if (loading) View.VISIBLE else View.GONE
+        loadingSpinner.visibility = if (loadingError != null || status == "playback_error") View.GONE else View.VISIBLE
+        loadingText.text = loadingError ?: if (status == "playback_error") "视频播放失败，请返回选集重试或切换线路。" else if (status == "buffering") "正在缓冲视频…" else loadingMessage
+        mediaControls.forEach { it.visibility = if (mediaReady && loadingError == null) View.VISIBLE else View.GONE }
+        seek.visibility = if (mediaReady && loadingError == null) View.VISIBLE else View.GONE
+        label.visibility = if (mediaReady && status != "playback_error") View.VISIBLE else View.GONE
         label.text = subtitleError ?: "${status} · ${player.time / 1000}/${player.length / 1000}s · ${player.rate}× · ${subtitleDelayMs}ms"
         if (player.length > 0 && !seek.isPressed) seek.progress = (player.time * 1000 / player.length).toInt().coerceIn(0, 1000)
         if (player.time >= 0 && player.length > 0) getSharedPreferences("genzo-prototype-progress", 0).edit().putLong(identity(), player.time).apply()
@@ -299,10 +367,12 @@ class PlayerActivity : ComponentActivity() {
             player.attachViews(video, null, true, false)
         }
     }
-    override fun onPause() { if (::player.isInitialized) { player.pause(); status = if (isFinishing) "closed" else "paused"; report() }; super.onPause() }
+    override fun onResume() { super.onResume(); if (startOnResume && mediaReady) { startOnResume = false; player.play() } }
+    override fun onPause() { if (::player.isInitialized) { if (mediaReady) player.pause(); status = if (isFinishing) "closed" else if (mediaReady) "paused" else status; if (isFinishing && ruleOperation > 0) RuleResolver.cancel(ruleOperation); report() }; super.onPause() }
     override fun onStop() { if (::player.isInitialized) player.detachViews(); super.onStop() }
     override fun onSaveInstanceState(outState: Bundle) { if (::player.isInitialized) outState.putLong("positionMs", player.time); super.onSaveInstanceState(outState) }
     override fun onDestroy() {
+        if (ruleOperation > 0) RuleResolver.cancel(ruleOperation)
         subtitlePicker?.resolve(JSObject().put("status", "cancelled")); subtitlePicker = null
         handler.removeCallbacks(ticker)
         if (::player.isInitialized) { status = "closed"; report(); player.stop(); player.detachViews(); player.release() }

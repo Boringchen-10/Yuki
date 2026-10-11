@@ -24,6 +24,14 @@ pub(crate) fn check_resolve(operation: u64) -> AppResult<()> {
     }
     Ok(())
 }
+pub(crate) fn cancel_resolve_if_current(operation: u64) {
+    let _ = RESOLVE_OPERATION.compare_exchange(
+        operation,
+        operation + 1,
+        std::sync::atomic::Ordering::SeqCst,
+        std::sync::atomic::Ordering::SeqCst,
+    );
+}
 type VolatileChapters = std::collections::HashMap<String, (std::time::Instant, Vec<Road>)>;
 fn volatile_chapters() -> &'static std::sync::Mutex<VolatileChapters> {
     static CACHE: std::sync::OnceLock<std::sync::Mutex<VolatileChapters>> =
@@ -786,17 +794,29 @@ pub async fn preview_rule_episode(
     episode_index: usize,
     state: State<'_, AppState>,
 ) -> AppResult<Value> {
-    let operation = begin_resolve();
-    let rule = definition(&state.pool, &plugin_id).await?;
-    let data = chapters(&state.pool, &plugin_id, &source, false).await?;
-    check_resolve(operation)?;
-    let episode = data
-        .roads
-        .get(road_index)
-        .and_then(|road| road.episodes.get(episode_index))
-        .ok_or_else(|| AppError::Validation("请选择有效线路与剧集".into()))?;
-    let stream = crate::rule_stream::for_page(&rule, &episode.url, operation).await?;
-    crate::android_player::preview_stream(&state, stream, plugin_id, operation).await
+    let (loading, opening) = crate::android_player::start_rule_loading(&state, None).await?;
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn(async move {
+        let result = async {
+            crate::android_player::rule_loading_phase(&loading, "正在获取剧集信息…", false).await?;
+            let rule = definition(&state.pool, &plugin_id).await?;
+            let data = chapters(&state.pool, &plugin_id, &source, false).await?;
+            crate::android_player::rule_loading_phase(&loading, "正在解析播放地址…", false).await?;
+            let episode = data
+                .roads
+                .get(road_index)
+                .and_then(|road| road.episodes.get(episode_index))
+                .ok_or_else(|| AppError::Validation("请选择有效线路与剧集".into()))?;
+            let stream =
+                crate::rule_stream::for_page(&rule, &episode.url, loading.operation).await?;
+            crate::android_player::preview_stream(&state, stream, plugin_id, &loading).await
+        }
+        .await;
+        if let Err(error) = result {
+            crate::android_player::rule_loading_failed(&loading, &error).await;
+        }
+    });
+    Ok(opening)
 }
 
 /// Keep same-site page identities relative to the rule base, so an explicit

@@ -22,7 +22,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 class TreeArgs { var uri: String? = null; var rootUri: String? = null }
 @InvokeArg
 class PlayerArgs {
-    lateinit var uri: String
+    var uri: String = ""
     var restart: Boolean = false
     var mediaFileId: String? = null
     var sessionId: String? = null
@@ -32,6 +32,9 @@ class PlayerArgs {
     var subtitleLabel: String? = null
     var subtitleId: String? = null
     var ruleOperation: Long = 0
+    var loading: Boolean = false
+    var loadingMessage: String = "正在准备视频…"
+    var loadingError: Boolean = false
 }
 @InvokeArg
 class CredentialArgs { lateinit var id: String; var username: String = ""; var password: String = "" }
@@ -72,7 +75,11 @@ class GenzoPlugin(private val activity: Activity) : Plugin(activity) {
         RuleResolver.resolve(activity, args.url, args.legacy, args.resolveOperation) { invoke.resolve(JSObject(it.toString())) }
     }
     @Command
-    fun cancelRuleVideo(invoke: Invoke) { val args = invoke.parseArgs(RuleArgs::class.java); RuleResolver.cancel(args.resolveOperation); invoke.resolve() }
+    fun cancelRuleVideo(invoke: Invoke) {
+        val args = invoke.parseArgs(RuleArgs::class.java)
+        RuleResolver.cancel(args.resolveOperation)
+        activity.runOnUiThread { PlayerActivity.current?.get()?.cancelRuleLoading(args.resolveOperation); invoke.resolve() }
+    }
     @Command
     fun verifyRuleSource(invoke: Invoke) {
         val args = invoke.parseArgs(RuleArgs::class.java)
@@ -344,14 +351,29 @@ class GenzoPlugin(private val activity: Activity) : Plugin(activity) {
         val args = invoke.parseArgs(PlayerArgs::class.java)
         activity.runOnUiThread {
             if (args.ruleOperation > 0 && !RuleResolver.claim(args.ruleOperation)) { invoke.reject("播放解析已取消"); return@runOnUiThread }
+            if (args.ruleOperation > 0 && !args.loading) {
+                try { val current = PlayerActivity.current?.get() ?: error("expired_player_session"); current.acceptRuleMedia(args); invoke.resolve(JSObject().put("status", "opening")) }
+                catch (_: Exception) { invoke.reject("播放解析已取消") }
+                return@runOnUiThread
+            }
             val uri = Uri.parse(args.uri)
-            if (uri.scheme !in listOf("content", "https", "http")) { invoke.reject("Unsupported locator"); return@runOnUiThread }
+            if (!args.loading && uri.scheme !in listOf("content", "https", "http")) { invoke.reject("Unsupported locator"); return@runOnUiThread }
             activity.startActivity(Intent(activity, PlayerActivity::class.java).putExtra("uri", args.uri)
+                .putExtra("ruleOperation", args.ruleOperation).putExtra("loading", args.loading).putExtra("loadingMessage", args.loadingMessage)
                 .putExtra("restart", args.restart).putExtra("mediaFileId", args.mediaFileId)
                 .putExtra("sessionId", args.sessionId).putExtra("resumeMs", args.resumeMs ?: -1L)
                 .putExtra("subtitleUri", args.subtitleUri).putExtra("subtitleFile", args.subtitleFile)
                 .putExtra("subtitleLabel", args.subtitleLabel).putExtra("subtitleId", args.subtitleId))
             invoke.resolve(JSObject().put("status", "opening"))
+        }
+    }
+
+    @Command
+    fun updateRulePlayer(invoke: Invoke) {
+        val args = invoke.parseArgs(PlayerArgs::class.java)
+        activity.runOnUiThread {
+            try { val current = PlayerActivity.current?.get() ?: error("expired_player_session"); current.updateRuleLoading(args); invoke.resolve() }
+            catch (_: Exception) { invoke.reject("播放会话已结束") }
         }
     }
 

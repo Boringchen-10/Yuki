@@ -130,6 +130,6 @@ export default function RuleBrowser({ work, pluginId, initialSource, registerBac
       {chapters && !chapters.roads.length && !chapters.verificationRequired && <p className="gz-meta">来源暂未提供有效线路，可刷新或选择其他结果。</p>}
       {preview && <section className="gz-panel" aria-label="规则剧集关联预览"><strong>{preview.road} → {preview.title}</strong>{preview.rows.map(row => <p className="gz-file-name" key={row.index}>{row.name} → {row.conflict ? "已关联其他作品，请取消勾选" : row.officialEpisode != null ? `官方第 ${row.officialEpisode} 集 · ${row.officialTitle || "暂无标题"}` : "暂未对应官方分集，关联后可批量核对编号"}{row.existing ? replaceExisting ? " · 按本次编号调整" : " · 保留原有关联与记录" : ""}</p>)}<label className="gz-file-choice"><input type="checkbox" disabled={saving} checked={acknowledged} onChange={event => setAcknowledged(event.target.checked)} />已核对作品、线路与逐集对应</label><button className="gz-btn primary" disabled={saving || !acknowledged || preview.rows.some(row => row.conflict)} onClick={() => void save()}><Check size={16} />确认关联规则剧集</button></section>}
     </>}
-    {parsing && <p className="gz-meta" role="status">正在解析播放地址… <button className="gz-link" onClick={() => { generation.current++; resolving.current = false; setParsing(false); void rulesApi.cancelResolve().catch(() => {}); }}>取消解析</button></p>}
+    {parsing && <p className="gz-meta" role="status">正在打开播放器… <button className="gz-link" onClick={() => { generation.current++; resolving.current = false; setParsing(false); void rulesApi.cancelResolve().catch(() => {}); }}>取消打开</button></p>}
   </div>;
 }

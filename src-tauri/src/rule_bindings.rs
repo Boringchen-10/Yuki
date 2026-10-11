@@ -236,18 +236,28 @@ pub async fn play_rule_episode(
     input: BindingInput,
     state: State<'_, AppState>,
 ) -> AppResult<Value> {
-    let operation = rule_sources::begin_resolve();
     if input.episode_indexes.len() != 1 {
         return Err(AppError::Validation("请选择一集播放".into()));
     }
-    let (rule, roads) = context(&state, &input).await?;
-    rule_sources::check_resolve(operation)?;
-    let mut tx = state.pool.begin().await?;
-    let token = prepare(&mut tx, &rule, &roads, &input).await?.0.token;
-    tx.rollback().await?;
-    let ids = bind(&state, input, &token).await?;
-    rule_sources::check_resolve(operation)?;
-    crate::android_player::open_rule_player(ids[0].clone(), &state, operation).await
+    let (loading, opening) = crate::android_player::start_rule_loading(&state, None).await?;
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn(async move {
+        let result = async {
+            crate::android_player::rule_loading_phase(&loading, "正在获取剧集信息…", false).await?;
+            let (rule, roads) = context(&state, &input).await?;
+            crate::android_player::rule_loading_phase(&loading, "正在准备播放来源…", false).await?;
+            let mut tx = state.pool.begin().await?;
+            let token = prepare(&mut tx, &rule, &roads, &input).await?.0.token;
+            tx.rollback().await?;
+            let ids = bind(&state, input, &token).await?;
+            crate::android_player::open_rule_player(ids[0].clone(), &state, &loading).await
+        }
+        .await;
+        if let Err(error) = result {
+            crate::android_player::rule_loading_failed(&loading, &error).await;
+        }
+    });
+    Ok(opening)
 }
 async fn bind(state: &AppState, input: BindingInput, token: &str) -> AppResult<Vec<String>> {
     let (rule, roads) = context(&state, &input).await?;

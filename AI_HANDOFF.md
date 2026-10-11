@@ -1,5 +1,19 @@
 # Codex 与 DeepSeek Harness 项目交接记录
 
+## 规则加载移入原生播放界面（2026-10-11）
+
+- 基线 `72905c8`，同一 `.tmp/android-first` / `codex/android-first`，用户要求规则选择后“正在处理”的加载放入视频播放界面。保留完整当前 OpenDesign 工作区；本轮只改 RuleBrowser 的打开提示及相关原生 / Rust 流程，不提交 App / ExplorePanel / mobile.css 等其他 Agent 草稿。无依赖 / 数据库迁移 / 内核替换。
+- 三个入口统一覆盖：规则管理试播、详情单集绑定播放、剧集页已关联规则文件播放。先创建 session / operation 并打开 Native PlayerActivity 加载界面，Tauri 命令快速返回 opening，后台异步获取选集 / 绑定 / 解析 / 连接。**调用返回 opening 不再代表地址解析已完成，媒体 ID 也可能稍后才有；调用方应等待 player state。** 非规则 SAF / WebDAV 入口沿用原流程。
+- Native 播放器有居中转圈 / 中文阶段 / 返回选集；解析前隐藏无效媒体控制，接到真实流后同一 Activity 启动 LibVLC并恢复控制，不再第二次打开播放器。阶段包括获取剧集、准备来源、解析地址、连接、缓冲；失败留在播放界面。前端短暂提示改“正在打开播放器 / 取消打开”，解析等待不再卡住来源页。
+- Native session / operation 验证后才接收流；返回或取消销毁私有解析 WebView，关闭旧播放器；晚到响应不能创建新的播放 Activity、不能影响下一次播放。onCreate 再验证代次并在有效后才设 current，Rust 开始保存旧进度前即分配代次并在等待后复查。Home后如果解析完成，媒体先准备，回来再开始，避免在后台突然出声（代码路径，未单独作为新验收项目宣称）。
+- 回归发现加载失败关闭后 snapshot.error 未随 closed 清除，已修复。试播仍不写观看记录；已绑定 / 新单集绑定复用媒体 ID、编号映射和续播，不重建数据。既有显式头 / Cookie / HLS / Range 和上一轮媒体 Referer 修复保留。
+- TypeScript、98 前端测试、规则 **33项交互 / 24组布局**通过（`rules-ui-1791693791508`）；Rust **349通过 / 18忽略**。最终实体机独立 organizeqa **33项通过**，证据 `D:/DevTools/Android/Build/qa/rules-native-1791694630595/`：延迟1.6秒选集响应时先进入PlayerActivity、opening返回不等待响应、Native加载文字/截图；加载失败在播放页、返回清掉错误；返回后旧请求不重新打开、取消旧请求后新播放不受干扰；此前MP4/HLS/拖动/续播/验证/稳定身份/移除保留均通过。早期失败结果 `rules-native-1791694037349` 不作为完成证据。
+- 用用户上轮给定7sefun《相反的你和我》第1集再次实际试播，两线路均输出 playing / 实际帧，时长1,447,090ms，证据 `D:/DevTools/Android/Build/qa/7sefun-playback-1791694782895/`。公共目录16项、7sefun/sorani检索与选集仍通过。只在独立包做写入 / 试播，服务、reverse端口及9346转发测试后关闭。
+- 最终普通签名预览 `D:/DevTools/Android/Build/previews/reader-loading-20261011/Genzo_0.7.0_player-loading-preview_arm64-v8a.apk`，**74,498,265字节**，SHA256 **690fb395ba36739e2e6e16694bc26e158ff13ae2832a7ddf58b6d4aa5f3b1d5a**；仍0.7.0/code7000、com.genzo.android、arm64/min26/target36、非debuggable、原证书cee90e5f…cdb。签名、16KiB ZIP、包内无DB/EPUB/CBZ、native与Gradle stripped一致、前端 `index-DaUwaEVi.js`、162生产源文件与完整OpenDesign构建副本一致。汇总 `D:/DevTools/Android/Build/qa/reader-loading-20261011/`。
+- 普通包与原readerqa已覆盖更新，无清库。更新前重新读取原调试包实际 **28作品 / 15来源（14规则）/ 11播放记录**，不是上一轮6条；更新后作品个人字段、来源和规则ID/版本/启停、播放位置/时长/完成逐项一致。没有复制用户DB/凭据/Cookie或引入合成规则，没有隐式扫描。共享前端预览与9228/9351已更新、既有预览进程保留；最后原readerqa停在7sefun该作品选集，未自动播放 / 写记录。
+- 本轮为本机预览和可交付修复提交，不创建公开Release/标签/推送，不改旧公开v0.5.2或前两份0.7.0预览资产。旧0.7.0 APK不含此加载流程，使用上面的新文件与哈希识别。
+
+
 ## 规则媒体 Referer / playback_error 修复与内核核对（2026-10-11）
 
 - 基线 `83895f5`，同一 `.tmp/android-first` / `codex/android-first`。用户询问 media-kit / avbuild 是否需要借用，并给出 7sefun《相反的你和我》第 1 集在 Genzo 失败、Kazumi 正常的具体案例。工作区 OpenDesign 未提交草稿全部保留；本轮不改 App / 主题 / 原有业务页面、不引入新内核或迁移。

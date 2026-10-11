@@ -200,24 +200,74 @@ fn select_candidate(candidates: &[Value], requested: Option<String>) -> AppResul
 
 #[tauri::command]
 pub async fn open_internal_player(media_file_id: String, restart: bool, subtitle_id: Option<String>, state: State<'_, AppState>) -> AppResult<Value> {
+    let rule: Option<(bool, bool)> = sqlx::query_as("SELECT m.missing,r.enabled FROM media_files m JOIN library_roots r ON r.id=m.library_root_id JOIN rule_episodes e ON e.media_file_id=m.id WHERE m.id=? AND m.media_type='video'")
+        .bind(&media_file_id).fetch_optional(&state.pool).await?;
+    if let Some((missing, enabled)) = rule {
+        if missing || !enabled { return Err(AppError::Validation("文件缺失或来源已停用，请检查来源后重试".into())); }
+        let (loading, opening) = start_rule_loading(&state, Some(media_file_id.clone())).await?;
+        let state = state.inner().clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(error) = open_player(media_file_id, restart, subtitle_id, &state, Some(&loading)).await { rule_loading_failed(&loading, &error).await; }
+        });
+        return Ok(opening);
+    }
     open_player(media_file_id, restart, subtitle_id, &state, None).await
 }
 
-pub(crate) async fn open_rule_player(media_file_id: String, state: &AppState, operation: u64) -> AppResult<Value> {
-    open_player(media_file_id, false, None, state, Some(operation)).await
+pub(crate) struct RuleLoading { pub id: String, pub operation: u64 }
+
+pub(crate) async fn start_rule_loading(state: &AppState, media_id: Option<String>) -> AppResult<(RuleLoading, Value)> {
+    let operation = crate::rule_sources::begin_resolve();
+    sync_saved(&state.pool).await?;
+    crate::rule_sources::check_resolve(operation)?;
+    let id = Uuid::new_v4().to_string();
+    android_bridge::call("openPlayer", json!({"loading":true,"loadingMessage":"正在获取剧集信息…","sessionId":id,"mediaFileId":media_id,"ruleOperation":operation})).await?;
+    let initial = json!({"sessionId":id,"mediaFileId":media_id,"status":"opening","positionMs":0});
+    {
+        let mut current = SESSION.lock().map_err(|_| AppError::System("播放会话不可用".into()))?;
+        crate::rule_sources::check_resolve(operation)?;
+        *current = Some(Session { id:id.clone(), initial:initial.clone(), stream:None });
+    }
+    let opening = snapshot(initial); crate::android_events::player(opening.clone());
+    Ok((RuleLoading { id, operation }, opening))
 }
 
-async fn open_player(media_file_id: String, restart: bool, subtitle_id: Option<String>, state: &AppState, rule_operation: Option<u64>) -> AppResult<Value> {
+pub(crate) async fn rule_loading_phase(loading: &RuleLoading, message: &str, failed: bool) -> AppResult<()> {
+    for _ in 0..80 {
+        crate::rule_sources::check_resolve(loading.operation)?;
+        let native = android_bridge::call("playerState", json!({})).await?;
+        if native["sessionId"] == loading.id {
+            if native["status"] == "closed" { crate::rule_sources::cancel_resolve_if_current(loading.operation); return Err(AppError::Validation("播放解析已取消".into())); }
+            android_bridge::call("updateRulePlayer", json!({"sessionId":loading.id,"ruleOperation":loading.operation,"loadingMessage":message,"loadingError":failed})).await?;
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    Err(AppError::Validation("播放器未能打开，请重试".into()))
+}
+
+pub(crate) async fn rule_loading_failed(loading: &RuleLoading, error: &AppError) {
+    if rule_loading_phase(loading, &error.to_string(), true).await.is_ok() {
+        crate::android_events::player(snapshot(json!({"sessionId":loading.id,"status":"playback_error","error":{"code":"unknown","message":error.to_string(),"retryable":true}})));
+    }
+}
+
+pub(crate) async fn open_rule_player(media_file_id: String, state: &AppState, loading: &RuleLoading) -> AppResult<Value> {
+    open_player(media_file_id, false, None, state, Some(loading)).await
+}
+
+async fn open_player(media_file_id: String, restart: bool, subtitle_id: Option<String>, state: &AppState, loading: Option<&RuleLoading>) -> AppResult<Value> {
+    if let Some(loading) = loading { rule_loading_phase(loading, "正在解析播放地址…", false).await?; }
     sync_saved(&state.pool).await?;
     let row: Option<(Option<String>, bool, bool, String, String)> = sqlx::query_as("SELECT d.uri,m.missing,r.enabled,CASE WHEN EXISTS(SELECT 1 FROM rule_episodes e WHERE e.media_file_id=m.id) THEN 'rule' ELSE r.source_type END,r.id FROM media_files m JOIN library_roots r ON r.id=m.library_root_id LEFT JOIN android_documents d ON d.media_file_id=m.id WHERE m.id=? AND m.media_type='video' AND (d.uri IS NOT NULL OR EXISTS(SELECT 1 FROM remote_files f WHERE f.media_file_id=m.id) OR EXISTS(SELECT 1 FROM rule_episodes e WHERE e.media_file_id=m.id))")
         .bind(&media_file_id).fetch_optional(&state.pool).await?;
     let (local_uri, missing, enabled, kind, source_id) = row.ok_or_else(|| AppError::Validation("请选择已索引的 SAF 或 WebDAV 视频".into()))?;
-    let rule_operation = (kind == "rule").then(|| rule_operation.unwrap_or_else(crate::rule_sources::begin_resolve));
+    let rule_operation = loading.map(|loading| loading.operation);
     if missing || !enabled { return Err(AppError::Validation("文件缺失或来源已停用，请检查来源后重试".into())); }
     let previous: Option<(i64, bool)> = sqlx::query_as("SELECT position_ms,completed FROM playback_progress WHERE media_file_id=?")
         .bind(&media_file_id).fetch_optional(&state.pool).await?;
     let resume = if restart { 0 } else { previous.filter(|(_, completed)| !completed).map(|(position, _)| position).unwrap_or(0) };
-    let session = Uuid::new_v4().to_string();
+    let session = loading.map(|loading| loading.id.clone()).unwrap_or_else(|| Uuid::new_v4().to_string());
     let mut remote_stream = None;
     let uri = if kind == "rule" {
         let stream = crate::rule_stream::for_media(state, &media_file_id, rule_operation.unwrap()).await?;
@@ -252,7 +302,12 @@ async fn open_player(media_file_id: String, restart: bool, subtitle_id: Option<S
         if uri.is_none() { subtitle_file = Some(crate::remote_transfer::subtitle_file(&state, id).await?); }
         uri
     } else { None };
-    if let Some(operation) = rule_operation { crate::rule_sources::check_resolve(operation)?; }
+    if let Some(loading) = loading {
+        if let Err(error) = rule_loading_phase(loading, "正在连接视频…", false).await {
+            if let Some(path) = subtitle_file { let _ = tokio::fs::remove_file(path).await; }
+            return Err(error);
+        }
+    }
     let opened = android_bridge::call("openPlayer", json!({"uri":uri,"restart":restart,"resumeMs":resume,"mediaFileId":media_file_id,"sessionId":session,"subtitleUri":subtitle_uri,"subtitleFile":subtitle_file,"subtitleLabel":subtitle_label,"subtitleId":selected,"ruleOperation":rule_operation.unwrap_or(0)})).await;
     if let Err(error) = opened {
         if let Some(path) = subtitle_file { let _ = tokio::fs::remove_file(path).await; }
@@ -304,10 +359,11 @@ fn monitor(pool: SqlitePool, owned_session: String, owned_source: String, subtit
     });
 }
 
-pub(crate) async fn preview_stream(state: &AppState, stream: crate::remote_transfer::AndroidStream, source_id: String, operation: u64) -> AppResult<Value> {
+pub(crate) async fn preview_stream(state: &AppState, stream: crate::remote_transfer::AndroidStream, source_id: String, loading: &RuleLoading) -> AppResult<Value> {
     sync_saved(&state.pool).await?;
-    crate::rule_sources::check_resolve(operation)?;
-    let session=Uuid::new_v4().to_string();
+    rule_loading_phase(loading, "正在连接视频…", false).await?;
+    let operation=loading.operation;
+    let session=loading.id.clone();
     android_bridge::call("openPlayer",json!({"uri":stream.uri,"restart":true,"resumeMs":0,"sessionId":session,"ruleOperation":operation})).await?;
     let initial=json!({"sessionId":session,"mediaFileId":null,"status":"opening","positionMs":0});
     {
