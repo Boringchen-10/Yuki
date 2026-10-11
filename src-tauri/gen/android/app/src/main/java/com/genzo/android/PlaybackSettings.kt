@@ -15,9 +15,12 @@ data class PlaybackSettings(val hardware: Boolean = true, val decoder: String = 
             return PlaybackSettings(prefs.getBoolean("hardwareDecoding", true), prefs.getString("hardwareDecoder", "auto-safe").takeIf { it in decoders } ?: "auto-safe", prefs.getString("videoRenderer", "compat").takeIf { it in renderers } ?: "compat")
         }
     }
-    fun save(context: Context) {
+    fun save(context: Context, superResolution: Int? = null) {
         require(decoder in decoders && renderer in renderers && (renderer != "mediacodec_embed" || hardware))
-        context.getSharedPreferences("genzo-player", 0).edit().putBoolean("hardwareDecoding", hardware).putString("hardwareDecoder", decoder).putString("videoRenderer", renderer).apply()
+        require(superResolution == null || (superResolution in 0..2 && (renderer != "mediacodec_embed" || superResolution == 0)))
+        val editor = context.getSharedPreferences("genzo-player", 0).edit().putBoolean("hardwareDecoding", hardware).putString("hardwareDecoder", decoder).putString("videoRenderer", renderer)
+        superResolution?.let { editor.putInt("anime4kMode", it) }
+        editor.apply()
     }
     fun resolve(context: Context, superResolution: Int): String = when (renderer) {
         "compat" -> if (superResolution > 0) "gpu" else "compat"

@@ -46,6 +46,11 @@ class ControlArgs {
 @InvokeArg
 class SessionArgs { lateinit var sessionId: String }
 @InvokeArg
+class PlaybackPreferencesArgs {
+    var hardwareDecoding: Boolean = true; var hardwareDecoder: String = "auto-safe"
+    var videoRenderer: String = "compat"; var superResolution: Int = 0
+}
+@InvokeArg
 class AppearanceArgs { var dark: Boolean = true }
 @InvokeArg
 class ReaderArgs { lateinit var sessionId: String; lateinit var baseUrl: String; lateinit var kind: String; lateinit var entryId: String }
@@ -385,6 +390,21 @@ class GenzoPlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun savedPlayerProgress(invoke: Invoke) {
         invoke.resolve(JSObject(activity.getSharedPreferences("genzo-player", 0).getString("lastProgress", "{}")!!))
+    }
+    private fun playbackPreferences(): JSObject {
+        val settings = PlaybackSettings.read(activity)
+        return JSObject().put("hardwareDecoding", settings.hardware).put("hardwareDecoder", settings.decoder).put("videoRenderer", settings.renderer)
+            .put("superResolution", activity.getSharedPreferences("genzo-player", 0).getInt("anime4kMode", 0).coerceIn(0, 2))
+    }
+    @Command
+    fun getPlaybackPreferences(invoke: Invoke) { invoke.resolve(playbackPreferences()) }
+    @Command
+    fun setPlaybackPreferences(invoke: Invoke) {
+        val args = invoke.parseArgs(PlaybackPreferencesArgs::class.java)
+        try {
+            PlaybackSettings(args.hardwareDecoding, args.hardwareDecoder, args.videoRenderer).save(activity, args.superResolution)
+            invoke.resolve(playbackPreferences())
+        } catch (_: Exception) { invoke.reject("播放设置无效，请检查解码、渲染与超分选项") }
     }
     @Command
     fun playerControl(invoke: Invoke) {

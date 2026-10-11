@@ -9,6 +9,7 @@ export interface PlaybackProgress {
   completed: boolean;
   updatedAt: string;
   missing: boolean;
+  episodeKey?: string | null;
 }
 export interface PlaybackOverview {
   items: PlaybackProgress[];

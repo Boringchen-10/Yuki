@@ -27,6 +27,7 @@ export interface PlaybackSettings {
   hardwareDecoding: boolean; hardwareDecoder: "auto" | "auto-safe" | "auto-copy" | "mediacodec" | "mediacodec-copy";
   videoRenderer: "compat" | "auto" | "gpu" | "gpu-next" | "mediacodec_embed";
 }
+export interface PlaybackPreferences extends PlaybackSettings { superResolution: 0 | 1 | 2 }
 export interface PlayerSnapshot {
   sessionId: string | null; mediaFileId: string | null; status: string;
   positionMs: number; durationMs: number | null;
@@ -46,6 +47,8 @@ export interface TreeListing {
 }
 export const isDirectoryEntry = (entry: DocumentEntry) => entry.mimeType === "vnd.android.document/directory";
 export const androidApi = {
+  playbackPreferences: () => invoke<PlaybackPreferences>("get_android_playback_preferences"),
+  savePlaybackPreferences: (settings: PlaybackPreferences) => invoke<PlaybackPreferences>("set_android_playback_preferences", { settings }),
   importSources: (sourceIds: string[], scan = true, mediaIds?: string[]) => invoke<SourceImportTask>("start_source_import", { sourceIds, scan, mediaIds }),
   imports: () => invoke<SourceImportTask[]>("list_source_imports"),
   cancelImport: (id: string) => invoke<void>("cancel_source_import", { id }),

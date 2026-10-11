@@ -95,6 +95,34 @@ pub async fn set_android_appearance(dark: bool) -> AppResult<()> {
     Ok(())
 }
 
+#[derive(Debug, Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PlaybackPreferences {
+    hardware_decoding: bool,
+    hardware_decoder: String,
+    video_renderer: String,
+    super_resolution: u8,
+}
+impl PlaybackPreferences {
+    fn validate(&self) -> AppResult<()> {
+        PlayerAction::PlaybackSettings { hardware:self.hardware_decoding, decoder:self.hardware_decoder.clone(), renderer:self.video_renderer.clone() }.native(&Value::Null)?;
+        if self.super_resolution > 2 { return Err(AppError::Validation("超分档位无效".into())); }
+        if self.video_renderer == "mediacodec_embed" && self.super_resolution != 0 {
+            return Err(AppError::Validation("直通模式不支持超分，请选择GPU渲染器".into()));
+        }
+        Ok(())
+    }
+}
+#[tauri::command]
+pub async fn get_android_playback_preferences() -> AppResult<Value> {
+    android_bridge::call("getPlaybackPreferences", json!({})).await
+}
+#[tauri::command]
+pub async fn set_android_playback_preferences(settings: PlaybackPreferences) -> AppResult<Value> {
+    settings.validate()?;
+    android_bridge::call("setPlaybackPreferences", serde_json::to_value(settings)?).await
+}
+
 async fn persist(pool: &SqlitePool, sample: &Value) -> AppResult<()> {
     let Some(id) = sample["mediaFileId"].as_str() else { return Ok(()) };
     let (Some(position), Some(duration), Some(timestamp)) = (sample["positionMs"].as_i64(), sample["durationMs"].as_i64(), sample["updatedAtMs"].as_i64()) else { return Ok(()) };
@@ -393,6 +421,18 @@ pub(crate) async fn preview_stream(state: &AppState, stream: crate::remote_trans
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn global_preferences_validate_without_a_player_session() {
+        let valid = json!({"hardwareDecoding":true,"hardwareDecoder":"auto-safe","videoRenderer":"gpu-next","superResolution":2});
+        assert!(serde_json::from_value::<PlaybackPreferences>(valid.clone()).unwrap().validate().is_ok());
+        for patch in [json!({"superResolution":3}), json!({"videoRenderer":"mediacodec_embed"}), json!({"hardwareDecoder":"d3d11va"}), json!({"videoRenderer":"https://untrusted"})] {
+            let mut value = valid.clone(); for (key, entry) in patch.as_object().unwrap() { value[key] = entry.clone(); }
+            assert!(serde_json::from_value::<PlaybackPreferences>(value).unwrap().validate().is_err());
+        }
+        let mut extra = valid; extra["shader"] = json!("https://untrusted");
+        assert!(serde_json::from_value::<PlaybackPreferences>(extra).is_err());
+    }
 
     #[tokio::test]
     async fn upstream_interruption_overrides_native_end_and_stops_the_proxy_on_close() {

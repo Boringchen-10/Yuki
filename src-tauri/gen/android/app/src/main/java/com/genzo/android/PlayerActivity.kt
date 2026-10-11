@@ -124,7 +124,6 @@ class PlayerActivity : ComponentActivity() {
             controls.addView(Button(this).apply { this.text = text; textSize = 13f; setOnClickListener { action() } }, LinearLayout.LayoutParams(0, controlHeight, 1f))
         }
         button("暂停/播放") { if (player.isPlaying) player.pause() else player.play() }
-        button("播放设置") { showPlaybackSettings() }
         button("音轨") { tracks(false) }
         button("字幕") { tracks(true) }
         root.addView(controls)
@@ -180,42 +179,6 @@ class PlayerActivity : ComponentActivity() {
         val renderer = if (loadingShell) "compat" else rendererOverride ?: playbackSettings.resolve(this, mode)
         player = if (renderer != "compat") MpvEngine(this, mode, stateChanged, playbackSettings, renderer) else VlcEngine(this, stateChanged, playbackSettings.hardware)
         viewport.addView(player.view, 0, FrameLayout.LayoutParams(-1, -1))
-    }
-
-    private fun showPlaybackSettings() {
-        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 12, 24, 12) }
-        val dialog = AlertDialog.Builder(this).setTitle("播放设置").setView(android.widget.ScrollView(this).apply { addView(body) }).setNegativeButton("关闭", null).create()
-        fun row(text: String, action: () -> Unit) {
-            body.addView(Button(this).apply { this.text = text; setOnClickListener { dialog.dismiss(); action() } }, LinearLayout.LayoutParams(-1, (52 * resources.displayMetrics.density).toInt()))
-        }
-        val hardware = androidx.appcompat.widget.SwitchCompat(this).apply { text = "硬件解码"; isChecked = playbackSettings.hardware; minHeight = (52 * resources.displayMetrics.density).toInt() }
-        body.addView(hardware)
-        hardware.setOnCheckedChangeListener { _, checked ->
-            dialog.dismiss()
-            applyPlaybackSettings(playbackSettings.copy(hardware = checked, renderer = if (!checked && playbackSettings.renderer == "mediacodec_embed") "gpu" else playbackSettings.renderer))
-        }
-        row("硬件解码器 · ${PlaybackSettings.decoders[playbackSettings.decoder]}") {
-            val items = PlaybackSettings.decoders.entries.toList()
-            AlertDialog.Builder(this).setTitle("硬件解码器 · 安卓")
-                .setSingleChoiceItems(items.map { "${it.key} · ${it.value}" }.toTypedArray(), items.indexOfFirst { it.key == playbackSettings.decoder }) { choice, index ->
-                    choice.dismiss(); applyPlaybackSettings(playbackSettings.copy(decoder = items[index].key, renderer = if (playbackSettings.renderer == "compat" || playbackSettings.renderer == "mediacodec_embed") "auto" else playbackSettings.renderer))
-                }.setNegativeButton("取消", null).show()
-        }
-        row("视频渲染器 · ${PlaybackSettings.renderers[playbackSettings.renderer]}") {
-            val items = PlaybackSettings.renderers.entries.toList()
-            AlertDialog.Builder(this).setTitle("视频渲染器")
-                .setSingleChoiceItems(items.map { it.value }.toTypedArray(), items.indexOfFirst { it.key == playbackSettings.renderer }) { choice, index ->
-                    choice.dismiss(); val renderer = items[index].key
-                    applyPlaybackSettings(playbackSettings.copy(renderer = renderer, hardware = if (renderer == "mediacodec_embed") true else playbackSettings.hardware, decoder = if (renderer == "mediacodec_embed") "mediacodec" else playbackSettings.decoder))
-                }.setNegativeButton("取消", null).show()
-        }
-        row("倍速 · ${pendingRate ?: player.rate}×") { AlertDialog.Builder(this).setItems(arrayOf("0.5×", "1×", "1.5×", "2×")) { _, index -> setPlaybackRate(floatArrayOf(.5f, 1f, 1.5f, 2f)[index]) }.show() }
-        body.addView(TextView(this).apply {
-            textSize = 13f; setPadding(0, 16, 0, 12)
-            val mpv = player as? MpvEngine
-            text = if (mpv == null) "当前：兼容播放\n硬件解码器由兼容内核按文件选择。" else "当前渲染器：${mpv.property("current-vo") ?: "正在准备"}\n实际解码器：${mpv.property("hwdec-current") ?: "正在准备"}\n${if (playbackSettings.renderer == "compat" && superResolutionMode > 0) "超分开启时使用GPU，关闭后恢复兼容播放。\n" else ""}硬解不可用时自动尝试软件解码。直通模式不支持超分和字幕。"
-        })
-        dialog.show()
     }
 
     private fun applyPlaybackSettings(settings: PlaybackSettings) {

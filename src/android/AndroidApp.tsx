@@ -33,6 +33,8 @@ import type { WorkRuleSource } from "./rulesApi";
 import Organize from "./Organize";
 import InboxPanel from "./InboxPanel";
 import EpisodeSources from "./EpisodeSources";
+import ContinueWatchingArtwork from "./ContinueWatchingArtwork";
+import PlaybackSettingsPanel, { type PlaybackSettingsPage } from "./PlaybackSettingsPanel";
 import SourceImports, { useSourceImports } from "./SourceImports";
 import { activeImport } from "./api";
 import "./organize.css";
@@ -420,11 +422,11 @@ export default function AndroidApp() {
   const top = tabs.find(tab => tab.route === route);
   const workId = route.startsWith("detail/") ? decodeURIComponent(route.slice(7)) : null;
   useEffect(() => { setComicCommentsOpen(false); }, [workId]);
-  const title = top?.title || ({ sources: "资料库", inbox: "待整理", browse: "浏览目录", diagnostics: import.meta.env.DEV ? "开发验证" : "关于", bookshelf: "书架", explore: "发现", network: "网络", appearance: "外观", history: "浏览记录", "reading-stats": "阅读统计", "reading-stats-settings": "阅读统计设置", sync: "同步备份", "sync/bangumi": "追番同步", "sync/webdav": "多设备同步" }[route]) || "作品详情";
+  const title = top?.title || ({ sources: "资料库", inbox: "待整理", browse: "浏览目录", diagnostics: import.meta.env.DEV ? "开发验证" : "关于", bookshelf: "书架", explore: "发现", network: "网络", appearance: "外观", history: "浏览记录", "reading-stats": "阅读统计", "reading-stats-settings": "阅读统计设置", "playback-settings": "播放设置", "playback-settings/decoder": "硬件解码器", "playback-settings/renderer": "视频渲染器", "playback-settings/super": "超分辨率", sync: "同步备份", "sync/bangumi": "追番同步", "sync/webdav": "多设备同步" }[route]) || "作品详情";
 
   async function refresh(renew = false): Promise<void> {
     if (refreshPending.current) return renew ? refreshPending.current.catch(() => {}).then(() => refresh(true)) : refreshPending.current;
-    if (renew) { androidSession.invalidate("work:"); androidSession.invalidate("local:"); }
+    if (renew) { androidSession.invalidate("work:"); androidSession.invalidate("local:"); androidSession.invalidate("continue-artwork:"); }
     const sequence = ++refreshSequence.current;
     const active = () => sequence === refreshSequence.current;
     const pending = Promise.allSettled([
@@ -715,7 +717,7 @@ export default function AndroidApp() {
   }
   async function refreshDisplayed() {
     const currentRoute = routeRef.current;
-    androidSession.invalidate("work:"); androidSession.invalidate("local:");
+    androidSession.invalidate("work:"); androidSession.invalidate("local:"); androidSession.invalidate("continue-artwork:");
     await Promise.all([refresh(), currentRoute.startsWith("detail/") ? reloadDetail(decodeURIComponent(currentRoute.slice(7))) : Promise.resolve()]);
   }
   async function loadFolders(uri: string | null) {
@@ -951,7 +953,7 @@ export default function AndroidApp() {
       {error && <div className="gz-error" role="alert"><span>{error}</span><button className="gz-iconbtn" aria-label="关闭错误提示" onClick={() => setError("")}><X size={18} /></button></div>}
       {loading && ["home", "library", "favorites", "bookshelf"].includes(route) ? <><LoadingIndicator label="正在读取媒体库…" compact /><GridSkeleton count={9} /></> : <>
       {route === "home" && <>
-        <Section title="继续观看">{progressLoading ? <LoadingIndicator label="正在读取观看记录…" compact /> : continueItems.length ? <div className="gz-rail gz-cover-rail">{continueItems.map(item => <button className="gz-continue" disabled={busy || item.missing} key={item.mediaFileId} onClick={() => void run(() => play(item.mediaFileId))}><div className="gz-continue-cover"><Play /><span>{item.missing ? "文件缺失" : `${playbackTime(item.positionMs)} / ${playbackTime(item.durationMs)}`}</span><progress max={100} value={playbackPercent(item)} /></div><strong>{item.title}</strong><span className="gz-meta">{item.fileName}</span></button>)}</div> : <p className="gz-panel gz-meta">暂无观看记录。开始播放后，续播入口会出现在这里。</p>}</Section>
+        <Section title="继续观看">{progressLoading ? <LoadingIndicator label="正在读取观看记录…" compact /> : continueItems.length ? <div className="gz-rail gz-cover-rail">{continueItems.map(item => <button className="gz-continue" disabled={busy || item.missing} key={item.mediaFileId} onClick={() => void run(() => play(item.mediaFileId))}><div className="gz-continue-cover"><ContinueWatchingArtwork workId={item.workId} episodeKey={item.episodeKey} /><span>{item.missing ? "文件缺失" : `${playbackTime(item.positionMs)} / ${playbackTime(item.durationMs)}`}</span><progress max={100} value={playbackPercent(item)} /></div><strong>{item.title}</strong><span className="gz-meta">{item.fileName}</span></button>)}</div> : <p className="gz-panel gz-meta">暂无观看记录。开始播放后，续播入口会出现在这里。</p>}</Section>
         {allWorks.length ? homeSectionsData.map(({ section, items }) => <Section key={section.id} title={section.title} action={<button className="gz-link" onClick={() => section.id === "books" ? navigate("bookshelf") : openCategory(section.id)}>更多<ChevronRight size={16} /></button>}>{items.length ? <div className="gz-rail gz-cover-rail">{items.map(work => <button className="gz-cover" key={work.id} onClick={() => navigate(`detail/${encodeURIComponent(work.id)}`)}><Poster work={work} /><span className="gz-cover-label">{work.title}</span></button>)}</div> : <p className="gz-panel gz-meta">{section.id === "books" ? "漫画与轻小说书架将在后续版本接入。" : "暂无最近添加的作品。"}</p>}</Section>) : <section className="gz-hero"><div className="gz-hero-inner"><span className="gz-eyebrow">你的媒体，安静归档</span><h2>从你的第一部作品开始</h2><p className="gz-meta">添加已下载视频的目录，整理作品与观看记录。</p><div className="gz-actions"><button className="gz-btn primary" onClick={() => navigate("sources")}><Plus size={18} />添加来源</button></div></div></section>}
       </>}
       {(route === "library" || route === "favorites") && <>
@@ -999,7 +1001,7 @@ export default function AndroidApp() {
         <MenuSection label="内容与偏好">
           <MenuRow label="通用" icon={SlidersHorizontal} subtitle="启动界面与基础选项" onClick={() => navigate("general")} />
           <MenuRow label="外观" icon={Palette} onClick={() => navigate("appearance")} />
-          <MenuRow label="播放设置" icon={Play} subtitle="后续更新" onClick={() => navigate("future/播放设置")} />
+          <MenuRow label="播放设置" icon={Play} subtitle="解码、渲染与超分辨率" onClick={() => navigate("playback-settings")} />
           <MenuRow label="弹幕设置" icon={MessageSquare} subtitle="后续更新" onClick={() => navigate("future/弹幕设置")} />
           <MenuRow label="书签" icon={Bookmark} onClick={() => navigate("future/书签")} />
           <MenuRow label="阅读统计" icon={BarChart3} onClick={() => navigate("reading-stats")} />
@@ -1014,6 +1016,7 @@ export default function AndroidApp() {
         </MenuSection>
         <p className="gz-footer">Genzo v{buildInfo.version} · GPLv3</p>
       </div>}
+      {route.startsWith("playback-settings") && <PlaybackSettingsPanel page={(route.split("/")[1] || "main") as PlaybackSettingsPage} onNavigate={page => navigate(page === "main" ? "playback-settings" : `playback-settings/${page}`)} />}
       {route === "appearance" && <>
         <SettingBlock title="主题模式">
           <div className="gz-set-row gz-set-inline">

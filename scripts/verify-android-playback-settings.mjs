@@ -85,21 +85,57 @@ try {
     await until(s => s.decoder === "no", "public decode settings control"); result.cases.publicControl = true;
   }
   await control("superResolution", { value: 0 }); await change("compat"); await control("superResolution", { value: 1 });
-  await until(s => s.status === "playing" && s.gpuRenderer === "gpu", "ready for settings UI");
-  await control("pause"); await until(s => s.status === "paused", "pause for accessibility UI inspection"); await delay(1100);
-  cmd("shell", "uiautomator", "dump", "/data/local/tmp/GenzoPlaybackSettingsUI.xml");
-  const xml = cmd("shell", "cat", "/data/local/tmp/GenzoPlaybackSettingsUI.xml");
-  const button = /<node[^>]*text="播放设置"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/.exec(xml); assert.ok(button);
-  cmd("shell", "input", "tap", String(Math.round((Number(button[1]) + Number(button[3])) / 2)), String(Math.round((Number(button[2]) + Number(button[4])) / 2))); await delay(500);
-  cmd("shell", "uiautomator", "dump", "/data/local/tmp/GenzoPlaybackSettingsUI.xml");
-  const settingsUi = cmd("shell", "cat", "/data/local/tmp/GenzoPlaybackSettingsUI.xml"); assert.match(settingsUi, /硬件解码器/); assert.match(settingsUi, /视频渲染器/); assert.match(settingsUi, /倍速/);
-  writeFileSync(`${output}/playback-settings-ui.png`, execFileSync(adb, ["-s", serial, "exec-out", "screencap", "-p"], { maxBuffer: 16 * 1024 * 1024 }));
-  cmd("shell", "input", "keyevent", "KEYCODE_BACK"); result.cases.nativeSettingsUi = true;
+  await control("close"); await until(s => s.status === "closed", "closed before global settings"); await delay(500);
+  const original = await invoke("get_android_playback_preferences");
+  await assert.rejects(() => invoke("set_android_playback_preferences", { settings: { ...original, videoRenderer: "mediacodec_embed", superResolution: 2 } }));
+  assert.deepEqual(await invoke("get_android_playback_preferences"), original); result.cases.invalidGlobalSaveIsAtomic = true;
+  const global = { hardwareDecoding: false, hardwareDecoder: "auto-safe", videoRenderer: "gpu", superResolution: 1 };
+  assert.deepEqual(await invoke("set_android_playback_preferences", { settings: global }), global);
+  assert.deepEqual(await invoke("get_android_playback_preferences"), global); result.cases.globalSettingsSaveWithoutPlayer = true;
+  await open(); const globalPlayer = await until(s => s.decoder === "no" && s.superResolution === 1 && s.gpuRenderer === "gpu", "next player uses global preferences");
+  result.snapshots.globalPlayer = globalPlayer; result.cases.nextVideoAppliesGlobalSettings = true; await control("close"); await delay(700);
+  await page.evaluate(() => location.hash = "#/profile"); await page.getByRole("button", { name: /^播放设置/ }).click();
+  const hardware = page.getByRole("switch", { name: /硬件解码/ }); await hardware.waitFor();
+  assert.equal(await hardware.getAttribute("aria-checked"), "false"); await hardware.click(); await page.waitForFunction(() => document.querySelector('[role="switch"]')?.getAttribute("aria-checked") === "true");
+  assert.equal((await invoke("get_android_playback_preferences")).hardwareDecoding, true);
+  await page.getByRole("button", { name: /硬件解码器/ }).click(); await page.getByRole("radio", { name: /^mediacodec-copy/ }).click();
+  await page.waitForFunction(() => document.querySelector('[role="radio"][aria-checked="true"]')?.textContent?.startsWith("mediacodec-copy"));
+  cmd("shell", "input", "keyevent", "KEYCODE_BACK"); await page.getByRole("button", { name: /视频渲染器/ }).waitFor();
+  await page.getByRole("button", { name: /视频渲染器/ }).click(); await page.getByRole("radio", { name: /^Vulkan/ }).click();
+  await page.waitForFunction(() => document.querySelector('[role="radio"][aria-checked="true"]')?.textContent?.startsWith("Vulkan"));
+  cmd("shell", "input", "keyevent", "KEYCODE_BACK"); await page.getByRole("button", { name: /超分辨率/ }).click();
+  await page.getByRole("radio", { name: /^画质档/ }).click(); await page.waitForFunction(() => document.querySelector('[role="radio"][aria-checked="true"]')?.textContent?.startsWith("画质档"));
+  writeFileSync(`${output}/profile-super-settings.png`, execFileSync(adb, ["-s", serial, "exec-out", "screencap", "-p"], { maxBuffer: 16 * 1024 * 1024 }));
+  const selected = await invoke("get_android_playback_preferences"); assert.equal(selected.superResolution, 2); assert.equal(selected.videoRenderer, "gpu-next"); assert.equal(selected.hardwareDecoder, "mediacodec-copy");
+  result.cases.profileSettingsUiSavesNativePreferences = true;
+  cmd("shell", "input", "keyevent", "KEYCODE_BACK"); await page.getByRole("button", { name: /视频渲染器/ }).waitFor();
+  await delay(400);
+  writeFileSync(`${output}/profile-playback-settings.png`, execFileSync(adb, ["-s", serial, "exec-out", "screencap", "-p"], { maxBuffer: 16 * 1024 * 1024 }));
+  await open(); await until(s => s.gpuRenderer === "gpu-next" && s.superResolution === 2 && s.shaderPasses.some(p => p.includes("Anime4K")), "profile settings effective in native video");
+  result.cases.profileSelectionAppliedToPlayback = true;
+  await control("pause"); await until(s => s.status === "paused", "pause for player controls"); await delay(700);
+  const dump = () => { cmd("shell", "uiautomator", "dump", "/data/local/tmp/genzo-player-settings.xml"); return cmd("shell", "cat", "/data/local/tmp/genzo-player-settings.xml"); };
+  const tapText = (xml, text) => {
+    const node = [...xml.matchAll(/<node\b[^>]*>/g)].find(match => match[0].includes(`text="${text}"`))?.[0];
+    assert.ok(node, `missing native control ${text}`);
+    const bounds = /bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/.exec(node);
+    assert.ok(bounds); cmd("shell", "input", "tap", String((Number(bounds[1]) + Number(bounds[3])) >> 1), String((Number(bounds[2]) + Number(bounds[4])) >> 1));
+  };
+  const controls = dump();
+  assert.ok(controls.includes('text="超分·画质"'));
+  for (const text of ["倍速", "播放设置", "硬件解码", "视频渲染器"]) assert.ok(!controls.includes(`text="${text}"`));
+  tapText(controls, "超分·画质"); await delay(300);
+  const tiers = dump();
+  for (const text of ["关闭", "流畅 · 适合日常观看", "画质 · 更清晰，耗电更高"]) assert.ok(tiers.includes(`text="${text}"`));
+  writeFileSync(`${output}/player-super-tiers.png`, execFileSync(adb, ["-s", serial, "exec-out", "screencap", "-p"], { maxBuffer: 16 * 1024 * 1024 }));
+  tapText(tiers, "关闭"); await until(s => s.superResolution === 0 && s.shaderCount === 0 && s.status === "paused", "native tier selection applies");
+  result.cases.playerOnlyHasSuperResolutionSettingsShortcut = true;
+  await control("close"); await invoke("set_android_playback_preferences", { settings: original });
   console.log(JSON.stringify({ output, cases: result.cases }));
 } catch (error) { result.error = String(error); throw error; }
 finally {
   if (guarded) await control("close").catch(() => {});
+  if (guarded) cmd("shell", "rm", "-f", "/data/local/tmp/genzo-player-settings.xml");
   writeFileSync(`${output}/result.json`, JSON.stringify(result, null, 2));
   await browser?.close(); cmd("forward", "--remove", "tcp:9346"); cmd("reverse", "--remove", `tcp:${port}`); server.close();
-  cmd("shell", "rm", "-f", "/data/local/tmp/GenzoPlaybackSettingsUI.xml");
 }

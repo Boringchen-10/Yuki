@@ -1,5 +1,16 @@
 # Codex 与 DeepSeek Harness 项目交接记录
 
+## 安卓首页续播剧照 / 我的播放设置 v0.8.1（2026-10-11）
+
+- 基线 `6153e19`，工作树 `.tmp/android-first` / `codex/android-first`。用户要求首页继续观看显示分集封面、全局解码 / 渲染设置移到“我的 → 播放设置”，随后明确播放器只留超分档位设置入口。沿用完整当前 OpenDesign 草稿构建，Git 只纳入本轮 App 的 7 处增量；人物 / 关联 / 制作人员 / 评论、ExplorePanel、mobile.css、FRONTEND_PREVIEW 等原有草稿保留且未纳入提交。以修改前 App / CSS 快照验证，剩余 App 差异与原草稿逐块一致、CSS 字节一致。
+- 首页原先写死 Play 占位；播放进度 DTO 现在从 `media_episode_links` 读取文件实际对应的官方 episodeKey，并校验 work_id。新组件复用既有 EpisodeStill / TMDB 核对与缓存，先读缓存、可见区域再后台刷新；文件第13集对应官方第1集沿用人工关联，不猜编号、不用竖版海报代替剧照。缺关联 / 缺图保留中性占位；旧异步返回不覆盖另一张卡片，刷新失败保留缓存。图片上的时间使用半透明深底 / 白字，修正被 mobile.css 覆盖的对比度问题。
+- 全局偏好在无播放会话时即可读取 / 原子保存到原生同一份 `genzo-player` SharedPreferences，下次打开视频生效。Rust / Kotlin 均验证安卓选项及超分范围，ProGuard 保留参数反射类；没有新依赖、内核或迁移。OpenDesign 页面支持硬解开关、5种安卓解码器、兼容 / 自动 / OpenGL / Vulkan / MediaCodec直通、关闭 / 流畅 / 画质超分；直通 / 硬解 / 超分冲突联动保持。移除原生高级设置弹窗及倍速按钮，原生设置快捷入口仅保留超分三档；基础播放、进度、音轨、字幕等控制及已有 rate API 保留。
+- 验证：TypeScript、前端 **98项**通过；Rust **351通过 / 18忽略**，新增实际官方关联 / 续季偏移 / 旧作品关联保护与无播放会话全局参数验证。界面 **8项交互 / 60组布局**通过（360 / 412 / 915 / 1024 / 1366 / 1920 × 深浅主题 × 5页），最后含白字样式断言的证据 `D:/DevTools/Android/Build/qa/home-player-ui-1791715607483/`。实体机独立 organizeqa 设置 **15项**通过 `playback-settings-1791715203568`，含真实“我的”界面保存、下次播放真实生效及原生超分选择 / 无旧设置按钮；超分 **15项**通过 `anime4k-1791715257399`，含本地FD、WebDAV、规则HLS、字幕、旋转、续播与回退。此后仅修正时间文字 CSS，重新构建最终前端 / Rust / APK并在用户包实查白字，没有更改原生播放逻辑。
+- 失败记录保留：早期原型的 `anime4k-1791714790272` 在 local-content-fd 收到旧 opening 快照超时，但随后截图 / 状态已有实际帧，不能据此宣称完整回归通过。最终独立包首次覆盖安装后的第一次测试 CDP 连接中断；系统 exit-info 为 EXIT_SELF / status0，同时 crash buffer 有 destroyed mutex 的 FORTIFY 两行，无可用调用栈。后续上述两组各15项均通过，普通包 / 原readerqa最终更新启动没有新增同类日志；原因未证实，不声称已修复一次性退出。诊断与测试日志在本轮 QA 汇总目录。
+- 最终普通签名预览 `D:/DevTools/Android/Build/previews/home-player-settings-20261011/Genzo_0.8.1_home-player-settings-preview-final_arm64-v8a.apk`，**96,674,609字节**，SHA256 **e8f0ff50df2dee6e1e1dce720f11b19dbb68d39d4d5466ab1f8c89e5894c1e82**。0.8.1 / code8001 / com.genzo.android / arm64 / min26 / target36 / 非debuggable / 原证书 cee90e5f…cdb；签名v2/v3与16KiB ZIP校验通过。343个完整当前生产源文件与构建副本匹配，3个原生库与 Gradle stripped 匹配，内嵌最终 `index-Bm4i31gF.js` / `index-BbhF9U5X.css`，8个官方shader与许可匹配，无用户DB / 图书 / 测试媒体。前一个不带 final 的同版本预览没有最后白字修正，勿混用。汇总 `D:/DevTools/Android/Build/qa/home-player-settings-20261011/`。
+- 普通签名包与原readerqa均已覆盖更新，无清库。最终安装前重新读取实际 **29作品 / 15来源（14规则）/ 13播放记录**，更新后作品个人字段、来源 / 规则 ID / 版本 / 启停、位置 / 时长 / 完成逐项一致，硬解 / 解码器 / 渲染器 / 超分偏好也一致；没有复制DB / 密钥 / Cookie或引入测试数据，没有隐式扫描。普通包 firstInstallTime 保留 `2026-10-08 23:16:41`。真实首页10张续播卡片中8张图片加载成功、13条记录中11条具备官方关联；缺图不作伪造补齐。最终截图验证白字，原readerqa停留“我的 → 播放设置”，未自动播放或改用户偏好。
+- 共享前端预览产物已重建为相同最终前端，9228 / 9351指向更新后的原readerqa；未关闭其他预览进程。本轮只提交可交付修复 / 本机预览，不创建公开Release、标签或推送；公开版仍 v0.5.2。
+
 ## 安卓 Anime4K 原生 GPU 超分（2026-10-11）
 
 - 基线 `663adfa`，同一 `.tmp/android-first` / `codex/android-first`。用户要求规则视频、WebDAV、本地视频均可超分，并明确优先效果 / 兼容性、接受体积增加、保留原内核回退。当前 OpenDesign 草稿全部参与构建；App / ExplorePanel / mobile.css / FRONTEND_PREVIEW 及人物 / 关联 / 制作人员 / 评论等原有草稿未修改或纳入本次提交。

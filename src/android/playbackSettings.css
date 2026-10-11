@@ -1,0 +1,12 @@
+.android-app .gz-player-settings .gz-block-body { overflow: hidden; }
+.android-app .gz-player-settings .gz-player-row, .android-app .gz-player-settings .gz-player-choice { display: flex; align-items: center; gap: 14px; width: 100%; min-height: 64px; padding: 14px 0; text-align: left; background: transparent; border: 0; border-radius: 0; }
+.android-app .gz-player-settings .gz-block-body > * + * { border-top: 1px solid var(--line); }
+.android-app .gz-player-settings .gz-row-main { min-width: 0; flex: 1; }
+.android-app .gz-player-settings .gz-row-main strong, .android-app .gz-player-settings .gz-meta { overflow-wrap: anywhere; }
+.android-app .gz-player-row > svg, .android-app .gz-player-settings .gz-toggle-row > svg { flex: none; color: var(--muted); }
+.android-app .gz-player-radio { width: 20px; height: 20px; flex: none; border: 2px solid var(--muted); border-radius: 50%; }
+.android-app .gz-player-radio.active { border-color: var(--accent); background: var(--accent); box-shadow: inset 0 0 0 4px var(--bg-raised); }
+.android-app .gz-player-save { padding: 0 4px; }
+.android-app .gz-continue-artwork { position: absolute; inset: 0; display: grid; place-items: center; overflow: hidden; border-radius: inherit; }
+.android-app .gz-continue-artwork img { width: 100%; height: 100%; object-fit: cover; }
+.android-app .gz-continue .gz-continue-cover > span { padding: 3px 5px; border-radius: 4px; color: #fff; background: rgba(0,0,0,.65); }

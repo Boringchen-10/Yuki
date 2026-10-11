@@ -72,6 +72,7 @@ pub struct Progress {
     pub completed: bool,
     pub updated_at: String,
     pub missing: bool,
+    pub episode_key: Option<String>,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -89,7 +90,7 @@ pub async fn get_playback_progress(
 }
 pub async fn overview(pool: &SqlitePool, work_id: Option<&str>) -> AppResult<Overview> {
     let items = sqlx::query_as::<_, Progress>(
-        "SELECT p.*, m.work_id, m.file_name, COALESCE(w.title, m.file_name) AS title, m.missing FROM playback_progress p JOIN media_files m ON m.id=p.media_file_id LEFT JOIN works w ON w.id=m.work_id WHERE (? IS NULL OR m.work_id=?) ORDER BY p.updated_at DESC LIMIT 100")
+        "SELECT p.*, m.work_id, m.file_name, COALESCE(w.title, m.file_name) AS title, m.missing, e.provider || ':' || e.episode_external_id AS episode_key FROM playback_progress p JOIN media_files m ON m.id=p.media_file_id LEFT JOIN works w ON w.id=m.work_id LEFT JOIN media_episode_links e ON e.media_file_id=m.id AND e.work_id=m.work_id WHERE (? IS NULL OR m.work_id=?) ORDER BY p.updated_at DESC LIMIT 100")
         .bind(work_id).bind(work_id).fetch_all(pool).await?;
     let sessions = sessions()
         .lock()
@@ -573,6 +574,26 @@ mod tests {
             sqlx::query("INSERT INTO media_files(id,path,file_name,extension,media_type,created_at,updated_at) VALUES(?,?,'episode','mkv','video','','')").bind(id).bind(path).execute(&pool).await.unwrap();
         }
         pool
+    }
+
+    #[tokio::test]
+    async fn continue_artwork_uses_official_link_and_ignores_stale_work_links() {
+        let pool = tracker_pool().await;
+        sqlx::raw_sql("INSERT INTO works(id,title,type,created_at,updated_at) VALUES('w','Season 2','video','t','t'),('other','Other','video','t','t');
+            UPDATE media_files SET work_id='w',parsed_episode_start=13 WHERE id='a'; UPDATE media_files SET work_id='w' WHERE id='b';
+            INSERT INTO anime_episodes(work_id,provider,external_id,episode_number,sort_number,title,fetched_at) VALUES('w','bangumi','official-1',1,1,'First','t');
+            INSERT INTO media_episode_links VALUES('a','w','bangumi','official-1','manual',1,'t');").execute(&pool).await.unwrap();
+        save(&pool, "a", "t", 17000, 100000).await.unwrap();
+        save(&pool, "b", "t", 9000, 100000).await.unwrap();
+        let items = overview(&pool, None).await.unwrap().items;
+        let linked = items.iter().find(|item| item.media_file_id == "a").unwrap();
+        assert_eq!(linked.episode_key.as_deref(), Some("bangumi:official-1"));
+        assert_eq!(linked.position_ms, 17000);
+        assert!(items.iter().find(|item| item.media_file_id == "b").unwrap().episode_key.is_none());
+        sqlx::query("UPDATE media_files SET work_id='other' WHERE id='a'").execute(&pool).await.unwrap();
+        let moved = overview(&pool, None).await.unwrap().items.into_iter().find(|item| item.media_file_id == "a").unwrap();
+        assert!(moved.episode_key.is_none());
+        assert_eq!(moved.position_ms, 17000);
     }
 
     #[tokio::test]

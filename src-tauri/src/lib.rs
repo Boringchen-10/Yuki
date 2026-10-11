@@ -236,6 +236,8 @@ pub fn run() {
             android_player::pick_external_subtitle,
             android_player::list_subtitle_candidates,
             android_player::set_android_appearance,
+            android_player::get_android_playback_preferences,
+            android_player::set_android_playback_preferences,
             playback::resume_playback,
             commands::open_media_directory,
             commands::get_dashboard,
