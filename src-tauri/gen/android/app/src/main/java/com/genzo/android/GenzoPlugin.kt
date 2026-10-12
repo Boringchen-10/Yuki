@@ -36,6 +36,7 @@ class PlayerArgs {
     var loadingMessage: String = "正在准备视频…"
     var loadingError: Boolean = false
     var loadingErrorCode: String = "resolve_failed"
+    var sourceKind: String = "rule"
 }
 @InvokeArg
 class CredentialArgs { lateinit var id: String; var username: String = ""; var password: String = "" }
@@ -48,6 +49,8 @@ class ControlArgs {
 class SessionArgs { lateinit var sessionId: String }
 @InvokeArg
 class PlayerFailureArgs { lateinit var sessionId: String; var code: String = "source_offline" }
+@InvokeArg
+class PlayerPageArgs { lateinit var sessionId: String; var requestId: Long = 0; var channel: String = "context"; var data: String = "{}" }
 @InvokeArg
 class PlaybackPreferencesArgs {
     var hardwareDecoding: Boolean = true; var hardwareDecoder: String = "auto-safe"
@@ -376,6 +379,7 @@ class GenzoPlugin(private val activity: Activity) : Plugin(activity) {
                 .putExtra("sessionId", args.sessionId).putExtra("resumeMs", args.resumeMs ?: -1L)
                 .putExtra("subtitleUri", args.subtitleUri).putExtra("subtitleFile", args.subtitleFile)
                 .putExtra("subtitleLabel", args.subtitleLabel).putExtra("subtitleId", args.subtitleId))
+            if (PlayerMotion.enabled) activity.overridePendingTransition(R.anim.genzo_player_enter, R.anim.genzo_player_hold)
             invoke.resolve(JSObject().put("status", "opening"))
         }
     }
@@ -391,6 +395,20 @@ class GenzoPlugin(private val activity: Activity) : Plugin(activity) {
 
     @Command
     fun playerState(invoke: Invoke) { invoke.resolve(PlayerActivity.snapshot) }
+    @Command
+    fun takePlayerPageRequest(invoke: Invoke) {
+        val args = invoke.parseArgs(SessionArgs::class.java)
+        activity.runOnUiThread {
+            val current = PlayerActivity.current?.get()
+            val last = PlayerActivity.snapshot
+            invoke.resolve(current?.takePageRequest(args.sessionId) ?: JSObject().put("closed", last.optString("sessionId") == args.sessionId && last.optString("status") == "closed"))
+        }
+    }
+    @Command
+    fun updatePlayerPage(invoke: Invoke) {
+        val args = invoke.parseArgs(PlayerPageArgs::class.java)
+        activity.runOnUiThread { PlayerActivity.current?.get()?.updatePage(args); invoke.resolve() }
+    }
     @Command
     fun playerSourceFailure(invoke: Invoke) {
         val args = invoke.parseArgs(PlayerFailureArgs::class.java)

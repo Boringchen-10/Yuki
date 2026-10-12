@@ -907,8 +907,14 @@ pub async fn cache_episode_artwork(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> AppResult<Option<String>> {
+    let path = cache_for_player(&state, &work_id, &episode_key).await?;
+    if let Some(path) = &path { db::allow_cover_file(&app, Path::new(path))?; }
+    Ok(path)
+}
+
+pub(crate) async fn cache_for_player(state: &AppState, work_id: &str, episode_key: &str) -> AppResult<Option<String>> {
     let r = cached(&state.pool, &work_id).await?;
-    let Some(url) = r.images.get(&episode_key) else {
+    let Some(url) = r.images.get(episode_key) else {
         return Ok(None);
     };
     let destination = crate::metadata_aggregator::artwork_cache_path(
@@ -937,7 +943,6 @@ pub async fn cache_episode_artwork(
             return Ok(None);
         }
     }
-    db::allow_cover_file(&app, Path::new(&destination))?;
     Ok(Some(destination.to_string_lossy().into_owned()))
 }
 

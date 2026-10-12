@@ -80,7 +80,7 @@ struct Target {
     official: Option<(String, String)>,
     preserve: bool,
 }
-fn number(name: &str) -> Option<i64> {
+pub(crate) fn number(name: &str) -> Option<i64> {
     let parsed = crate::anime_parser::parse_file_name(&format!("{name}.mp4"));
     if parsed.special_type.is_some()
         || parsed.invalid_episode_range
@@ -236,11 +236,15 @@ pub async fn play_rule_episode(
     input: BindingInput,
     state: State<'_, AppState>,
 ) -> AppResult<Value> {
+    play_selection(state.inner().clone(), input).await
+}
+
+pub(crate) async fn play_selection(state: AppState, input: BindingInput) -> AppResult<Value> {
     if input.episode_indexes.len() != 1 {
         return Err(AppError::Validation("请选择一集播放".into()));
     }
     let (loading, opening) = crate::android_player::start_rule_loading(&state, None).await?;
-    let state = state.inner().clone();
+    crate::android_player_page::bound_origin(&loading.id, &input);
     tauri::async_runtime::spawn(async move {
         let result = async {
             crate::android_player::rule_loading_phase(&loading, "正在获取剧集信息…", false).await?;

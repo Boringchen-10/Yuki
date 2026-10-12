@@ -1,0 +1,10 @@
+--- a/src/android/PlaySourceSheet.tsx
++++ b/src/android/PlaySourceSheet.tsx
+@@ -22,0 +23 @@
++  const handedToPlayer = useRef(false);
+@@ -33 +34 @@
+-    return () => { active = false; generation.current++; void rulesApi.cancelResolve().catch(() => {}); };
++    return () => { active = false; generation.current++; if (!handedToPlayer.current) void rulesApi.cancelResolve().catch(() => {}); };
+@@ -66,0 +68,2 @@
++      if (version !== generation.current) return;
++      handedToPlayer.current = true;

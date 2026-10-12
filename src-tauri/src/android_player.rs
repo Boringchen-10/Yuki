@@ -273,6 +273,7 @@ pub(crate) async fn start_rule_loading(state: &AppState, media_id: Option<String
         *current = Some(Session { id:id.clone(), initial:initial.clone(), stream:None });
     }
     let opening = snapshot(initial); crate::android_events::player(opening.clone());
+    crate::android_player_page::serve(state.clone(), id.clone());
     Ok((RuleLoading { id, operation }, opening))
 }
 
@@ -339,11 +340,19 @@ async fn open_player(media_file_id: String, restart: bool, subtitle_id: Option<S
                 let uri = stream.uri.clone(); remote_stream = Some(stream); uri
             },
             Err(error) => {
+                if let Some(loading) = loading { rule_loading_phase(loading, "正在连接视频…", false).await?; }
                 let failure = crate::android_sources::failure(&error.to_string());
                 crate::android_sources::set_failure(&state.pool, &source_id, &failure).await?;
                 let raw = json!({"sessionId":session,"mediaFileId":media_file_id,"status":"error","error":failure});
                 let current = snapshot(raw.clone());
-                *SESSION.lock().map_err(|_| AppError::System("播放会话不可用".into()))? = Some(Session { id:session.clone(), initial:raw, stream:None });
+                {
+                    let mut current=SESSION.lock().map_err(|_| AppError::System("播放会话不可用".into()))?;
+                    if let Some(loading)=loading { crate::rule_sources::check_resolve(loading.operation)?; }
+                    *current=Some(Session { id:session.clone(), initial:raw, stream:None });
+                }
+                if let Some(loading)=loading {
+                    android_bridge::call("updateRulePlayer",json!({"sessionId":session,"ruleOperation":loading.operation,"loadingError":true,"loadingMessage":failure["message"],"loadingErrorCode":failure["code"]})).await?;
+                }
                 crate::android_events::player(current.clone());
                 return Ok(current);
             }
@@ -367,7 +376,7 @@ async fn open_player(media_file_id: String, restart: bool, subtitle_id: Option<S
             return Err(error);
         }
     }
-    let opened = android_bridge::call("openPlayer", json!({"uri":uri,"restart":restart,"resumeMs":resume,"mediaFileId":media_file_id,"sessionId":session,"subtitleUri":subtitle_uri,"subtitleFile":subtitle_file,"subtitleLabel":subtitle_label,"subtitleId":selected,"ruleOperation":rule_operation.unwrap_or(0)})).await;
+    let opened = android_bridge::call("openPlayer", json!({"uri":uri,"restart":restart,"resumeMs":resume,"mediaFileId":media_file_id,"sessionId":session,"subtitleUri":subtitle_uri,"subtitleFile":subtitle_file,"subtitleLabel":subtitle_label,"subtitleId":selected,"ruleOperation":rule_operation.unwrap_or(0),"sourceKind":kind})).await;
     if let Err(error) = opened {
         if let Some(path) = subtitle_file { let _ = tokio::fs::remove_file(path).await; }
         return Err(error);
@@ -378,14 +387,20 @@ async fn open_player(media_file_id: String, restart: bool, subtitle_id: Option<S
         if let Some(operation) = rule_operation { crate::rule_sources::check_resolve(operation)?; }
         *current = Some(Session { id:session.clone(), initial:initial.clone(), stream:remote_stream });
     }
-    monitor(state.pool.clone(), session.clone(), source_id, subtitle_file);
+    monitor(state.clone(), session.clone(), source_id, subtitle_file);
     let opening = snapshot(initial);
     crate::android_events::player(opening.clone());
     Ok(opening)
 }
 
-fn monitor(pool: SqlitePool, owned_session: String, owned_source: String, subtitle_file: Option<std::path::PathBuf>) {
+pub(crate) fn is_current(session: &str) -> bool {
+    SESSION.lock().ok().is_some_and(|value| value.as_ref().is_some_and(|current| current.id == session))
+}
+
+fn monitor(state: AppState, owned_session: String, owned_source: String, subtitle_file: Option<std::path::PathBuf>) {
+    crate::android_player_page::serve(state.clone(), owned_session.clone());
     tauri::async_runtime::spawn(async move {
+        let pool = state.pool;
         let mut last_saved = tokio::time::Instant::now() - std::time::Duration::from_secs(5);
         let mut last_status = String::new();
         let mut last_error = String::new();
@@ -440,7 +455,7 @@ pub(crate) async fn preview_stream(state: &AppState, stream: crate::remote_trans
         crate::rule_sources::check_resolve(operation)?;
         *current=Some(Session{id:session.clone(),initial:initial.clone(),stream:Some(stream)});
     }
-    monitor(state.pool.clone(),session,source_id,None);
+    monitor(state.clone(),session,source_id,None);
     let value=snapshot(initial);crate::android_events::player(value.clone());Ok(value)
 }
 

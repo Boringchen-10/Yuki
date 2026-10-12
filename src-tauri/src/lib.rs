@@ -8,6 +8,7 @@ mod rule_bindings;
 mod rule_stream;
 mod source_imports;
 mod android_player;
+mod android_player_page;
 mod android_events;
 mod anime_parser;
 mod bangumi;

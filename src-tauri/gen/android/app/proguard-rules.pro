@@ -6,6 +6,7 @@
 -keep class com.genzo.android.ControlArgs { *; }
 -keep class com.genzo.android.PlaybackPreferencesArgs { *; }
 -keep class com.genzo.android.PlayerFailureArgs { *; }
+-keep class com.genzo.android.PlayerPageArgs { *; }
 -keep class com.genzo.android.ReaderArgs { *; }
 -keep class com.genzo.android.ReaderControlArgs { *; }
 # You can control the set of applied configuration files using the

@@ -794,8 +794,12 @@ pub async fn preview_rule_episode(
     episode_index: usize,
     state: State<'_, AppState>,
 ) -> AppResult<Value> {
+    preview_selection(state.inner().clone(), plugin_id, source, road_index, episode_index).await
+}
+
+pub(crate) async fn preview_selection(state: AppState, plugin_id: String, source: String, road_index: usize, episode_index: usize) -> AppResult<Value> {
     let (loading, opening) = crate::android_player::start_rule_loading(&state, None).await?;
-    let state = state.inner().clone();
+    crate::android_player_page::preview_origin(&loading.id, &plugin_id, &source, road_index, episode_index);
     tauri::async_runtime::spawn(async move {
         let result = async {
             crate::android_player::rule_loading_phase(&loading, "正在获取剧集信息…", false).await?;

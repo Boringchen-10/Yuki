@@ -21,6 +21,7 @@ android {
         applicationId = if (System.getenv("GENZO_READER_QA") == "1") "com.genzo.android.readerqa" else "com.genzo.android"
         minSdk = 26
         targetSdk = 36
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
     }

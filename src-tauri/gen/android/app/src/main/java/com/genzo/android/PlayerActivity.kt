@@ -5,6 +5,10 @@ import androidx.activity.OnBackPressedCallback
 import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.content.res.Configuration
+import android.content.res.ColorStateList
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
@@ -21,6 +25,10 @@ import android.widget.ProgressBar
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import android.widget.PopupWindow
+import com.google.android.material.bottomsheet.BottomSheetDialog
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import app.tauri.plugin.JSArray
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Invoke
@@ -29,7 +37,7 @@ import java.security.MessageDigest
 import java.lang.ref.WeakReference
 import java.util.UUID
 
-// A native validation view. OpenDesign will define the final controls and React entry flow.
+// Native video surface with the portrait library / Bangumi panel beneath it.
 class PlayerActivity : ComponentActivity() {
     companion object {
         @Volatile var snapshot = JSObject().put("status", "idle")
@@ -49,7 +57,17 @@ class PlayerActivity : ComponentActivity() {
     private lateinit var label: TextView
     private lateinit var seek: SeekBar
     private lateinit var viewport: FrameLayout
-    private lateinit var superResolutionButton: Button
+    private lateinit var root: LinearLayout
+    private lateinit var page: PlayerPage
+    private lateinit var chrome: FrameLayout
+    private lateinit var playButton: TextView
+    private lateinit var titleView: TextView
+    private lateinit var moreButton: TextView
+    private lateinit var transport: LinearLayout
+    private var transportShown = true
+    private var controlsVisible = true
+    private var settingsMenu: PopupWindow? = null
+    private val hideControls = Runnable { if (status == "playing" && !seek.isPressed && settingsMenu?.isShowing != true) showControls(false) }
     private var superResolutionMode = 0
     private var fallbackReason: String? = null
     private var gpuError: String? = null
@@ -69,6 +87,8 @@ class PlayerActivity : ComponentActivity() {
     private var pendingRate: Float? = null
     private var status = "opening"
     private var ruleOperation = 0L
+    private var sourceKind = "rule"
+    private val ruleMedia get() = ruleOperation > 0 && sourceKind == "rule"
     private var mediaReady = false
     private var startOnResume = false
     private var loadingMessage = "正在准备视频…"
@@ -78,7 +98,6 @@ class PlayerActivity : ComponentActivity() {
     private lateinit var loadingSpinner: ProgressBar
     private lateinit var retryButton: Button
     private lateinit var detailsButton: Button
-    private val mediaControls = mutableListOf<View>()
     private val subtitleFiles = mutableListOf<File>()
     private val sidecars = linkedMapOf<String, Pair<String, File>>()
     private var selectedSidecar: String? = null
@@ -100,7 +119,10 @@ class PlayerActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
-            override fun handleOnBackPressed() { finish() }
+            override fun handleOnBackPressed() {
+                if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                else finish()
+            }
         })
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
@@ -115,66 +137,156 @@ class PlayerActivity : ComponentActivity() {
         initialSubtitle = intent.getStringExtra("subtitleUri")
         resumeMs = savedInstanceState?.getLong("positionMs") ?: if (intent.getBooleanExtra("restart", false)) 0 else
             intent.getLongExtra("resumeMs", -1L).takeIf { it >= 0 } ?: getSharedPreferences("genzo-prototype-progress", 0).getLong(identity(), 0)
-        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(0xff101114.toInt()) }
-        viewport = FrameLayout(this)
+        root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(0xff0d1612.toInt()) }
+        viewport = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
         superResolutionMode = getSharedPreferences("genzo-player", 0).getInt("anime4kMode", 0).coerceIn(0, 2)
         playbackSettings = PlaybackSettings.read(this)
-        loadingPanel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; setPadding(24,24,24,24) }
+        loadingPanel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; setPadding(dp(16),dp(4),dp(16),dp(4)) }
         loadingSpinner = ProgressBar(this)
-        loadingPanel.addView(loadingSpinner)
-        loadingText = TextView(this).apply { setTextColor(0xffffffff.toInt()); textSize = 16f; gravity = Gravity.CENTER; setPadding(16,24,16,24) }
+        loadingPanel.addView(loadingSpinner, LinearLayout.LayoutParams(dp(26), dp(26)).apply { gravity = Gravity.CENTER_HORIZONTAL })
+        loadingText = TextView(this).apply { setTextColor(0xffffffff.toInt()); textSize = 13f; gravity = Gravity.CENTER; setPadding(dp(8),dp(2),dp(8),dp(2)) }
         loadingPanel.addView(loadingText)
-        retryButton = Button(this).apply { text = "重试播放"; setOnClickListener { if (ruleOperation > 0) finish() else retryPlayback() } }
-        loadingPanel.addView(retryButton)
+        val failureActions = LinearLayout(this).apply { gravity = Gravity.CENTER }
+        retryButton = Button(this).apply { text = "重试播放"; setOnClickListener { if (ruleMedia || !mediaReady) finish() else retryPlayback() } }
+        failureActions.addView(retryButton, LinearLayout.LayoutParams(0, dp(44), 1f))
         detailsButton = Button(this).apply { text = "错误详情"; setOnClickListener { showFailureDetails() } }
-        loadingPanel.addView(detailsButton)
-        loadingPanel.addView(Button(this).apply { text = if (ruleOperation > 0) "返回选集" else "返回"; setOnClickListener { finish() } })
-        viewport.addView(loadingPanel, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER))
-        root.addView(viewport, LinearLayout.LayoutParams(-1, 0, 1f))
-        label = TextView(this).apply { setTextColor(0xffffffff.toInt()); textSize = 12f }
-        root.addView(label)
-        seek = SeekBar(this).apply { max = 1000 }
-        root.addView(seek)
-        val controls = LinearLayout(this)
-        val controlHeight = (48 * resources.displayMetrics.density).toInt()
-        fun button(text: String, action: () -> Unit) {
-            controls.addView(Button(this).apply { this.text = text; textSize = 13f; setOnClickListener { action() } }, LinearLayout.LayoutParams(0, controlHeight, 1f))
-        }
-        button("暂停/播放") { if (player.isPlaying) player.pause() else player.play() }
-        button("音轨") { tracks(false) }
-        button("字幕") { tracks(true) }
-        root.addView(controls)
-        mediaControls.add(controls)
-        val extra = LinearLayout(this)
-        extra.addView(Button(this).apply { text = "外挂字幕"; setOnClickListener { if (subtitleSupported()) launchSubtitlePicker() } }, LinearLayout.LayoutParams(0, controlHeight, 1f))
-        extra.addView(Button(this).apply { text = "字幕偏移"; setOnClickListener {
-            AlertDialog.Builder(this@PlayerActivity).setItems(arrayOf("提前 500 ms", "重置", "延后 500 ms")) { _, index ->
-                subtitleDelayMs = if (index == 1) 0 else subtitleDelayMs + if (index == 0) -500 else 500
-                if (!player.setSpuDelay(subtitleDelayMs * 1000)) label.text = "当前字幕不支持时间偏移"
-            }.show()
-        } }, LinearLayout.LayoutParams(0, controlHeight, 1f))
-        extra.addView(Button(this).apply { text = "横/竖屏"; setOnClickListener {
-            requestedOrientation = if (resources.configuration.orientation == 2) ActivityInfo.SCREEN_ORIENTATION_PORTRAIT else ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-        } }, LinearLayout.LayoutParams(0, controlHeight, 1f))
-        superResolutionButton = Button(this).apply { text = "Anime4K"; setOnClickListener {
-            AlertDialog.Builder(this@PlayerActivity).setTitle("Anime4K 超分辨率")
-                .setSingleChoiceItems(arrayOf("关闭", "流畅 · 适合日常观看", "画质 · 更清晰，耗电更高"), superResolutionMode) { dialog, index ->
-                    dialog.dismiss(); switchSuperResolution(index)
-                }.setNeutralButton("开源说明") { _, _ -> showSuperResolutionLicenses() }.setNegativeButton("取消", null).show()
-        } }
-        extra.addView(superResolutionButton, LinearLayout.LayoutParams(0, controlHeight, 1f))
-        root.addView(extra)
-        mediaControls.add(extra)
+        failureActions.addView(detailsButton, LinearLayout.LayoutParams(0, dp(44), 1f))
+        loadingPanel.addView(failureActions)
+        viewport.addView(loadingPanel, FrameLayout.LayoutParams(-1, -1, Gravity.TOP))
+        root.addView(viewport, LinearLayout.LayoutParams(-1, dp(220)))
+        chrome = FrameLayout(this)
+        val top = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setBackgroundColor(0x55000000); setPadding(dp(4), 0, dp(4), 0) }
+        top.addView(icon("‹", "返回") { onBackPressedDispatcher.onBackPressed() }, LinearLayout.LayoutParams(dp(48), dp(48)))
+        titleView = TextView(this).apply { text = "视频播放"; textSize = 14f; setTextColor(Color.WHITE); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }
+        top.addView(titleView, LinearLayout.LayoutParams(0, -2, 1f))
+        moreButton = icon("⋮", "更多播放设置") { showSettingsMenu() }
+        top.addView(moreButton, LinearLayout.LayoutParams(dp(48), dp(48)))
+        chrome.addView(top, FrameLayout.LayoutParams(-1, dp(48), Gravity.TOP))
+        val bottom = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setBackgroundColor(0x77000000); setPadding(dp(2), 0, dp(2), 0) }
+        transport = bottom
+        playButton = icon("▶", "暂停/播放") { if (engineActive && problem == null) { if (player.isPlaying) player.pause() else player.play(); showControls(true) } }
+        bottom.addView(playButton, LinearLayout.LayoutParams(dp(44), dp(48)))
+        seek = SeekBar(this).apply { max = 1000; progressTintList = ColorStateList.valueOf(0xff4cc197.toInt()); thumbTintList = progressTintList }
+        bottom.addView(seek, LinearLayout.LayoutParams(0, dp(48), 1f))
+        label = TextView(this).apply { setTextColor(Color.WHITE); textSize = 11f; gravity = Gravity.CENTER; minWidth = dp(82) }
+        bottom.addView(label, LinearLayout.LayoutParams(-2, dp(48)))
+        bottom.addView(icon("⛶", "横/竖屏") { requestedOrientation = if (resources.configuration.orientation == 2) ActivityInfo.SCREEN_ORIENTATION_PORTRAIT else ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }, LinearLayout.LayoutParams(dp(44), dp(48)))
+        chrome.addView(bottom, FrameLayout.LayoutParams(-1, dp(48), Gravity.BOTTOM))
+        viewport.addView(chrome, FrameLayout.LayoutParams(-1, -1))
+        viewport.setOnClickListener { showControls(!controlsVisible) }
+        page = PlayerPage(this, sessionId) { mediaFileId }
+        root.addView(page, LinearLayout.LayoutParams(-1, 0, 1f))
         setContentView(root)
+        ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
+            val cutout = insets.getInsets(WindowInsetsCompat.Type.displayCutout())
+            val navigation = insets.getInsetsIgnoringVisibility(WindowInsetsCompat.Type.navigationBars())
+            chrome.setPadding(cutout.left, cutout.top, cutout.right, 0)
+            layoutLoading()
+            page.setPadding(dp(16), 0, dp(16), navigation.bottom)
+            insets
+        }
+        ViewCompat.requestApplyInsets(root)
+        root.addOnLayoutChangeListener { _, left, _, right, _, oldLeft, _, oldRight, _ -> if (right-left != oldRight-oldLeft) layoutPlayer() }
+        layoutPlayer()
         // A rule's loading shell must not wait for GPU/decoder initialization.
         seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(bar: SeekBar?, value: Int, fromUser: Boolean) {}
-            override fun onStartTrackingTouch(bar: SeekBar?) {}
-            override fun onStopTrackingTouch(bar: SeekBar?) { if (engineActive && player.isSeekable) runCatching { player.setTime(player.length * seek.progress / 1000, false) }.onFailure { fail("playback_failed") } }
+            override fun onStartTrackingTouch(bar: SeekBar?) { handler.removeCallbacks(hideControls) }
+            override fun onStopTrackingTouch(bar: SeekBar?) { if (engineActive && player.isSeekable) runCatching { player.setTime(player.length * seek.progress / 1000, false) }.onFailure { fail("playback_failed") }; showControls(true) }
         })
         if (uri.isNotEmpty()) { mediaReady = true; createEngine(superResolutionMode) }
         report()
         handler.post(ticker)
+    }
+
+    private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
+    private fun icon(symbol: String, description: String, action: () -> Unit) = TextView(this).apply {
+        text = symbol; textSize = 24f; gravity = Gravity.CENTER; setTextColor(Color.WHITE); contentDescription = description
+        isFocusable = true; setOnClickListener { action() }
+        background = android.graphics.drawable.RippleDrawable(ColorStateList.valueOf(0x44ffffff), null, GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE) })
+    }
+    private fun showControls(visible: Boolean) {
+        if (controlsVisible != visible) PlayerMotion.visibility(chrome, visible)
+        controlsVisible = visible
+        handler.removeCallbacks(hideControls)
+        if (visible && status == "playing") handler.postDelayed(hideControls, 3500)
+    }
+    private fun layoutPlayer() {
+        val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val returning = !landscape && page.visibility != View.VISIBLE
+        page.visibility = if (landscape) View.GONE else View.VISIBLE
+        if (returning) PlayerMotion.enter(page)
+        viewport.layoutParams = LinearLayout.LayoutParams(-1, if (landscape) 0 else ((root.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels) * 9 / 16), if (landscape) 1f else 0f)
+        showControls(true)
+    }
+    private fun layoutLoading() {
+        val params = loadingPanel.layoutParams as FrameLayout.LayoutParams
+        val top = chrome.paddingTop + dp(48)
+        val bottom = if (transportShown) dp(48) else 0
+        if (params.topMargin != top || params.bottomMargin != bottom) {
+            params.topMargin = top; params.bottomMargin = bottom; loadingPanel.layoutParams = params
+        }
+    }
+    override fun onConfigurationChanged(config: Configuration) {
+        super.onConfigurationChanged(config); settingsMenu?.dismiss(); layoutPlayer()
+    }
+    fun takePageRequest(expected: String): JSObject {
+        if (expected != sessionId) return JSObject()
+        if (isFinishing || isDestroyed) return JSObject().put("closed", true)
+        return page.takeRequest()?.let { JSObject(it.toString()) } ?: JSObject()
+    }
+    fun updatePage(args: PlayerPageArgs) {
+        if (args.sessionId != sessionId || isFinishing || isDestroyed || current?.get() !== this) return
+        val data = org.json.JSONObject(args.data)
+        page.accept(args.channel, data, args.requestId)
+        if (args.channel == "context" && !data.has("error")) titleView.text = data.optString("title", "视频播放")
+    }
+    private fun showChoice(title: String, items: List<String>, selected: Int = -1, action: (Int) -> Unit) {
+        handler.removeCallbacks(hideControls)
+        val dialog = BottomSheetDialog(this)
+        dialog.setDismissWithAnimation(PlayerMotion.enabled)
+        val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(12), dp(16), dp(24)); setBackgroundColor(0xff18231e.toInt()) }
+        column.addView(TextView(this).apply { text = title; textSize = 17f; setTextColor(Color.WHITE); setPadding(0, dp(8), 0, dp(16)) })
+        items.forEachIndexed { index, item -> column.addView(TextView(this).apply {
+            text = (if (index == selected) "✓  " else "") + item; textSize = 15f; gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(48)
+            setTextColor(if (index == selected) 0xff4cc197.toInt() else 0xffe6ebe7.toInt())
+            setOnClickListener { dialog.dismiss(); if (engineActive && problem == null) runCatching { action(index) }.onFailure { Toast.makeText(this@PlayerActivity, "当前视频无法应用此设置", Toast.LENGTH_SHORT).show() } }
+        }, LinearLayout.LayoutParams(-1, -2)) }
+        dialog.setContentView(android.widget.ScrollView(this).apply { addView(column) }); dialog.setOnDismissListener { showControls(true) }; dialog.show()
+    }
+    private fun showSettingsMenu() {
+        showControls(true); handler.removeCallbacks(hideControls)
+        val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(8), dp(8), dp(8), dp(8)) }
+        val scroll = android.widget.ScrollView(this).apply { addView(column) }
+        val menu = PopupWindow(scroll, dp(224), -2, true).apply { elevation = dp(12).toFloat(); setBackgroundDrawable(GradientDrawable().apply { setColor(0xff1c2922.toInt()); cornerRadius = dp(12).toFloat() }); isOutsideTouchable = true; animationStyle = if (PlayerMotion.enabled) R.style.GenzoPlayerMenuAnimation else 0 }
+        settingsMenu = menu
+        fun item(title: String, needsMedia: Boolean = true, action: () -> Unit) {
+            column.addView(TextView(this).apply {
+                text = title; textSize = 14f; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(12), 0, dp(12), 0); minimumHeight = dp(48); setTextColor(Color.WHITE)
+                isEnabled = !needsMedia || (engineActive && problem == null); alpha = if (isEnabled) 1f else .4f
+                background = android.graphics.drawable.RippleDrawable(ColorStateList.valueOf(0x334cc197), null, GradientDrawable().apply { setColor(Color.WHITE); cornerRadius = dp(6).toFloat() })
+                setOnClickListener { menu.dismiss(); action() }
+            }, LinearLayout.LayoutParams(-1, -2))
+        }
+        item("倍速                         ›") {
+            val rates = listOf(.5f, .75f, 1f, 1.25f, 1.5f, 2f)
+            showChoice("倍速", rates.map { "${it}×" }, rates.indexOf(player.rate)) { setPlaybackRate(rates[it]) }
+        }
+        item("超分辨率                  ›") { showChoice("Anime4K 超分辨率", listOf("关闭", "流畅档", "画质档"), superResolutionMode) { switchSuperResolution(it) } }
+        item("音轨                         ›") { tracks(false) }
+        item("字幕                         ›") { tracks(true) }
+        item("选择外挂字幕") { if (subtitleSupported()) launchSubtitlePicker() }
+        item("字幕偏移                  ›") { showChoice("字幕偏移", listOf("提前 500 ms", "重置", "延后 500 ms")) {
+            subtitleDelayMs = if (it == 1) 0 else (subtitleDelayMs + if (it == 0) -500 else 500).coerceIn(-60000, 60000)
+            check(player.setSpuDelay(subtitleDelayMs * 1000))
+        } }
+        item("视频详情", false) {
+            val video = if (engineActive) "${player.property("video-params/w") ?: "—"} × ${player.property("video-params/h") ?: "—"}\n解码：${player.property("hwdec-current") ?: "—"}\n渲染：${player.property("current-vo") ?: "—"}" else "正在准备视频"
+            AlertDialog.Builder(this).setTitle("视频详情").setMessage("${titleView.text}\n\n$video\n超分：${listOf("关闭", "流畅档", "画质档")[superResolutionMode]}").setPositiveButton("关闭", null).show()
+        }
+        item("开源说明", false) { showSuperResolutionLicenses() }
+        menu.setOnDismissListener { settingsMenu = null; showControls(true) }
+        menu.showAsDropDown(moreButton, -dp(176), 0)
     }
 
     private fun createEngine(mode: Int, paused: Boolean = false) {
@@ -185,6 +297,7 @@ class PlayerActivity : ComponentActivity() {
                     handler.post { if (generation == engineGeneration && !isFinishing && !isDestroyed) fail(failure ?: "playback_failed") }
                 } else if (problem == null) {
                     status = next
+                    if (next == "playing") showControls(true)
                     if (next in listOf("playing", "paused") && engineActive && player.length > 0) { playbackFailed = false; restorePlayback() }
                     report()
                 }
@@ -373,12 +486,14 @@ class PlayerActivity : ComponentActivity() {
 
     fun acceptRuleMedia(args: PlayerArgs) {
         requireRuleSession(args)
-        require(!mediaReady && Uri.parse(args.uri).scheme in listOf("http", "https"))
+        require(!mediaReady && Uri.parse(args.uri).scheme in listOf("http", "https", "content"))
+        sourceKind = args.sourceKind
         uri = args.uri; mediaFileId = args.mediaFileId; resumeMs = args.resumeMs ?: 0
         initialSubtitle = args.subtitleUri
         intent.putExtra("subtitleFile", args.subtitleFile).putExtra("subtitleLabel", args.subtitleLabel).putExtra("subtitleId", args.subtitleId)
         mediaReady = true; loadingError = null; loadingMessage = "正在连接视频…"; status = "opening"
         createEngine(superResolutionMode)
+        page.loadContext()
         report()
     }
 
@@ -489,7 +604,7 @@ class PlayerActivity : ComponentActivity() {
             "portrait" -> requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             "system" -> requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             "superResolution" -> { require(args.value in 0.0..2.0 && args.value % 1.0 == 0.0); switchSuperResolution(args.value.toInt()) }
-            "retry" -> { require(ruleOperation == 0L && mediaReady); retryPlayback() }
+            "retry" -> { require(!ruleMedia && mediaReady); retryPlayback() }
             "close" -> { if (engineActive) player.pause(); status = "closed"; engineGeneration++; finish() }
             else -> throw IllegalArgumentException("Unknown action")
         }
@@ -533,23 +648,26 @@ class PlayerActivity : ComponentActivity() {
             }
             snapshot.put("shaderPasses", descriptions).put("gpuTimeMs", gpuTimeNs / 1_000_000.0)
         }
-        val superResolutionLabel = when (superResolutionMode) { 1 -> "超分·流畅"; 2 -> "超分·画质"; else -> "超分·关" }
-        if (superResolutionButton.text.toString() != superResolutionLabel) superResolutionButton.text = superResolutionLabel
         if (status != "closed") problem?.let { snapshot.put("error", JSObject().put("code", it.code).put("message", it.message).put("retryable", it.retryable)) }
         val loading = status in listOf("opening", "buffering", "playback_error", "permission_denied")
-        loadingPanel.visibility = if (loading) View.VISIBLE else View.GONE
+        val showTransport = mediaReady && engineActive && problem == null && status !in listOf("opening", "closed")
+        if (transportShown != showTransport) { transportShown = showTransport; PlayerMotion.visibility(transport, showTransport); layoutLoading() }
+        if ((loadingPanel.visibility == View.VISIBLE) != loading) PlayerMotion.visibility(loadingPanel, loading)
         loadingSpinner.visibility = if (loadingError != null || status == "playback_error") View.GONE else View.VISIBLE
         val loadingLabel = loadingError ?: if (status == "playback_error") "视频播放失败，请返回选集重试或切换线路。" else if (status == "buffering") "正在缓冲视频…" else loadingMessage
         if (loadingText.text.toString() != loadingLabel) loadingText.text = loadingLabel
-        val retryLabel = if (ruleOperation > 0) "返回选集重试" else "重试播放"
+        val retryLabel = if (ruleMedia || !mediaReady) "返回选集重试" else "重试播放"
         if (retryButton.text.toString() != retryLabel) retryButton.text = retryLabel
-        retryButton.visibility = if (problem != null && (ruleOperation > 0 || problem?.retryable == true)) View.VISIBLE else View.GONE
+        retryButton.visibility = if (problem != null && (ruleMedia || !mediaReady || problem?.retryable == true)) View.VISIBLE else View.GONE
         detailsButton.visibility = if (problem != null) View.VISIBLE else View.GONE
-        mediaControls.forEach { it.visibility = if (mediaReady && engineActive && problem == null) View.VISIBLE else View.GONE }
-        seek.visibility = if (mediaReady && engineActive && problem == null) View.VISIBLE else View.GONE
-        label.visibility = if (mediaReady && problem == null) View.VISIBLE else View.GONE
-        val playbackLabel = fallbackReason ?: subtitleError ?: "${status} · ${lastPosition / 1000}/${lastDuration / 1000}s · ${active?.rate ?: 1f}× · ${subtitleDelayMs}ms"
+        seek.isEnabled = mediaReady && engineActive && problem == null && active?.isSeekable == true
+        playButton.isEnabled = mediaReady && engineActive && problem == null
+        playButton.text = if (active?.isPlaying == true) "Ⅱ" else "▶"
+        playButton.contentDescription = if (active?.isPlaying == true) "暂停" else "播放"
+        fun time(ms: Long) = "${ms / 60000}:${((ms / 1000) % 60).toString().padStart(2, '0')}"
+        val playbackLabel = "${time(lastPosition)} / ${time(lastDuration)}"
         if (label.text.toString() != playbackLabel) label.text = playbackLabel
+        if (status != "playing" && !controlsVisible) showControls(true)
         if (lastDuration > 0 && !seek.isPressed) seek.progress = (lastPosition * 1000 / lastDuration).toInt().coerceIn(0, 1000)
         if (lastDuration > 0) getSharedPreferences("genzo-prototype-progress", 0).edit().putLong(identity(), lastPosition).apply()
         if (mediaFileId != null && lastDuration > 0) {
@@ -558,6 +676,10 @@ class PlayerActivity : ComponentActivity() {
     }
 
     override fun onStart() { super.onStart(); if (engineActive) player.onStart() }
+    override fun finish() {
+        super.finish()
+        if (PlayerMotion.enabled) overridePendingTransition(R.anim.genzo_player_hold, R.anim.genzo_player_exit)
+    }
     override fun onResume() { super.onResume(); if (startOnResume && engineActive && player.length > 0) { startOnResume = false; player.play() } }
     override fun onPause() {
         if (engineActive) player.pause()
@@ -570,7 +692,8 @@ class PlayerActivity : ComponentActivity() {
     override fun onDestroy() {
         if (ruleOperation > 0) RuleResolver.cancel(ruleOperation)
         subtitlePicker?.resolve(JSObject().put("status", "cancelled")); subtitlePicker = null
-        handler.removeCallbacksAndMessages(null)
+        settingsMenu?.dismiss(); handler.removeCallbacksAndMessages(null)
+        if (::page.isInitialized) page.dispose()
         status = "closed"; report(); releaseEngine()
         subtitleFiles.forEach { it.delete() }
         if (current?.get() === this) current = null
