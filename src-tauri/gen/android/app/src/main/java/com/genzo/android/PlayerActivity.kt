@@ -281,8 +281,8 @@ class PlayerActivity : ComponentActivity() {
             check(player.setSpuDelay(subtitleDelayMs * 1000))
         } }
         item("视频详情", false) {
-            val video = if (engineActive) "${player.property("video-params/w") ?: "—"} × ${player.property("video-params/h") ?: "—"}\n解码：${player.property("hwdec-current") ?: "—"}\n渲染：${player.property("current-vo") ?: "—"}" else "正在准备视频"
-            AlertDialog.Builder(this).setTitle("视频详情").setMessage("${titleView.text}\n\n$video\n超分：${listOf("关闭", "流畅档", "画质档")[superResolutionMode]}").setPositiveButton("关闭", null).show()
+            val video = if (engineActive) "${player.property("video-params/w") ?: "—"} × ${player.property("video-params/h") ?: "—"}\n解码：${player.property("hwdec-current") ?: "—"}\n渲染：${player.property("current-vo") ?: "—"}\n当前处理：${listOf("关闭", "流畅档", "画质档")[player.effectiveMode]}${player.performanceReason?.let { "\n$it" } ?: ""}" else "正在准备视频"
+            AlertDialog.Builder(this).setTitle("视频详情").setMessage("${titleView.text}\n\n$video\n选择档位：${listOf("关闭", "流畅档", "画质档")[superResolutionMode]}").setPositiveButton("关闭", null).show()
         }
         item("开源说明", false) { showSuperResolutionLicenses() }
         menu.setOnDismissListener { settingsMenu = null; showControls(true) }
@@ -387,7 +387,9 @@ class PlayerActivity : ComponentActivity() {
             gpuError = null
             getSharedPreferences("genzo-player", 0).edit().putInt("anime4kMode", mode).apply()
         }
-        if (!fallback && !rebuild && mode == superResolutionMode && engineActive) { report(); return }
+        if (!rebuild && engineActive && player.switchShaders(mode)) {
+            superResolutionMode = mode; report(); return
+        }
         val paused = if (status == "opening") desiredPaused else (engineActive && !player.isPlaying && status != "buffering") || startOnResume
         if (engineActive) {
             resumeMs = player.time.takeIf { it > 0 } ?: lastPosition
@@ -639,14 +641,11 @@ class PlayerActivity : ComponentActivity() {
             snapshot.put("shaderCount", mpv.shaderFiles.size).put("gpuRenderer", mpv.property("current-vo"))
                 .put("decoder", mpv.property("hwdec-current")).put("droppedFrames", mpv.property("frame-drop-count"))
                 .put("videoWidth", mpv.property("video-params/w")).put("videoHeight", mpv.property("video-params/h"))
-            val passes = org.json.JSONObject(mpv.property("vo-passes") ?: "{}").optJSONArray("fresh")
-            val descriptions = JSArray()
-            var gpuTimeNs = 0L
-            if (passes != null) for (index in 0 until passes.length()) {
-                val pass = passes.getJSONObject(index)
-                descriptions.put(pass.optString("desc")); gpuTimeNs += pass.optLong("avg")
-            }
-            snapshot.put("shaderPasses", descriptions).put("gpuTimeMs", gpuTimeNs / 1_000_000.0)
+            snapshot.put("shaderPasses", mpv.shaderPasses).put("gpuTimeMs", mpv.gpuTimeMs)
+                .put("engineInstance", mpv.instanceId).put("effectiveSuperResolution", mpv.effectiveMode)
+                .put("superResolutionPerformance", mpv.performanceReason)
+                .put("videoFps", mpv.property("container-fps"))
+                .put("displayWidth", viewport.width).put("displayHeight", viewport.height)
         }
         if (status != "closed") problem?.let { snapshot.put("error", JSObject().put("code", it.code).put("message", it.message).put("retryable", it.retryable)) }
         val loading = status in listOf("opening", "buffering", "playback_error", "permission_denied")

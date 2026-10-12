@@ -191,6 +191,7 @@ finally {
     command("shell", "rm", "-f", `/data/local/tmp/${name}`);
     command("shell", "run-as", app, "rm", "-f", name === subtitleName ? `player-subtitles/${name}` : `cache/${name}`);
   }
+  await browser?.close();
+  server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
   command("reverse", "--remove", `tcp:${port}`); command("forward", "--remove", "tcp:9346");
-  await browser?.close(); server.close();
 }

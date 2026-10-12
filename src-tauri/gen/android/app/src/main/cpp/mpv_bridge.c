@@ -7,7 +7,7 @@
 #include "mpv/client.h"
 
 extern int mpv_lavc_set_java_vm(void *vm);
-typedef struct { mpv_handle *mpv; jobject surface; int problem; int network; } Player;
+typedef struct { mpv_handle *mpv; jobject surface; int problem; int network; char *gpu_stats; int gpu_stats_pending; } Player;
 #define FN(name) Java_com_genzo_android_MpvNative_##name
 #define P ((Player *)(intptr_t)handle)
 
@@ -52,8 +52,28 @@ JNIEXPORT jint JNICALL FN(command)(JNIEnv *env, jobject self, jlong handle, jobj
     }
     return result;
 }
+JNIEXPORT jint JNICALL FN(commandAsync)(JNIEnv *env, jobject self, jlong handle, jobjectArray args) {
+    int n = (*env)->GetArrayLength(env, args);
+    if (n > 32) return MPV_ERROR_INVALID_PARAMETER;
+    const char *values[33] = {0}; jstring strings[32];
+    for (int i = 0; i < n; i++) {
+        strings[i] = (*env)->GetObjectArrayElement(env, args, i);
+        values[i] = (*env)->GetStringUTFChars(env, strings[i], NULL);
+    }
+    int result = mpv_command_async(P->mpv, 42, values);
+    for (int i = 0; i < n; i++) {
+        (*env)->ReleaseStringUTFChars(env, strings[i], values[i]); (*env)->DeleteLocalRef(env, strings[i]);
+    }
+    return result;
+}
 JNIEXPORT jstring JNICALL FN(get)(JNIEnv *env, jobject self, jlong handle, jstring key) {
     const char *k = (*env)->GetStringUTFChars(env, key, NULL);
+    // vo-passes waits on the render thread. Profiling must not block Android controls.
+    if (strcmp(k, "vo-passes") == 0) {
+        if (!P->gpu_stats_pending && mpv_get_property_async(P->mpv, 43, k, MPV_FORMAT_STRING) >= 0) P->gpu_stats_pending = 1;
+        (*env)->ReleaseStringUTFChars(env, key, k);
+        return P->gpu_stats ? (*env)->NewStringUTF(env, P->gpu_stats) : NULL;
+    }
     char *value = mpv_get_property_string(P->mpv, k);
     (*env)->ReleaseStringUTFChars(env, key, k);
     if (!value) return NULL;
@@ -81,6 +101,15 @@ JNIEXPORT jint JNICALL FN(poll)(JNIEnv *env, jobject self, jlong handle) {
     for (int i = 0; i < 128; i++) {
         mpv_event *event = mpv_wait_event(P->mpv, 0);
         if (event->event_id == MPV_EVENT_NONE) break;
+        if (event->event_id == MPV_EVENT_GET_PROPERTY_REPLY && event->reply_userdata == 43) {
+            P->gpu_stats_pending = 0;
+            mpv_event_property *property = event->data;
+            if (event->error >= 0 && property->data && property->format == MPV_FORMAT_STRING) {
+                char *text = *(char **)property->data;
+                free(P->gpu_stats); P->gpu_stats = text ? strdup(text) : NULL;
+            }
+        }
+        if (event->event_id == MPV_EVENT_COMMAND_REPLY && event->reply_userdata == 42 && event->error < 0) { P->problem = 1; flags |= 16; }
         if (event->event_id == MPV_EVENT_FILE_LOADED) flags |= 1;
         if (event->event_id == MPV_EVENT_PLAYBACK_RESTART) flags |= 2;
         if (event->event_id == MPV_EVENT_END_FILE) {
@@ -117,5 +146,5 @@ JNIEXPORT void JNICALL FN(destroy)(JNIEnv *env, jobject self, jlong handle) {
     if (!handle) return;
     mpv_terminate_destroy(P->mpv);
     if (P->surface) (*env)->DeleteGlobalRef(env, P->surface);
-    free(P);
+    free(P->gpu_stats); free(P);
 }

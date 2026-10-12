@@ -45,6 +45,7 @@ object MpvNative {
     external fun option(handle: Long, key: String, value: String): Int
     external fun init(handle: Long): Int
     external fun command(handle: Long, args: Array<String>): Int
+    external fun commandAsync(handle: Long, args: Array<String>): Int
     external fun get(handle: Long, key: String): String?
     external fun set(handle: Long, key: String, value: String): Int
     external fun surface(handle: Long, surface: Surface?): Int
@@ -53,9 +54,20 @@ object MpvNative {
     external fun destroy(handle: Long)
 }
 
-class MpvEngine(context: Context, mode: Int, private val state: (String, String?) -> Unit, settings: PlaybackSettings, val renderer: String) : VideoEngine, SurfaceHolder.Callback {
+class MpvEngine(private val context: Context, mode: Int, private val state: (String, String?) -> Unit, settings: PlaybackSettings, val renderer: String) : VideoEngine, SurfaceHolder.Callback {
     override val view = SurfaceView(context)
-    override val name = if (mode > 0) "libmpv · Anime4K" else "libmpv"
+    private var requestedMode = mode
+    val instanceId = java.util.UUID.randomUUID().toString()
+    override val name get() = if (requestedMode > 0) "libmpv · Anime4K" else "libmpv"
+    private val budget = Anime4kBudget()
+    var effectiveMode = 0; private set
+    val performanceReason get() = budget.reason ?: if (requestedMode > 0 && effectiveMode == 0 && loaded) "原视频分辨率已高于显示区域，无需超分放大" else null
+    private var configured = false
+    private var lastBudgetAt = 0L
+    private var outputWidth = 0
+    private var outputHeight = 0
+    var gpuTimeMs = 0.0; private set
+    var shaderPasses = org.json.JSONArray(); private set
     private var handle = MpvNative.create().also { check(it != 0L) }
     private var opened = false
     private var loaded = false
@@ -70,7 +82,7 @@ class MpvEngine(context: Context, mode: Int, private val state: (String, String?
     private var terminalFailure = false
     private var networkSource = false
     private var pendingEvents = 0
-    val shaderFiles: List<String>
+    var shaderFiles = emptyList<String>(); private set
     fun property(key: String) = if (handle != 0L) MpvNative.get(handle, key) else null
     private fun number(key: String) = property(key)?.toDoubleOrNull() ?: 0.0
     private fun flag(key: String) = property(key) == "yes"
@@ -100,16 +112,7 @@ class MpvEngine(context: Context, mode: Int, private val state: (String, String?
     override val spuTrack get() = property("sid")?.toIntOrNull() ?: -1
     override val spuDelay get() = (number("sub-delay") * 1_000_000).toLong()
     init {
-        val names = if (mode == 2) listOf("Clamp_Highlights", "Restore_CNN_VL", "Upscale_CNN_x2_VL", "AutoDownscalePre_x2", "AutoDownscalePre_x4", "Upscale_CNN_x2_M")
-            else listOf("Clamp_Highlights", "Restore_CNN_M", "Upscale_CNN_x2_M", "AutoDownscalePre_x2", "AutoDownscalePre_x4", "Upscale_CNN_x2_S")
         try {
-            // Versioned app-private copies; assets are byte-for-byte upstream MIT shaders.
-            val shaders = File(context.filesDir, "anime4k/7684e958").apply { mkdirs() }
-            shaderFiles = (if (mode > 0) names else emptyList()).map { "Anime4K_$it.glsl" }.map { name ->
-                val file = File(shaders, name)
-                context.assets.open("anime4k/$name").use { input -> file.outputStream().use { input.copyTo(it) } }
-                file.absolutePath
-            }
             val options = mapOf(
                 "config" to "no",
                 "vo" to renderer,
@@ -127,7 +130,7 @@ class MpvEngine(context: Context, mode: Int, private val state: (String, String?
                 "network-timeout" to "15",
                 "demuxer-max-bytes" to "67108864",
                 "demuxer-max-back-bytes" to "16777216",
-                "glsl-shaders" to shaderFiles.joinToString(":"),
+                "glsl-shaders" to "",
                 "gpu-shader-cache-dir" to File(context.cacheDir,"mpv-shaders").absolutePath
             )
             // This LGPL build has no fontconfig. Reuse a few readable Android fonts,
@@ -150,6 +153,50 @@ class MpvEngine(context: Context, mode: Int, private val state: (String, String?
             view.holder.addCallback(this)
         } catch (error: Throwable) { android.util.Log.w("GenzoAnime4K", "GPU initialization failed", error); MpvNative.destroy(handle); handle = 0; throw error }
     }
+    private fun shaderPaths(mode: Int): List<String> {
+        val names = when (mode) {
+            2 -> listOf("Clamp_Highlights", "Restore_CNN_VL", "Upscale_CNN_x2_VL", "AutoDownscalePre_x2", "AutoDownscalePre_x4", "Upscale_CNN_x2_M")
+            1 -> listOf("Clamp_Highlights", "Restore_CNN_M", "Upscale_CNN_x2_M", "AutoDownscalePre_x2", "AutoDownscalePre_x4", "Upscale_CNN_x2_S")
+            else -> emptyList()
+        }
+        val directory = File(context.filesDir, "anime4k/7684e958").apply { mkdirs() }
+        return names.map { "Anime4K_$it.glsl" }.map { name ->
+            val file = File(directory, name)
+            if (!file.isFile || file.length() == 0L) context.assets.open("anime4k/$name").use { input -> file.outputStream().use { input.copyTo(it) } }
+            file.absolutePath
+        }
+    }
+    private fun applyShaders() {
+        val mode = budget.mode(requestedMode, number("video-params/w").toInt(), number("video-params/h").toInt(), outputWidth, outputHeight)
+        if (configured && mode == effectiveMode) return
+        val files = shaderPaths(mode)
+        // Kazumi changes the live shader list; do not reload media or recreate the decoder.
+        val args = if (files.isEmpty()) arrayOf("change-list", "glsl-shaders", "clr", "")
+            else arrayOf("change-list", "glsl-shaders", "set", files.joinToString(":"))
+        check(MpvNative.commandAsync(handle, args) >= 0)
+        shaderFiles = files; effectiveMode = mode; configured = true
+    }
+    fun switchShaders(mode: Int): Boolean {
+        if (renderer == "mediacodec_embed" || handle == 0L || terminalFailure) return false
+        requestedMode = mode; budget.reset(requestedMode); lastBudgetAt = android.os.SystemClock.elapsedRealtime()
+        if (loaded) applyShaders()
+        return true
+    }
+    private fun updateBudget() {
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastBudgetAt < 1000) return
+        lastBudgetAt = now
+        val passes = org.json.JSONObject(property("vo-passes") ?: "{}").optJSONArray("fresh")
+        shaderPasses = org.json.JSONArray(); var total = 0L
+        if (passes != null) for (index in 0 until passes.length()) {
+            val pass = passes.getJSONObject(index)
+            shaderPasses.put(pass.optString("desc")); total += pass.optLong("avg")
+        }
+        gpuTimeMs = total / 1_000_000.0
+        if (!isPlaying || effectiveMode == 0) { budget.sample(now, number("frame-drop-count").toLong(), 0.0, 0.0, 1.0); return }
+        val fps = number("container-fps").takeIf { it > 0 } ?: number("estimated-vf-fps")
+        if (budget.sample(now, number("frame-drop-count").toLong(), gpuTimeMs, fps, rate.toDouble())) applyShaders()
+    }
     override fun open(uri: String, descriptor: ParcelFileDescriptor?, position: Long, paused: Boolean) {
         terminalFailure = false
         networkSource = uri.startsWith("http://") || uri.startsWith("https://")
@@ -165,7 +212,8 @@ class MpvEngine(context: Context, mode: Int, private val state: (String, String?
         if (handle == 0L) return
         try {
             check(MpvNative.surface(handle, holder.surface) >= 0)
-            set("android-surface-size", "${holder.surfaceFrame.width()}x${holder.surfaceFrame.height()}")
+            outputWidth = holder.surfaceFrame.width(); outputHeight = holder.surfaceFrame.height()
+            set("android-surface-size", "${outputWidth}x$outputHeight")
             check(set("vo", renderer)); set("force-window", "yes")
             attached = true
             val load = pending; pending = null; load?.invoke()
@@ -173,7 +221,9 @@ class MpvEngine(context: Context, mode: Int, private val state: (String, String?
     }
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
         if (handle == 0L) return
+        outputWidth = width; outputHeight = height
         set("android-surface-size", "${width}x$height")
+        if (loaded && configured) applyShaders()
         // A paused GPU output can retain a frame rendered for the old orientation.
         // Decode the same position again after recreation; do not resume playback.
         if (frameRendered && flag("pause")) command("seek", number("time-pos").toString(), "absolute+exact")
@@ -191,7 +241,11 @@ class MpvEngine(context: Context, mode: Int, private val state: (String, String?
     override fun poll() {
         if (handle == 0L || !opened || terminalFailure) return
         val events = pendingEvents or MpvNative.poll(handle)
-        if (events and 1 != 0) loaded = true
+        if (events and 1 != 0) {
+            loaded = true; configured = false; budget.reset(requestedMode)
+            lastBudgetAt = android.os.SystemClock.elapsedRealtime() + 2000
+            applyShaders()
+        }
         if (events and 4 != 0 || flag("eof-reached")) ended = true
         if (loaded && renderer == "mediacodec_embed") {
             // Direct MediaCodec output does not letterbox; size its Surface to fit.
@@ -212,6 +266,7 @@ class MpvEngine(context: Context, mode: Int, private val state: (String, String?
         val waiting = flag("paused-for-cache") && !flag("pause")
         if (waiting && bufferingSince == 0L) bufferingSince = android.os.SystemClock.elapsedRealtime()
         if (!waiting) bufferingSince = 0
+        updateBudget()
         val nativeProblem = MpvNative.problem(handle)
         var problem = when (nativeProblem) {
             1 -> "render_failed"; 2 -> "decode_failed"; 3 -> "source_offline"; 4 -> "credential_invalid"; 5 -> "source_missing"

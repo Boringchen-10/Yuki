@@ -1,5 +1,18 @@
 # Codex 与 DeepSeek Harness 项目交接记录
 
+## 安卓 Anime4K 性能 v0.10.1 本机预览（2026-10-12）
+
+- 基线 `8f8167a`，同一 `.tmp/android-first` / `codex/android-first`，保留完整当前 OpenDesign。用户报告8e5手机超分会严重卡顿，随后明确是WebDAV卡、规则源流畅，要求播放器具体参照Kazumi。设备只读报告 `ro.soc.model=SM8850`；没有获取用户原视频分辨率 / 编码，不能把合成样本当成其原文件复现。
+- 核对已固定Kazumi源码的 `setShader` / `ShaderAssetService`，同GPU路径改为 `change-list glsl-shaders set/clr` 异步更新当前内核，不销毁播放器、重开地址或重载解码器；原有两档模型和自动渲染逻辑保留。版本化私有shader副本仅缺失时写入。直通切GPU、全局设置及错误恢复仍按原流程重建。
+- JNI `vo-passes` 改异步请求 / 事件轮询缓存，统计不在主线程等待GPU。高于1080p且源宽高均不小于实际Surface时跳过源尺寸CNN，视频详情说明无需放大；不是宣称4K原片继续超分而成本为零。其他视频按原档位。连续三个至少2秒窗口掉帧超过5%或GPU耗时超过实际帧率 / 倍速预算80%时，本次画质→流畅→关闭；暂停 / 缓冲和计数重置不误判，不改保存偏好或自动升回，手动选档重新评估。详情和native状态区分选择 / 有效档位及原因。
+- 隔离 `com.genzo.android.organizeqa` / 自建1080p24 H.264与4K24 HEVC10，证据总目录 `D:/DevTools/Android/Build/qa/anime4k-performance-20261012/`。旧4K自动Vulkan / mediacodec-copy短测GPU统计末值85.03ms、累计丢97帧；新同配置11.77ms / 0帧，OpenGL / MediaCodec则76.89→6.65ms、86→0帧。这里含跳过无必要CNN的改变，不能说相同处理画质下提升同等倍数。1080p画质仍实际运行6文件组合，末值21.87ms / 0丢帧，原21级别，没有把全部视频关闭超分。
+- 两组各5次切换，实际同engineInstance、无需重新请求视频且不进入opening；1080p响应35–69ms，4K响应5–18ms，旧切换均重载并新增3次HTTP请求。1080p双倍压力测试实际画质→流畅，有效GPU约21→8.8ms、丢帧随后保持3，选择和保存偏好均仍为2。证据 `optimized-4k-1791816082583` / `optimized-1080-1791816160796` / `budget-2x-*`；已查看实际颜色测试帧截图。
+- 最终Kotlin **10项**通过（5新增预算边界、5原失败策略），XML在 `D:/DevTools/Android/Build/anime4k-performance-reader-final-gradle/app/test-results/testArm64DebugUnitTest/`。TypeScript / 前端 **98项**通过；Android Rust release构建通过，Rust业务无变更，本轮不声称重跑355项Rust单测。既有实机播放 **15项**最终重新通过，回归目录 `D:/DevTools/Android/Build/qa/anime4k-1791817290859`，包括真实CNN pass、暂停切档 / 保留位置 / 倍速、音轨 / 外挂中文SRT / 内嵌ASS、方向 / content FD / WebDAV鉴权与续播 / 规则HLS / 格式错误。测试脚本调整先关闭CDP再移除转发，并关闭测试HTTP活动连接，最终正常退出0，临时端口与文件按原脚本清理。
+- 构建初次副本仍是readerqa applicationId，安装脚本在包名检查处拒绝，无错误覆盖；修正隔离包名后重新完整构建 / 验证。早期保存文件时默认编码读取失败的局部草稿已修正，最终UTF-8源码、编译和测试通过。不把这些准备问题当成播放器缺陷。收尾复核修正流畅档起播按请求档位初始化保护、同档位手动重试，以及详情区分选择 / 有效处理，已重新构建并在最终隔离包复跑15项通过。旧日常构建路径在隔离构建后缺APK，已在新的reader-final输出重建，普通签名包未受影响。所有实机用例仍为单机 / 短测；没有长时热稳定 / 电池续航、16KiB实体机、其他GPU或用户原视频性能结论。
+- 最终签名预览 `D:/DevTools/Android/Build/previews/anime4k-performance-20261012/Genzo_0.10.1_anime4k-performance_arm64-v8a.apk`，**50,268,083字节**，SHA256 **715846e54675c1a3f0008a18878e027eb44f19aa363e84e1d754a7655cdb2907**。0.10.1 / code10001 / com.genzo.android / arm64 / min26 / target36 / 非debuggable / 原证书；v2/v3与16KiB ZIP校验通过，399生产源与完整当前构建副本逐字节匹配，3原生库 / 8官方shader / 许可证匹配，无用户DB、书籍或测试媒体。内嵌 `index-DcTGHCCK.js` / `index-CDhOjwTu.css`。
+- 普通包和日常readerqa均覆盖安装，无清库。升级前后 **34作品 / 17来源 / 20播放记录**、个人字段、来源 / 规则ID和版本 / 启停、位置 / 时长 / 完成与四项偏好逐项一致，无隐式扫描；没有复制用户数据库、凭据或Cookie，没有向日常包写测试媒体。共享前端资源已同步；9228 / 9351重新指向日常包新PID。最终恢复日常应用，不自动播放用户媒体，不重启手机；未使用录屏。本轮仅提交自身增量，不提交其他OpenDesign草稿，不创建公开Release / 标签 / 推送，公开版仍v0.5.2。
+
+
 ## 安卓竖屏播放器 / 交互动画 v0.10.0 本机预览（2026-10-12）
 
 - 基线 `3359f09`，工作树 `.tmp/android-first` / `codex/android-first`。用户要求参考截图做竖屏上方视频、下方封面选集 / Bangumi 评论，三个点先展示已有功能，随后补充各交互均需动画。保留全部当前 OpenDesign 草稿参与构建；Git 仅纳本轮增量，`GenzoPlugin.kt` 的原 safeArea / Insets 修改以开始快照剥离。原未跟踪 `PlaySourceSheet.tsx` 中只增加成功交给播放器后不取消解析、忽略已关闭窗口晚到返回的保护；完整组件仍属 OpenDesign 草稿，自己的 3 个补丁块记录在 `docs/android/PORTRAIT_PLAYER_SOURCE_HANDOFF.patch`，当前工作区已应用，可用 `git apply --unidiff-zero --ignore-whitespace --reverse --check` 只读核对，勿重复应用。
