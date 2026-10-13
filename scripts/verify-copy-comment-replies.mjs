@@ -1,0 +1,93 @@
+import assert from "node:assert/strict";
+import { build } from "vite";
+import { chromium } from "playwright-core";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+const output = process.env.GENZO_REPLIES_QA_DIR || "D:/DevTools/Android/Build/qa/copy-replies-20261013/browser";
+mkdirSync(output, { recursive: true });
+await build({ configFile: false, logLevel: "error", define: { "process.env.NODE_ENV": '"production"' }, esbuild: { jsx: "automatic" }, build: { outDir: `${output}/fixture`, lib: { entry: "scripts/fixtures/copy-comment-replies.tsx", name: "ReplyFixture", formats: ["iife"], fileName: () => "fixture.js", cssFileName: "fixture" } } });
+const browser = await chromium.launch({ executablePath: "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", headless: true });
+const page = await browser.newPage({ viewport: { width: 412, height: 915 } });
+const cases = [], layouts = [], errors = [];
+page.on("pageerror", error => errors.push(String(error)));
+page.setDefaultTimeout(8000);
+const card = () => page.locator(".gz-comment-card").first();
+const replyCount = () => card().locator(".gz-copy-reply").count();
+const calls = () => page.evaluate(() => window.__qaCalls);
+async function mode(value) { await page.evaluate(value => window.__qaBehavior(value), value); }
+async function mount(book = "a", kind = "comic") {
+  await page.evaluate(({ book, kind }) => window.__qaMount(book, kind), { book, kind });
+  await page.getByText(`${book} 主评论A`, { exact: true }).waitFor();
+}
+async function waitCount(count) { await page.waitForFunction(count => document.querySelector(".gz-comment-card").querySelectorAll(".gz-copy-reply").length === count, count); }
+try {
+  await page.setContent('<html data-platform="android"><body style="margin:0"><div id="root"></div></body></html>');
+  await page.addStyleTag({ content: readFileSync(`${output}/fixture/fixture.css`, "utf8") });
+  await page.addScriptTag({ content: readFileSync(`${output}/fixture/fixture.js`, "utf8") });
+  await page.getByText("a 主评论A", { exact: true }).waitFor();
+  assert.equal((await calls()).length, 0); cases.push("replies are lazy");
+  await card().getByRole("button", { name: "查看 25 条回复", exact: true }).click();
+  await waitCount(10);
+  await card().getByText("回复 合成目标用户", { exact: true }).first().waitFor();
+  assert.ok((await card().locator(".gz-copy-reply .gz-comment-body").first().innerText()).length > 150);
+  cases.push("correct parent and full reply bodies");
+  await card().getByRole("button", { name: "收起回复", exact: true }).click();
+  const countBefore = (await calls()).length;
+  await card().getByRole("button", { name: "查看 25 条回复", exact: true }).click();
+  assert.equal((await calls()).length, countBefore); cases.push("collapse retains replies without refetch");
+  await mode("failAppend");
+  await card().getByRole("button", { name: "加载更多回复", exact: true }).click();
+  await card().getByRole("button", { name: "重试回复", exact: true }).waitFor();
+  assert.equal(await replyCount(), 10);
+  const failed = (await calls()).length;
+  await page.waitForTimeout(250); assert.equal((await calls()).length, failed);
+  await mode("normal");
+  await card().getByRole("button", { name: "重试回复", exact: true }).click();
+  await waitCount(19);
+  await card().getByRole("button", { name: "加载更多回复", exact: true }).click();
+  await waitCount(24);
+  assert.deepEqual((await calls()).map(call => call.offset), [0, 10, 10, 20]);
+  assert.equal(await card().getByRole("button", { name: "加载更多回复", exact: true }).count(), 0);
+  cases.push("append failure preserves rows and retries source cursor despite duplicates");
+  await page.locator(".gz-comment-card").nth(1).getByRole("button", { name: "查看 1 条回复", exact: true }).click();
+  await page.locator(".gz-comment-card").nth(1).locator(".gz-copy-reply").waitFor();
+  assert.equal((await calls()).at(-1).id, "202"); assert.equal(await replyCount(), 24);
+  cases.push("different roots keep independent replies");
+  for (const width of [360, 412, 915, 1024, 1366, 1920]) {
+    await page.setViewportSize({ width, height: 915 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), width);
+    const overflow = await page.locator(".gz-comments-dialog, .gz-copy-reply").evaluateAll(nodes => nodes.some(node => node.getBoundingClientRect().left < -1 || node.getBoundingClientRect().right > innerWidth + 1));
+    assert.equal(overflow, false); layouts.push(width);
+    if (width <= 412) await page.screenshot({ path: `${output}/replies-${width}.png` });
+  }
+  await page.setViewportSize({ width: 412, height: 915 });
+  await mode("delay"); await mount("slow");
+  await card().getByRole("button", { name: "查看 25 条回复", exact: true }).click();
+  await card().getByRole("button", { name: "收起回复", exact: true }).click();
+  await card().getByRole("button", { name: "查看 25 条回复", exact: true }).click();
+  assert.equal((await calls()).filter(call => call.book === "slow").length, 1);
+  cases.push("pending toggle cannot duplicate requests");
+  await mode("normal"); await mount("b");
+  await card().getByRole("button", { name: "查看 25 条回复", exact: true }).click();
+  await waitCount(10); await page.evaluate(() => window.__qaResolve());
+  await page.waitForTimeout(50);
+  assert.equal(await page.locator(".gz-copy-reply").filter({ hasText: "slow 回复" }).count(), 0);
+  cases.push("late replies cannot cross works with the same comment id");
+  await mount("novel", "novel");
+  await card().getByRole("button", { name: "查看 25 条回复", exact: true }).click();
+  await waitCount(10); assert.equal((await calls()).at(-1).kind, "novel");
+  cases.push("novel uses separate source");
+  await mode("empty"); await mount("empty");
+  await card().getByRole("button", { name: "查看 25 条回复", exact: true }).click();
+  await card().getByText("暂无可读取的回复", { exact: true }).waitFor(); cases.push("removed replies show actual empty state");
+  await mode("failFirst"); await mount("retry");
+  await card().getByRole("button", { name: "查看 25 条回复", exact: true }).click();
+  await card().getByRole("button", { name: "重试回复", exact: true }).waitFor();
+  await mode("normal"); await card().getByRole("button", { name: "重试回复", exact: true }).click();
+  await waitCount(10); cases.push("first failure can retry");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  assert.equal(await card().locator(".gz-copy-replies-collapse").evaluate(node => getComputedStyle(node).transitionDuration), "0s");
+  cases.push("reduced motion respected");
+  assert.deepEqual(errors, []);
+  writeFileSync(`${output}/result.json`, JSON.stringify({ cases, layouts, errors }, null, 2));
+  console.log(JSON.stringify({ output, cases, layouts, errors }));
+} finally { await browser.close(); }

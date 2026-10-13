@@ -3,6 +3,7 @@ import { ArrowUp, ChevronDown, ChevronUp, RefreshCw, SlidersHorizontal, X } from
 import { comicExploreApi, novelExploreApi, type CopyComment, type CopyCommentPage } from "../comicExplore";
 import { androidSession } from "./sessionCache";
 import LoadingIndicator from "./LoadingIndicator";
+import ComicReplies from "./ComicReplies";
 
 export default function ComicComments({ pathWord, kind = "comic", onClose }: { pathWord: string | null; kind?: "comic" | "novel"; onClose: () => void }) {
   const content = kind === "comic" ? comicExploreApi : novelExploreApi;
@@ -31,7 +32,7 @@ export default function ComicComments({ pathWord, kind = "comic", onClose }: { p
         ? await androidSession.load<CopyCommentPage>(`reading:comments:${kind}:${pathWord}`, () => content.comments(pathWord), force)
         : await content.comments(pathWord, offset.current);
       if (request !== generation.current) return;
-      offset.current = page.offset + page.items.length;
+      offset.current = page.offset + page.limit;
       setItems(previous => [...new Map([...(first ? [] : previous), ...page.items].map(item => [item.id, item])).values()]);
       setTotal(page.total);
       setHasMore(page.items.length > 0 && offset.current < page.total);
@@ -85,7 +86,7 @@ export default function ComicComments({ pathWord, kind = "comic", onClose }: { p
           {item.parentUserName && <p className="gz-meta">回复 {item.parentUserName}</p>}
           <p className={`gz-comment-body ${!expanded.has(item.id) && (item.comment.length > 100 || item.comment.split("\n").length > 3) ? "is-collapsed" : ""}`}>{item.comment}</p>
           {(item.comment.length > 100 || item.comment.split("\n").length > 3) && <button type="button" className="gz-comment-expand" aria-expanded={expanded.has(item.id)} onClick={() => setExpanded(previous => { const next = new Set(previous); if (next.has(item.id)) next.delete(item.id); else next.add(item.id); return next; })}>{expanded.has(item.id) ? "收起正文" : "展开全文"}{expanded.has(item.id) ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</button>}
-          {item.replyCount > 0 && <p className="gz-meta">{item.replyCount} 条回复 · 回复内容待接入</p>}
+          {item.replyCount > 0 && pathWord && <ComicReplies key={`${kind}:${pathWord}:${item.id}`} pathWord={pathWord} kind={kind} parent={item} />}
         </article>)}
         {loading && <LoadingIndicator label="正在读取评论…" compact />}
         {error && <div className="gz-comments-error" role="alert"><p>{error}</p>{pathWord && <button type="button" className="gz-btn" onClick={() => void load(items.length === 0, true)}><RefreshCw size={16} />重试</button>}</div>}

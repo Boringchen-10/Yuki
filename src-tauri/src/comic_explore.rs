@@ -332,16 +332,22 @@ pub(super) fn string_value(value: &Value) -> String {
     value.as_str().map(str::to_string).or_else(|| value.as_i64().map(|v| v.to_string())).unwrap_or_default()
 }
 
-pub(super) async fn comments_for(pool: &SqlitePool, id: &str, offset: u32, limit: u32) -> AppResult<CopyCommentPage> {
-    if !valid_id(id) || offset > 1_000_000 || !(1..=100).contains(&limit) {
+pub(super) fn validate_comment_request(id: &str, reply_id: Option<&str>, offset: u32, limit: u32) -> AppResult<()> {
+    if !valid_id(id) || offset > 1_000_000 || !(1..=100).contains(&limit)
+        || reply_id.is_some_and(|id| id.parse::<u64>().ok().filter(|id| *id > 0).is_none()) {
         return Err(AppError::Validation("评论分页参数无效".into()));
     }
+    Ok(())
+}
+
+pub(super) async fn comments_for(pool: &SqlitePool, id: &str, reply_id: Option<&str>, offset: u32, limit: u32) -> AppResult<CopyCommentPage> {
+    validate_comment_request(id, reply_id, offset, limit)?;
     let mut detail = detail_in_pool(pool,id,false).await?;
     if detail.item.source_id.is_none() { detail = detail_in_pool(pool,id,true).await?; }
     let uuid = detail.item.source_id.ok_or_else(|| AppError::Network("来源没有提供评论所需的作品 UUID".into()))?;
     let value = request_comments_in_pool(pool, CATALOG_HOST, "/api/v3/comments", &[
         ("comic_id".into(), uuid),
-        ("reply_id".into(), String::new()),
+        ("reply_id".into(), reply_id.unwrap_or_default().into()),
         ("limit".into(), limit.to_string()),
         ("offset".into(), offset.to_string()),
         ("platform".into(), "3".into()),
@@ -368,8 +374,8 @@ pub(super) async fn comments_for(pool: &SqlitePool, id: &str, offset: u32, limit
 }
 
 #[tauri::command]
-pub async fn get_comic_explore_comments(path_word: String, offset: u32, limit: u32, state: State<'_, AppState>) -> AppResult<CopyCommentPage> {
-    comments_for(&state.pool, &path_word, offset, limit).await
+pub async fn get_comic_explore_comments(path_word: String, reply_id: Option<String>, offset: u32, limit: u32, state: State<'_, AppState>) -> AppResult<CopyCommentPage> {
+    comments_for(&state.pool, &path_word, reply_id.as_deref(), offset, limit).await
 }
 
 fn chapter_comment_params(book: &str, chapter: &str, group: &str, offset: u32, limit: u32) -> AppResult<Vec<(String, String)>> {
@@ -600,6 +606,21 @@ mod tests {
 
     const CHAPTER_ONE: &str = "52615840-10a4-11e9-b68d-00163e0ca5bd";
     const CHAPTER_TWO: &str = "c2d8f146-17b6-11e9-bfa4-00163e0ca5bd";
+
+    #[tokio::test]
+    async fn work_comment_replies_validate_target_before_loading_metadata_or_network() {
+        assert!(validate_comment_request("book", None, 0, 10).is_ok());
+        assert!(validate_comment_request("book", Some("123456"), 20, 10).is_ok());
+        let pool = crate::db::test_pool().await.unwrap();
+        for reply in ["", "0", "-1", "../123", "1&comic_id=other", "18446744073709551616"] {
+            assert!(matches!(comments_for(&pool, "book", Some(reply), 0, 10).await, Err(AppError::Validation(_))));
+        }
+        assert!(validate_comment_request("../book", Some("1"), 0, 10).is_err());
+        assert!(validate_comment_request("book", Some("1"), 1_000_001, 10).is_err());
+        assert!(validate_comment_request("book", Some("1"), 0, 0).is_err());
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM metadata_cache").fetch_one(&pool).await.unwrap();
+        assert_eq!(count, 0);
+    }
 
     #[test]
     fn chapter_comments_use_chapter_uuid_and_independent_pagination() {

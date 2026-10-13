@@ -99,6 +99,7 @@ export const comicExploreApi = {
   cacheCover: (pathWord: string, coverUrl: string, refresh = false) => call<{ coverPath: string; thumbnailPath: string | null }>("cache_comic_explore_cover", { pathWord, coverUrl, refresh }),
   save: (pathWord: string, favorite: boolean) => call<string>("save_comic_explore_work", { pathWord, favorite }),
   comments: (pathWord: string, offset = 0, limit = 10) => call<CopyCommentPage>("get_comic_explore_comments", { pathWord, offset, limit }),
+  replies: (pathWord: string, replyId: string, offset = 0, limit = 10) => call<CopyCommentPage>("get_comic_explore_comments", { pathWord, replyId, offset, limit }),
   chapterComments: (pathWord: string, chapterId: string, group = "", offset = 0, limit = 30) => call<ChapterCommentPage>("get_comic_chapter_comments", { pathWord, chapterId, group, offset, limit }),
 };
 
@@ -108,4 +109,5 @@ export const novelExploreApi = {
   detail: (pathWord: string, refresh = false) => call<ComicDetail>("get_novel_explore_detail", { pathWord, refresh }),
   save: (pathWord: string, favorite: boolean) => call<string>("save_novel_explore_work", { pathWord, favorite }),
   comments: (pathWord: string, offset = 0, limit = 10) => call<CopyCommentPage>("get_novel_explore_comments", { pathWord, offset, limit }),
+  replies: (pathWord: string, replyId: string, offset = 0, limit = 10) => call<CopyCommentPage>("get_novel_explore_comments", { pathWord, replyId, offset, limit }),
 };

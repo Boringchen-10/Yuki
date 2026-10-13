@@ -1,5 +1,14 @@
 # Codex 与 DeepSeek Harness 项目交接记录
 
+## 拷贝作品评论展开回复 v0.12.0（2026-10-13）
+
+- 基线 `f16708f`，同一 `.tmp/android-first` / `codex/android-first`，用户要求“拷贝回复内容可展开”。原ComicComments仅显示回复数量与“回复内容待接入”，Rust两接口固定空reply_id。沿用Kira快照fc3f242f的漫画comments / 轻小说bookcomments约定，增加可选reply_id，旧主评论调用兼容；正整数与分页校验在元数据 / 网络前完成。当前每话roasts没有回复关系，不冒充每话回复；无新依赖 / 迁移 / 登录发帖。
+- 原作品评论下按需展开10条回复，显示用户 / 时间 / 回复对象及全文，各主评论独立分页 / pending。收起保留本面板内容，失败保留列表并手动重试原游标，按源offset+limit推进 / ID去重；同面板主评论游标同步修正。组件身份含类型 / 作品 / 评论ID，退出或切作品的旧响应废弃。局部展开 / 收起短过渡、inert收起内容、减少动态均生效。新样式独立放comicReplies.css，没有覆盖OpenDesign的mobile.css草稿。
+- Rust **370通过 / 18忽略 / 0失败**，前端 **111通过**及TypeScript通过，最终Android / Release与优化日常构建通过；既有Kotlin **10项**保持。真实React组件浏览器 **11场景**与 **6宽度（360 / 412 / 915 / 1024 / 1366 / 1920）**通过，覆盖按需 / 全文 / 回复对象、收起不重取、追加失败原游标重试、去重后仍offset20、独立主楼、pending去重、同评论ID跨作品晚到隔离、轻小说独立接口、空回复、首次失败重试和减少动态，无pageerror / 横溢出。脚本`scripts/verify-copy-comment-replies.mjs`与独立夹具纳入Git，QA目录 `D:/DevTools/Android/Build/qa/copy-replies-20261013/`。
+- 同一加PLK110 / Android16独立organizeqa真实匿名接口与实际UI通过：样本zangsongdefulilian / 主评论30194读取1条回复，返回parentId=30194，最终采样约496ms；实际作品评论加载到第20条后展开 / 收起成功并截图。数量 / 用时仅代表采样，不是全站承诺。初次脚本误以为首屏10条已有回复，第二次未重置详情状态；增加加载更多并重载隔离界面后通过，未修改生产迎合脚本。公开评论正文仅临时设备截图，不进Git / APK；未向用户包写测试作品或复制用户数据库 / 凭据。
+- 预览功能按SemVer提升 **0.12.0 / code12000**。初次版本替换误触锁文件中的其他包号导致构建拒绝，已用HEAD逐项恢复原依赖，只修改Genzo版本；最终--locked构建成功，Cargo.lock只有Genzo版本差异。最终签名 `D:/DevTools/Android/Build/previews/copy-replies-20261013/Genzo_0.12.0_copy-replies_arm64-v8a.apk`，**50,300,851字节**，SHA256 **af99e457b029ea4d498692fa8a35ebe15ef474034e39a464992d54d68fa7819e**。com.genzo.android / arm64 / min26 / target36 / 非debuggable / 原证书，v2/v3和16KiB ZIP通过，405份完整当前生产源码与构建副本匹配、3原生库 / 8官方shader / 许可匹配，内嵌index-Bjaae5vL.js / index-U-ltZRXF.css，无用户DB、图书或测试媒体。
+- 普通签名包 / 原日常readerqa均install-r更新、安装APK哈希匹配。更新前后新取 **34作品 / 17来源 / 21播放记录 / 16规则**、作品个人字段、来源 / 规则ID及版本 / 启停、位置 / 时长 / 完成与4项播放偏好一致，无清库或隐式扫描。日常包归档qa/copy-replies-20261013/reader-final.apk；共享前端同步D构建dist，9228 / 9351指向新日常PID，最终停播放设置，不自动播放用户媒体。9352测试转发已关闭，本轮无instrumentation安装 / 录屏 / 重启。保留其他OpenDesign未提交代码；不创建公开Release / 标签 / 推送，公开版仍v0.5.2。行为说明见docs/android/COPY_COMMENT_REPLIES.md，单机短测不代表所有来源和长时网络已验证。
+
 ## 播放页当前集 Bangumi 讨论 v0.11.1（2026-10-13）
 
 - 基线 `d82020d`，同一 `.tmp/android-first` / `codex/android-first`。用户明确动画播放页应显示每集对应的评论，取代上一轮播放器条目短评决策；作品详情仍保留作品短评。保留完整当前 OpenDesign 工作树，只提交本轮自身增量，不重复应用上一轮已生效的 `READING_COMMUNITY_SOURCE_HANDOFF.patch`。
