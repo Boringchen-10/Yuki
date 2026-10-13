@@ -441,8 +441,19 @@ pub async fn stream_only(state: &AppState, id: &str) -> AppResult<AndroidStream>
             .is_some_and(|(start,end,total)| start == 0 && end == 0 && total > 0)
         && response.content_length().is_none_or(|length| length == 1);
     if !valid { return Err(AppError::Validation("range_unsupported：服务器没有提供有效的字节范围读取，请检查 WebDAV 服务".into())); }
-    drop(response);
+    finish_range_probe(response).await?;
     proxy(client, r.href, &r.extension, true, Some(Default::default())).await
+}
+
+async fn finish_range_probe(mut response: reqwest::Response) -> AppResult<()> {
+    // Drain the single byte so HTTP/1.1 can reuse this authenticated connection for playback.
+    let mut size=0;
+    while let Some(chunk)=response.chunk().await.map_err(|_|AppError::Network("WebDAV 范围检查传输中断，请重试".into()))? {
+        size+=chunk.len();
+        if size>1 {return Err(AppError::Validation("range_unsupported：范围检查返回了多余数据".into()));}
+    }
+    if size!=1 {return Err(AppError::Validation("range_unsupported：范围检查没有返回有效数据".into()));}
+    Ok(())
 }
 
 // Only indexed, small subtitle sidecars can use this complete-body transfer.
@@ -621,6 +632,33 @@ fn valid_range(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn range_probe_drains_one_byte_and_reuses_the_same_http_connection() {
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url=format!("http://{}/video",listener.local_addr().unwrap());
+        let server=tokio::spawn(async move {
+            let (mut socket,_)=listener.accept().await.unwrap();
+            for index in 0..2 {
+                let mut request=Vec::new();let mut byte=[0];
+                while !request.ends_with(b"\r\n\r\n") {socket.read_exact(&mut byte).await.unwrap();request.push(byte[0]);}
+                let body=if index==0 {"x"} else {"media"};
+                socket.write_all(format!("HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes 0-{}/{}\r\n\r\n{body}",body.len(),body.len()-1,body.len()).as_bytes()).await.unwrap();
+            }
+        });
+        let client=reqwest::Client::builder().no_proxy().timeout(Duration::from_secs(3)).build().unwrap();
+        let response=client.get(&url).header("Range","bytes=0-0").send().await.unwrap();finish_range_probe(response).await.unwrap();
+        assert_eq!(client.get(&url).send().await.unwrap().bytes().await.unwrap(),"media");server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn range_probe_rejects_extra_or_empty_body_instead_of_reading_a_full_file() {
+        for body in ["", "too much"] {
+            let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();let url=format!("http://{}/",listener.local_addr().unwrap());
+            let server=tokio::spawn(async move {let (mut socket,_)=listener.accept().await.unwrap();let mut buffer=[0;4096];socket.read(&mut buffer).await.unwrap();socket.write_all(format!("HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();});
+            let response=reqwest::Client::builder().no_proxy().build().unwrap().get(url).send().await.unwrap();assert!(finish_range_probe(response).await.is_err());server.await.unwrap();
+        }
+    }
+
     #[test]
     fn accepts_only_single_well_formed_ranges() {
         for range in ["bytes=0-0", "bytes=100-", "bytes=-100"] {

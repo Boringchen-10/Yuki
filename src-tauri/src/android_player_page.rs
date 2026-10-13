@@ -23,7 +23,7 @@ struct FileRow {
     original_number: Option<i64>, official_number: Option<i64>, episode_title: Option<String>,
 }
 #[derive(Clone)]
-struct PageContext { work: Option<String>, bangumi: Option<String>, comment_episode: Option<(String,String)>, comments: Arc<tokio::sync::Mutex<Option<Vec<crate::models::BangumiEpisodeDiscussion>>>>, rule: Option<RuleOrigin>, rows: Vec<Value>, title: String, roads: Vec<Value>, selected_source: String }
+struct PageContext { work: Option<String>, bangumi: Option<String>, comment_episode: Option<(String,String)>, comments: Arc<tokio::sync::Mutex<Option<Vec<crate::models::BangumiEpisodeDiscussion>>>>, rule: Option<RuleOrigin>, rows: Vec<Value>, episode_rows: Vec<Value>, title: String, roads: Vec<Value>, selected_source: String }
 
 fn episode_key(file: &FileRow) -> Option<String> {
     Some(format!("{}:{}", file.provider.as_ref()?, file.external_id.as_ref()?))
@@ -40,6 +40,40 @@ fn same_episode_files(rows: &[Value], media: Option<&str>) -> Vec<Value> {
     rows.iter().filter(|row| row["mediaFileId"].is_string() && row["sourceKind"]!="rule"
         && if let Some(key)=key {row["episodeKey"]==key} else {row["mediaFileId"]==current["mediaFileId"]})
         .cloned().collect()
+}
+
+fn library_episode_rows(rows: &[Value], official: &[crate::models::AnimeEpisodeMetadata], media: Option<&str>) -> Vec<Value> {
+    let files=rows.iter().filter(|row|row["mediaFileId"].is_string() && row["sourceKind"]!="rule").collect::<Vec<_>>();
+    let current_source=media.and_then(|id|files.iter().find(|row|row["mediaFileId"]==id)).map(|row|&row["sourceId"]);
+    let mut result=Vec::new();
+    let mut linked=std::collections::HashSet::new();
+    for episode in official {
+        let key=format!("{}:{}",episode.provider,episode.external_id);
+        let candidates=files.iter().filter(|row|row["episodeKey"]==key).copied().collect::<Vec<_>>();
+        for row in &candidates {linked.insert(row["id"].as_str().unwrap_or_default().to_owned());}
+        let chosen=candidates.iter().find(|row|row["current"]==true)
+            .or_else(||candidates.iter().find(|row|row["available"]==true && current_source==Some(&row["sourceId"])))
+            .or_else(||candidates.iter().find(|row|row["available"]==true)).or_else(||candidates.first());
+        let mut card=chosen.map(|row|(*row).clone()).unwrap_or_else(||json!({"id":format!("episode:{key}"),"available":false,"current":false}));
+        let label=if episode.episode_type.unwrap_or(0)==0 {format!("第{:02}集",episode.episode_number.unwrap_or(episode.sort_number))} else {
+            format!("{} {}",match episode.episode_type {Some(1)=>"特别篇",Some(2)=>"OP",Some(3)=>"ED",Some(4)=>"预告",Some(5)=>"MAD",_=>"其他"},episode.sort_number)
+        };
+        card["episodeKey"]=json!(key);card["label"]=json!(label);card["title"]=json!(if episode.title.is_empty() {episode.original_title.as_deref().unwrap_or("")} else {&episode.title});result.push(card);
+    }
+    let unmatched=files.into_iter().filter(|row|!linked.contains(row["id"].as_str().unwrap_or_default())).collect::<Vec<_>>();
+    if !unmatched.is_empty() && !official.is_empty() {result.push(json!({"id":"unmatched-heading","sectionHeader":true,"label":format!("未匹配分集的文件 · {}",unmatched.len())}));}
+    for row in unmatched {
+        let mut card=row.clone();card["unmatched"]=json!(!official.is_empty());
+        if !official.is_empty() {card["label"]=json!("未匹配分集");card["title"]=row["fileName"].clone();}
+        result.push(card);
+    }
+    result
+}
+
+fn playback_title(title: &str, rows: &[Value]) -> String {
+    let current=rows.iter().find(|row|row["current"]==true && row["mediaFileId"].is_string()).or_else(||rows.iter().find(|row|row["current"]==true));
+    current.and_then(|row|row["label"].as_str()).filter(|label|!label.is_empty() && *label!="视频文件")
+        .map(|label|format!("{title} · {label}")).unwrap_or_else(||title.into())
 }
 
 fn discussion_images(comment: &crate::models::BangumiComment) -> Vec<String> {
@@ -100,10 +134,10 @@ async fn context(state: &AppState, session: &str, media: Option<&str>) -> AppRes
     }
     let mut rows: Vec<Value> = files.iter().map(|file|file_card(file,media.unwrap_or(""))).collect();
     let mut roads = Vec::new();
+    let official=if let Some(work)=&work {crate::metadata_aggregator::episodes_for_work(&state.pool,work).await?} else {vec![]};
     let selected_source = if let Some(rule) = &rule {
         let definition=crate::rule_sources::definition(&state.pool,&rule.plugin).await?;
         let chapters = crate::rule_sources::chapters(&state.pool,&rule.plugin,&rule.source,false).await?;
-        let official = if let Some(work) = &work { crate::metadata_aggregator::episodes_for_work(&state.pool,work).await? } else { vec![] };
         let bound:Vec<(String,String)>=sqlx::query_as("SELECT e.page_url,e.media_file_id FROM rule_episodes e JOIN media_files m ON m.id=e.media_file_id WHERE e.plugin_id=? AND e.source_key=? AND m.work_id=?").bind(&rule.plugin).bind(&rule.source).bind(&rule.work).fetch_all(&state.pool).await?;
         for (road_index,road) in chapters.roads.iter().enumerate() {
             let source_id=format!("rule:{road_index}"); roads.push(json!({"id":source_id,"label":road.name}));
@@ -119,11 +153,12 @@ async fn context(state: &AppState, session: &str, media: Option<&str>) -> AppRes
         }
         format!("rule:{}",rule.road)
     } else { current_file.and_then(|file|file.library_root_id.clone()).unwrap_or_default() };
+    let mut episode_rows=if rule.is_none() {library_episode_rows(&rows,&official,media)} else {vec![]};
     let title=title.or_else(||rule.as_ref().map(|r|r.title.clone())).or_else(||current_file.map(|f|f.file_name.clone())).unwrap_or_else(||"视频播放".into());
     // Each file keeps its actual official link; do not infer an episode from its position.
     if let Some(work) = &work {
         if let Ok(artwork) = crate::episode_artwork::cached(&state.pool,work).await {
-            for row in &mut rows {
+            for row in rows.iter_mut().chain(episode_rows.iter_mut()) {
                 if let Some(url)=row["episodeKey"].as_str().and_then(|key|artwork.images.get(key)) {
                     let path=crate::metadata_aggregator::artwork_cache_path(&state.cover_cache_path,work,"episode",url);
                     if path.is_file() { row["imagePath"]=json!(path.to_string_lossy()); }
@@ -132,7 +167,7 @@ async fn context(state: &AppState, session: &str, media: Option<&str>) -> AppRes
         }
     }
     let comment_episode=comment_episode(&rows,media);
-    Ok(PageContext {work,bangumi,comment_episode,comments:Arc::new(tokio::sync::Mutex::new(None)),rule,rows,title,roads,selected_source})
+    Ok(PageContext {work,bangumi,comment_episode,comments:Arc::new(tokio::sync::Mutex::new(None)),rule,rows,episode_rows,title,roads,selected_source})
 }
 
 async fn reply(session: &str, id: u64, channel: &str, data: Value) {
@@ -159,7 +194,7 @@ pub(crate) fn serve(state: AppState, session: String) {
                 let result=async {
                     if action=="context" {
                         let context=context(&state,&session,request["mediaFileId"].as_str()).await?;
-                        let data=json!({"title":context.title,"fileChoices":same_episode_files(&context.rows,request["mediaFileId"].as_str()),"rows":context.rows,"roads":context.roads,"selectedSource":context.selected_source,"hasBangumi":context.bangumi.is_some(),"commentEpisodeId":context.comment_episode.as_ref().map(|value|&value.0),"commentEpisodeLabel":context.comment_episode.as_ref().map(|value|&value.1)});
+                        let data=json!({"title":context.title,"playbackTitle":playback_title(&context.title,&context.rows),"episodeRows":context.episode_rows,"fileChoices":same_episode_files(&context.rows,request["mediaFileId"].as_str()),"rows":context.rows,"roads":context.roads,"selectedSource":context.selected_source,"hasBangumi":context.bangumi.is_some(),"commentEpisodeId":context.comment_episode.as_ref().map(|value|&value.0),"commentEpisodeLabel":context.comment_episode.as_ref().map(|value|&value.1)});
                         *page.lock().await=Some(context); return Ok(data);
                     }
                     let context=page.lock().await.clone().ok_or_else(||AppError::Validation("播放资料尚未就绪，请稍后重试".into()))?;
@@ -175,7 +210,7 @@ pub(crate) fn serve(state: AppState, session: String) {
                         },
                         "image" => {
                             let key=request["episodeKey"].as_str().unwrap_or("");
-                            if !context.rows.iter().any(|row|row["episodeKey"]==key) { return Err(AppError::Validation("分集不属于当前作品".into())); }
+                            if !context.rows.iter().chain(context.episode_rows.iter()).any(|row|row["episodeKey"]==key) { return Err(AppError::Validation("分集不属于当前作品".into())); }
                             let path=if let Some(work)=context.work { crate::episode_artwork::cache_for_player(&state,&work,key).await? } else {None};
                             Ok(json!({"episodeKey":key,"path":path}))
                         },
@@ -217,6 +252,23 @@ pub(crate) fn serve(state: AppState, session: String) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn library_cards_follow_official_episodes_and_put_unmatched_files_after_a_section() {
+        let metadata=|number| crate::models::AnimeEpisodeMetadata {provider:"bangumi".into(),external_id:format!("ep{number}"),episode_number:Some(number),sort_number:number,episode_type:Some(0),title:format!("官方{number}"),original_title:None,description:String::new(),air_date:None,duration:None,fetched_at:String::new()};
+        let official=vec![metadata(1),metadata(2),metadata(3)];
+        let rows=vec![json!({"id":"op","mediaFileId":"op","sourceKind":"webdav","fileName":"OP.mp4","episodeKey":null,"available":true}),
+            json!({"id":"f","mediaFileId":"f","sourceKind":"webdav","sourceId":"dav","fileName":"13.mp4","label":"第01集","episodeKey":"bangumi:ep1","current":true,"available":true}),
+            json!({"id":"variant","mediaFileId":"variant","sourceKind":"local","episodeKey":"bangumi:ep1","available":true}),
+            json!({"id":"disabled","mediaFileId":"disabled","sourceKind":"webdav","episodeKey":"bangumi:ep2","available":false})];
+        let cards=library_episode_rows(&rows,&official,Some("f"));
+        assert_eq!(cards.len(),5);assert_eq!(cards[0]["id"],"f");assert_eq!(cards[0]["label"],"第01集");
+        assert_eq!(cards[1]["episodeKey"],"bangumi:ep2");assert_eq!(cards[1]["available"],false);
+        assert_eq!(cards[2]["episodeKey"],"bangumi:ep3");assert_eq!(cards[2]["available"],false);
+        assert_eq!(cards[3]["sectionHeader"],true);assert_eq!(cards[4]["id"],"op");assert_eq!(cards[4]["unmatched"],true);
+        assert_eq!(playback_title("尼古喵喵",&rows),"尼古喵喵 · 第01集");
+        assert_eq!(playback_title("未识别视频",&[json!({"current":true,"label":"视频文件"})]),"未识别视频");
+    }
+
     #[test]
     fn file_choices_use_official_identity_across_sources_without_guessing_unmatched_numbers() {
         let file = |id:&str,key:Value,kind:&str| json!({"id":id,"mediaFileId":id,"episodeKey":key,"sourceKind":kind,"fileName":format!("{id}.mp4")});

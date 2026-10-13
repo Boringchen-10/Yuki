@@ -82,6 +82,9 @@ class PlayerPage(context: Context, private val session: String?, private val med
         message.gravity = Gravity.CENTER; message.setPadding(dp(8), dp(12), dp(8), dp(12)); addView(message)
         retry.gravity = Gravity.CENTER; retry.setTextColor(accent); retry.foreground = ripple(); retry.minimumHeight = dp(48); retry.setOnClickListener { if (selectedTab == "comments") { failedCommentImages.clear(); loadComments() } else loadContext() }; addView(retry)
         list.layoutManager = grid; list.adapter = adapter; list.clipToPadding = false; list.setPadding(0, 0, 0, dp(16)); list.itemAnimator = null
+        grid.spanSizeLookup = object : GridLayoutManager.SpanSizeLookup() {
+            override fun getSpanSize(position: Int) = if (selectedTab == "episodes" && visibleRows.getOrNull(position)?.optBoolean("sectionHeader") == true) 2 else 1
+        }
         addView(list, LayoutParams(-1, 0, 1f))
         more.gravity = Gravity.CENTER; more.setTextColor(muted); more.minimumHeight = dp(44); addView(more)
         list.addOnScrollListener(object : RecyclerView.OnScrollListener() {
@@ -268,10 +271,12 @@ class PlayerPage(context: Context, private val session: String?, private val med
         source.visibility = if (episodes) VISIBLE else GONE
         visibleRows = allRows.filter { selectedSource.isEmpty() || it.optString("sourceId") == selectedSource }
         val ruleMode = objects(data.optJSONArray("roads")).isNotEmpty()
-        if (!ruleMode) visibleRows = visibleRows.groupBy { it.optString("episodeKey").takeUnless { key -> key.isBlank() || key == "null" } ?: it.optString("id") }.values.map { group -> group.firstOrNull { it.optBoolean("current") } ?: group.firstOrNull { it.optBoolean("available") } ?: group.first() }
+        if (!ruleMode && data.has("episodeRows")) visibleRows = objects(data.optJSONArray("episodeRows"))
+        else if (!ruleMode) visibleRows = visibleRows.groupBy { it.optString("episodeKey").takeUnless { key -> key.isBlank() || key == "null" } ?: it.optString("id") }.values.map { group -> group.firstOrNull { it.optBoolean("current") } ?: group.firstOrNull { it.optBoolean("available") } ?: group.first() }
         val currentFile = allRows.firstOrNull { it.optBoolean("current") && it.has("mediaFileId") }
         source.text = if (ruleMode) "播放线路  ·  ${visibleRows.firstOrNull()?.optString("sourceLabel") ?: "暂无线路"}  ﹀" else "播放文件  ·  ${currentFile?.optString("fileName") ?: "当前文件"}  ﹀"
-        summary.text = if (episodes) "全部剧集 · ${visibleRows.size} 集" else "${data.optString("commentEpisodeLabel").takeUnless { it == "null" || it.isBlank() } ?: "当前集"} · Bangumi 分集讨论${if (commentsLoaded) " · $commentsTotal 条" else ""}"
+        val unmatched = visibleRows.count { it.optBoolean("unmatched") }
+        summary.text = if (episodes) "全部剧集 · ${visibleRows.count { !it.optBoolean("sectionHeader") && !it.optBoolean("unmatched") }} 集${if (unmatched > 0) " · $unmatched 个未匹配文件" else ""}" else "${data.optString("commentEpisodeLabel").takeUnless { it == "null" || it.isBlank() } ?: "当前集"} · Bangumi 分集讨论${if (commentsLoaded) " · $commentsTotal 条" else ""}"
         summary.setTextColor(muted); grid.spanCount = if (episodes) 2 else 1
         more.visibility = if (!episodes && commentsLoaded && commentsLoading) VISIBLE else GONE
         if (episodes && data.has("rows") && visibleRows.isEmpty()) message.text = "暂无可播放剧集，请返回关联本地、WebDAV 或规则来源。"
@@ -291,6 +296,7 @@ class PlayerPage(context: Context, private val session: String?, private val med
         override fun onBindViewHolder(holder: RowHolder, index: Int) {
             val column = holder.column; column.removeAllViews(); column.setOnClickListener(null)
             column.setPadding(dp(8), dp(8), dp(8), dp(10))
+            column.isEnabled = true; column.alpha = 1f; column.foreground = ripple()
             if (selectedTab == "comments") {
                 val item = comments[index]; column.background = shape(surface, 20); column.setPadding(dp(14), dp(14), dp(14), dp(14))
                 column.addView(commentViews.identity(item))
@@ -300,6 +306,11 @@ class PlayerPage(context: Context, private val session: String?, private val med
                 return
             }
             val row = visibleRows[index]; val current = row.optBoolean("current")
+            if (row.optBoolean("sectionHeader")) {
+                column.background = null; column.foreground = null
+                column.addView(text(row.optString("label"), 14f, true).apply { setTextColor(muted); setPadding(0, dp(12), 0, dp(4)) }); return
+            }
+            column.foreground = ripple()
             column.background = GradientDrawable().apply { setColor(surface); cornerRadius = dp(12).toFloat(); if (current) setStroke(dp(2), accent) }
             val cover = ImageView(context).apply { scaleType = ImageView.ScaleType.FIT_CENTER; setBackgroundColor(Color.rgb(34, 45, 39)); contentDescription = "${row.optString("label")}分集封面" }
             val width = (resources.displayMetrics.widthPixels - dp(60)) / 2
@@ -326,7 +337,7 @@ class PlayerPage(context: Context, private val session: String?, private val med
             }
             column.addView(text(row.optString("label"), 15f, true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; setPadding(0, dp(10), 0, dp(5)); if (current) setTextColor(accent) })
             val name = row.optString("title").takeUnless { it == "null" }.orEmpty()
-            column.addView(text(if (current) "当前选集${if (name.isBlank()) "" else " · $name"}" else name.ifBlank { "点击播放" }, 12f).apply { setTextColor(muted); maxLines = 2; ellipsize = TextUtils.TruncateAt.END })
+            column.addView(text(if (current) "当前选集${if (name.isBlank()) "" else " · $name"}" else if (!row.optBoolean("available")) "暂无可播放文件${if (name.isBlank()) "" else " · $name"}" else name.ifBlank { "点击播放" }, 12f).apply { setTextColor(muted); maxLines = 2; ellipsize = TextUtils.TruncateAt.END })
             column.isEnabled = row.optBoolean("available") && !playing; column.alpha = if (row.optBoolean("available")) 1f else .45f
             column.contentDescription = "${row.optString("label")}${if (current) " 当前选集" else ""}"
             column.setOnClickListener { if (!current && !playing) { playing = true; request("play", JSONObject().put("target", row.optString("id"))); adapter.notifyDataSetChanged() } }

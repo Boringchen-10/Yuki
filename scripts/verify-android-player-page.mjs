@@ -12,7 +12,8 @@ const command = (...args) => execFileSync(adb, ["-s", serial, ...args], { encodi
 const bytes = (...args) => execFileSync(adb, ["-s", serial, ...args], { timeout: 20000, maxBuffer: 24 * 1024 * 1024 });
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const media = readFileSync("D:/DevTools/Android/Samples/GenzoPrototype/h264.mp4");
-const names = [`GenzoPortraitQA-${run}-13.mp4`, `GenzoPortraitQA-${run}-14.mp4`, `GenzoPortraitQA-${run}-13-alt.mp4`];
+const names = [`GenzoPortraitQA-${run}-13.mp4`, `GenzoPortraitQA-${run}-14.mp4`, `GenzoPortraitQA-${run}-13-alt.mp4`, `GenzoPortraitQA-${run}-OP.mp4`];
+let holdInitialProbe = false, releaseInitialProbe;
 let stallSecond = false;
 let failSecond = false;
 const server = createServer((req, res) => {
@@ -23,6 +24,7 @@ const server = createServer((req, res) => {
     const item = (href, folder) => `<d:response><d:href>${href}</d:href><d:propstat><d:prop><d:resourcetype>${folder ? "<d:collection/>" : ""}</d:resourcetype>${folder ? "" : `<d:getcontentlength>${media.length}</d:getcontentlength>`}</d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>`;
     res.writeHead(207, { "Content-Type": "application/xml" }); res.end(`<d:multistatus xmlns:d="DAV:">${item("/dav/", true)}${names.map(name => item(`/dav/${name}`, false)).join("")}</d:multistatus>`); return;
   }
+  if (holdInitialProbe && req.url.includes(names[0]) && req.headers.range === "bytes=0-0") { holdInitialProbe = false; releaseInitialProbe = () => sendMedia(req,res); return; }
   if (req.url.includes(names[1]) && failSecond) { res.writeHead(503); res.end(); return; }
   if (req.url.includes(names[1]) && stallSecond) { stallSecond = false; setTimeout(() => sendMedia(req, res), 2300); return; }
   sendMedia(req, res);
@@ -75,7 +77,7 @@ try {
   command("shell", "input", "keyevent", "KEYCODE_WAKEUP"); command("shell", "wm", "dismiss-keyguard"); await connect();
   original = await invoke("get_android_playback_preferences"); await invoke("set_android_playback_preferences", { settings: { hardwareDecoding: true, hardwareDecoder: "mediacodec-copy", videoRenderer: "gpu", superResolution: 0 } });
   sourceId = await invoke("add_webdav_source", { input: { name: `QA Portrait ${run}`, endpoint: `http://127.0.0.1:${port}`, directory: "/dav/", username: "qa", password: "own-fixture", kind: "video" } });
-  const allFiles = (await wait(() => invoke("list_unassigned_media", { destination: "media" }), items => items.filter(f => f.libraryRootId === sourceId).length === 3, "fixture scan")).filter(f => f.libraryRootId === sourceId);
+  const allFiles = (await wait(() => invoke("list_unassigned_media", { destination: "media" }), items => items.filter(f => f.libraryRootId === sourceId).length === 4, "fixture scan")).filter(f => f.libraryRootId === sourceId);
   const files = names.slice(0, 2).map(name => allFiles.find(file => file.fileName === name));
   const variant = allFiles.find(file => file.fileName === names[2]); assert.ok(variant && files.every(Boolean));
   await wait(() => invoke("list_source_imports"), tasks => !tasks.some(t => t.sourceIds.includes(sourceId) && ["queued", "scanning", "recognizing", "enriching"].includes(t.stage)), "background fixture import");
@@ -91,12 +93,32 @@ try {
   command("shell", "run-as", app, "rm", "-f", "genzo.db-wal", "genzo.db-shm"); upload(`${output}/genzo.db`, "genzo.db");
   for (const name of seeded.images) upload(`${output}/${name}`, `covers/${name}`);
   await connect(); result.cases.guardedSyntheticDataOnly = true;
+  holdInitialProbe = true;
+  const openedAt = Date.now();
   let current = await invoke("open_internal_player", { mediaFileId: files[0].id, restart: true, subtitleId: null });
+  result.initialOpenRpcMs = Date.now() - openedAt;
+  assert.ok(result.initialOpenRpcMs < 1500, "opening should return before the held WebDAV probe");
+  await wait(() => native("playerState"), state => state.sessionId === current.sessionId && state.status === "opening" && !state.engineInitialized, "first WebDAV entry loading shell");
+  await wait(async () => !!releaseInitialProbe, Boolean, "WebDAV probe is still held");
+  assert.ok(command("shell", "dumpsys", "activity", "activities").split("\n").find(line => line.includes("topResumedActivity"))?.includes("PlayerActivity"));
+  shot("initial-loading-inside-player"); releaseInitialProbe(); releaseInitialProbe = null;
+  result.cases.initialWebdavOpensPlayerBeforeNetworkProbe = true;
   await wait(() => native("playerState"), s => s.sessionId === current.sessionId && s.status === "playing", "native video");
   await native("playerControl", { action: "pause", sessionId: current.sessionId });
   await wait(async () => dump(), xml => !!node(xml, "第01集 当前选集") && !!node(xml, "第02集"), "portrait episodes");
   await delay(600); shot("portrait"); result.cases.officialEpisode13MapsTo1 = true;
-  let xml = dump(); const covers = [...xml.matchAll(/<node\b[^>]*content-desc="[^"]*分集封面"[^>]*>/g)].map(m => /bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/.exec(m[0]).slice(1).map(Number));
+  let xml = dump(); const covers = [...xml.matchAll(/<node\b[^>]*content-desc="[^"]*分集封面"[^>]*>/g)].filter(m => /第0[12]集分集封面/.test(m[0])).map(m => /bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/.exec(m[0]).slice(1).map(Number));
+  assert.ok(xml.indexOf('content-desc="第01集 当前选集"') < xml.indexOf("未匹配分集的文件"));
+  if (!xml.includes(names[3])) {
+    const size=/(?:Physical|Override) size: (\d+)x(\d+)/.exec(command("shell","wm","size"));
+    command("shell","input","swipe",String(Number(size[1])>>1),String(Math.round(Number(size[2])*.88)),String(Number(size[1])>>1),String(Math.round(Number(size[2])*.55)),"300");
+    xml=await wait(async()=>dump(),value=>value.includes(names[3]),"unmatched file visible after scrolling");
+    shot("unmatched-bottom");
+  }
+  assert.ok(xml.includes(names[3])); result.cases.officialEpisodesPrecedeUnmatchedFiles = true;
+  assert.ok(xml.includes(`GenzoPortraitQA-${run} · 第01集`));
+  assert.ok(Number(/bounds="\[\d+,(\d+)\]/.exec(node(xml,"返回"))[1]) <= 32, "header should be flush with the video top");
+  result.cases.headerHasEpisodeWithoutTopGap = true;
   assert.equal(covers.length, 2); writeFileSync(`${output}/cover-bounds.json`, JSON.stringify(covers));
   const fraction = Number(execFileSync(python, ["-c", "from PIL import Image;import json,sys;im=Image.open(sys.argv[1]).convert('RGB'); boxes=json.load(open(sys.argv[2])); print(min(sum(max(p)-min(p)>70 for p in im.crop(b).resize((80,45)).getdata())/3600 for b in boxes))", `${output}/portrait.png`, `${output}/cover-bounds.json`], { encoding: "utf8" }));
   assert.ok(fraction > .4, `real episode bitmap missing: ${fraction}`); result.cases.actualCachedEpisodeStills = true;
@@ -191,6 +213,7 @@ try {
   console.log(JSON.stringify(result));
 } catch (error) { result.error = String(error); shot("failure"); throw error; }
 finally {
+  releaseInitialProbe?.();
   if (browser && info?.dataDirectory === `/data/user/0/${app}`) {
     await native("playerControl", { action: "close" }).catch(() => {});
     if (original) await invoke("set_android_playback_preferences", { settings: original }).catch(() => {});

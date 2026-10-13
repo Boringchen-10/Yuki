@@ -1,0 +1,21 @@
+--- a/src/android/AndroidApp.tsx
++++ b/src/android/AndroidApp.tsx
+@@ -752 +752,8 @@
+-  async function play(id: string) { const state = await androidApi.play(id); if (state.error) throw new Error(state.error.message); }
++  const openingVideo = useRef(false);
++  async function play(id: string) {
++    if (openingVideo.current) return;
++    openingVideo.current = true; setError("");
++    try { const state = await androidApi.play(id); if (state.error) throw new Error(state.error.message); }
++    catch (reason) { setError(String(reason)); }
++    finally { openingVideo.current = false; }
++  }
+@@ -888 +895 @@
+-            <button type="button" className="gz-history-play" disabled={busy || item.missing} onClick={() => void run(() => play(item.mediaFileId))} aria-label={`播放 ${item.title}`}><Play size={17} fill="currentColor" /></button>
++            <button type="button" className="gz-history-play" disabled={busy || item.missing} onClick={() => void play(item.mediaFileId)} aria-label={`播放 ${item.title}`}><Play size={17} fill="currentColor" /></button>
+@@ -1010 +1017 @@
+-        <Section title="继续观看">{progressLoading ? <LoadingIndicator label="正在读取观看记录…" compact /> : continueItems.length ? <div className="gz-rail gz-cover-rail">{continueItems.map(item => <button className="gz-continue" disabled={busy || item.missing} key={item.mediaFileId} onClick={() => void run(() => play(item.mediaFileId))}><div className="gz-continue-cover"><ContinueWatchingArtwork workId={item.workId} episodeKey={item.episodeKey} /><span>{item.missing ? "文件缺失" : `${playbackTime(item.positionMs)} / ${playbackTime(item.durationMs)}`}</span><progress max={100} value={playbackPercent(item)} /></div><strong>{item.title}</strong><span className="gz-meta">{item.fileName}</span></button>)}</div> : <p className="gz-panel gz-meta">暂无观看记录。开始播放后，续播入口会出现在这里。</p>}</Section>
++        <Section title="继续观看">{progressLoading ? <LoadingIndicator label="正在读取观看记录…" compact /> : continueItems.length ? <div className="gz-rail gz-cover-rail">{continueItems.map(item => <button className="gz-continue" disabled={busy || item.missing} key={item.mediaFileId} onClick={() => void play(item.mediaFileId)}><div className="gz-continue-cover"><ContinueWatchingArtwork workId={item.workId} episodeKey={item.episodeKey} /><span>{item.missing ? "文件缺失" : `${playbackTime(item.positionMs)} / ${playbackTime(item.durationMs)}`}</span><progress max={100} value={playbackPercent(item)} /></div><strong>{item.title}</strong><span className="gz-meta">{item.fileName}</span></button>)}</div> : <p className="gz-panel gz-meta">暂无观看记录。开始播放后，续播入口会出现在这里。</p>}</Section>
+@@ -1228 +1235 @@
+-        {detailTab === "episodes" && <Section title="剧集与播放来源"><WorkRuleSources workId={detail.id} revision={detail.mediaFiles.length} onOpen={source => setModal({ kind: "rules", work: detail, source })} /><EpisodeSources workId={detail.id} structure={structure} files={detail.mediaFiles} sources={sources} progress={progress} artwork={episodeArtwork.artwork} warning={episodeArtwork.warning} busy={busy} onPlay={id => void run(() => play(id))} onOpenPlaySource={() => setPlaySourceOpen(true)} onUnlinkEpisode={id => void run(async () => { await api.setMediaEpisode(id, null); await reloadDetail(detail.id); setToast("已解除分集关联"); })} onDetachWork={id => void run(async () => { await api.detachMedia(id); await reloadDetail(detail.id); setToast("已解除作品关联"); })} onRecognizeOther={id => setModal({ kind: "match", work: detail, mediaId: id })} /></Section>}
++        {detailTab === "episodes" && <Section title="剧集与播放来源"><WorkRuleSources workId={detail.id} revision={detail.mediaFiles.length} onOpen={source => setModal({ kind: "rules", work: detail, source })} /><EpisodeSources workId={detail.id} structure={structure} files={detail.mediaFiles} sources={sources} progress={progress} artwork={episodeArtwork.artwork} warning={episodeArtwork.warning} busy={busy} onPlay={id => void play(id)} onOpenPlaySource={() => setPlaySourceOpen(true)} onUnlinkEpisode={id => void run(async () => { await api.setMediaEpisode(id, null); await reloadDetail(detail.id); setToast("已解除分集关联"); })} onDetachWork={id => void run(async () => { await api.detachMedia(id); await reloadDetail(detail.id); setToast("已解除作品关联"); })} onRecognizeOther={id => setModal({ kind: "match", work: detail, mediaId: id })} /></Section>}

@@ -1,5 +1,16 @@
 # Codex 与 DeepSeek Harness 项目交接记录
 
+## 播放入口 / 顶部空白 / 官方目录 v0.13.1（2026-10-13）
+
+- 基线 `03c37f5`，同一 `.tmp/android-first` / `codex/android-first`，保留完整当前OpenDesign。用户报告WebDAV在外部转圈、进去再次加载、未识别文件排在前面；后续明确图一是返回 / 作品名栏顶部空白，标题希望含当前集数。AndroidApp本轮自身增量记录 `docs/android/PLAYER_ENTRY_SOURCE_HANDOFF.patch`，**当前已应用**，`git apply --unidiff-zero --reverse --check`核对，不重复应用、不将整份原WIP提交。其他维护者修改保持原状；没有新依赖或迁移。
+- 旧open_internal_player只对规则先开原生加载壳，WebDAV同步范围探测 / 字幕准备后才打开，React全局run又等待，产生两个可见加载阶段。现在本地 / WebDAV / 规则先验证索引和可用性、打开原生壳，然后异步准备媒体；外部播放入口独立pending / 错误处理，去掉全局busy浮层。保存上个播放器样本在旧Native关闭并保存最终样本后同步一次，后续open_player不重复同步；原session / operation、restart、字幕选择、取消和晚到保护保留。
+- 保留WebDAV有效206 / Content-Range / 0-0范围探测，严格有限消费1字节后复用该HTTP/1.1连接；空 / 多余字节明确失败，不完整下载媒体。单连接双请求回归证明连接可复用。没有以页面打开速度冒充用户远端视频首帧速度，真实网络 / 字幕准备 / 文件编码仍影响缓冲。
+- Native控制层取消displayCutout.top竖向padding，保留横向切口距离，16:9视频比例不变；顶部使用playbackTitle，例如尼古喵喵 · 第01集，沿用当前实际映射。原文件排序的空集号靠前导致OP未匹配项排头；新增仅显示用episodeRows，复用详情同一缓存官方目录与TMDB图像映射，当前文件 / 当前来源可用版本优先，缺文件官方卡片保留且不可播放，未匹配在底部分区。原rows仍做真实播放目标 / 同集候选校验，不写假文件或改用户链接。
+- 完整Rust **377通过 / 18忽略 / 0失败**，前端 **112通过**、TypeScript通过，Android / Release与优化日常包构建通过，既有Kotlin **12项通过**。真实React播放入口 **4场景 / 6宽度（360 / 412 / 915 / 1024 / 1366 / 1920）**通过：无外层浮层、重复点击去重、opening释放pending、直接错误可见，无pageerror。原生PlayerHeaderTest **1项通过**（46.555秒含加载壳测试等待），检查实际控制栏与视频顶部一致及官方集号。证据总目录 `D:/DevTools/Android/Build/qa/player-entry-20261013/`。
+- 实体机独立organizeqa最终播放器 **21项通过**，`D:/DevTools/Android/Build/qa/player-page-1791892664551/`。故意扣住首次WebDAV0-0响应时打开RPC **76ms**返回，Native播放器前台 / opening / 未初始化内核，放行后实际播放；真实标题顶部位置、官方卡片先于未匹配OP、同集多文件 / 两规则线路 / 稳定mediaID、封面 / GPU / 横屏返回 / 评论头像、慢选集取消不重开、503在播放页等均保持。初次脚本假定底部OP文件名在首屏，实际文件卡片已在屏外；改为真实下滑核对后通过，未为脚本改生产。首次部分目录 `player-page-1791892361155` 不是最终完整结果。测试只用自建视频 / 素材和匿名公开元数据，不自动播放用户真实媒体。
+- 最终签名 `D:/DevTools/Android/Build/previews/player-entry-20261013/Genzo_0.13.1_player-entry_arm64-v8a.apk`，**50,317,235字节**，SHA256 **1ff1c541a863b73384519c8d23f0b3f422b1d330717b914d6f4ea425440e4774**，0.13.1 / code13001 / com.genzo.android / arm64 / min26 / target36 / 非debuggable / 原证书，v2/v3与16KiB ZIP校验通过。411份完整当前生产源匹配构建副本、3原生库匹配Gradle stripped、8官方shader与许可匹配，内嵌index-Dvetcdq6.js / index-HxLXc3Fo.css，无用户DB / 图书 / 测试媒体。日常包归档qa/player-entry-20261013/reader-final.apk。
+- 普通签名包与原日常readerqa均install-r更新，安装哈希匹配。重新读取基线前后 **34作品 / 17来源 / 24播放记录 / 16规则**、个人字段、来源 / 规则ID及版本 / 启停、位置 / 时长 / 完成与4项播放偏好一致；用户已有24条，未套用上一轮23条。无清库 / 隐式扫描，不复制用户DB / 凭据或向用户包写测试数据。测试组件organizeqa.test已卸载，播放器测试转发 / 反向端口清理；共享前端同步D构建dist，9228 / 9351指向新日常PID，最后停播放设置，无录屏 / 重启。仅单机短测，不承诺全部云盘 / 网络首帧时间；公开版仍v0.5.2，不建公开Release / 标签 / 推送。说明 `docs/android/PLAYER_ENTRY_FIX.md`。
+
 ## 评论呈现 / 自动追加 / 播放选择 v0.13.0（2026-10-13）
 
 - 基线 `fec8d44`，同一 `.tmp/android-first` / `codex/android-first`。用户六图确认评论和发现列表下滑自动追加、漫画小说卡片与内联回复、动漫作品吐槽含评分、分集讨论卡片和线路 / 同集文件选择；中途用户“继续”保持该范围。完整OpenDesign工作树参与构建。AndroidApp / BangumiCommentFeed自身增量保存 `COMMENT_PRESENTATION_SOURCE_HANDOFF.patch`，ExplorePanel自身增量保存 `COMMENT_DISCOVERY_SOURCE_HANDOFF.patch`，均在docs/android下、**当前已应用**；用 `git apply --unidiff-zero --reverse --check`核对，不重复应用，不把其他维护者WIP整文件提交。

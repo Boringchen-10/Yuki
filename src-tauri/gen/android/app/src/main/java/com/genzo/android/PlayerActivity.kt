@@ -180,7 +180,7 @@ class PlayerActivity : ComponentActivity() {
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val cutout = insets.getInsets(WindowInsetsCompat.Type.displayCutout())
             val navigation = insets.getInsetsIgnoringVisibility(WindowInsetsCompat.Type.navigationBars())
-            chrome.setPadding(cutout.left, cutout.top, cutout.right, 0)
+            chrome.setPadding(cutout.left, 0, cutout.right, 0)
             layoutLoading()
             page.setPadding(dp(16), 0, dp(16), navigation.bottom)
             insets
@@ -239,7 +239,7 @@ class PlayerActivity : ComponentActivity() {
         if (args.sessionId != sessionId || isFinishing || isDestroyed || current?.get() !== this) return
         val data = org.json.JSONObject(args.data)
         page.accept(args.channel, data, args.requestId)
-        if (args.channel == "context" && !data.has("error")) titleView.text = data.optString("title", "视频播放")
+        if (args.channel == "context" && !data.has("error")) titleView.text = data.optString("playbackTitle", data.optString("title", "视频播放"))
     }
     private fun showChoice(title: String, items: List<String>, selected: Int = -1, action: (Int) -> Unit) {
         handler.removeCallbacks(hideControls)
