@@ -2,10 +2,19 @@
 .android-app .gz-copy-replies-collapse { display: grid; grid-template-rows: 0fr; opacity: 0; }
 .android-app .gz-copy-replies-collapse.is-open { grid-template-rows: 1fr; opacity: 1; }
 .android-app .gz-copy-replies-inner { min-height: 0; overflow: hidden; }
-.android-app .gz-copy-replies-list { margin-top: 8px; padding-left: 12px; border-left: 2px solid var(--line); }
+.android-app .gz-copy-replies-list { margin-top: 8px; padding-left: 10px; }
 .android-app .gz-copy-reply { padding: 10px 0; border-bottom: 1px solid var(--line); }
 .android-app .gz-copy-reply:last-of-type { border-bottom: 0; }
 .android-app .gz-copy-reply .gz-comment-body { margin-top: 6px; }
+.android-app .gz-comments-dialog .gz-comment-card { padding: 14px; border-radius: 18px; margin-bottom: 10px; }
+.android-app .gz-comments-dialog .gz-comment-body { font-size: 15px; line-height: 1.65; }
+.android-app .gz-comments-dialog .gz-comment-name { font-size: 12px; font-weight: 600; color: var(--muted); }
+.android-app .gz-comments-dialog .gz-comment-byline time { font-size: 11px; color: var(--quiet); }
+.android-app .gz-comments-dialog .gz-comment-expand { justify-content: flex-start; margin-left: 0; font-size: 13px; color: var(--muted); }
+.android-app .gz-comments-header > div > .gz-meta { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; font-size: 12px; }
+.android-app .gz-copy-reply { border-bottom: 0; }
+.android-app .gz-copy-reply .gz-comment-avatar { width: 24px; height: 24px; }
+.android-app .gz-copy-reply .gz-comment-body { margin-left: 32px; font-size: 14px; }
 @media (prefers-reduced-motion: no-preference) {
   .android-app .gz-copy-replies-collapse { transition: grid-template-rows 180ms ease, opacity 180ms ease; }
 }

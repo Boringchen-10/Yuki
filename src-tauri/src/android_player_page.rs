@@ -18,7 +18,7 @@ pub(crate) fn bound_origin(session: &str, input: &BindingInput) {
 
 #[derive(Clone, FromRow)]
 struct FileRow {
-    id: String, file_name: String, library_root_id: Option<String>,
+    id: String, file_name: String, library_root_id: Option<String>, source_kind: String,
     missing: bool, enabled: bool, label: String, provider: Option<String>, external_id: Option<String>,
     original_number: Option<i64>, official_number: Option<i64>, episode_title: Option<String>,
 }
@@ -30,8 +30,37 @@ fn episode_key(file: &FileRow) -> Option<String> {
 }
 fn file_card(file: &FileRow, current: &str) -> Value {
     json!({"id":file.id,"mediaFileId":file.id,"label":file.official_number.or(file.original_number).map(|n|format!("第{n:02}集")).unwrap_or_else(||"视频文件".into()),
-        "title":file.episode_title.as_ref().unwrap_or(&file.file_name),"sourceId":file.library_root_id,"sourceLabel":file.label,
+        "title":file.episode_title.as_ref().unwrap_or(&file.file_name),"fileName":file.file_name,"sourceKind":file.source_kind,"sourceId":file.library_root_id,"sourceLabel":file.label,
         "episodeKey":episode_key(file),"current":file.id==current,"available":!file.missing&&file.enabled})
+}
+
+fn same_episode_files(rows: &[Value], media: Option<&str>) -> Vec<Value> {
+    let Some(current)=media.and_then(|id|rows.iter().find(|row|row["mediaFileId"]==id)) else {return vec![]};
+    let key=current["episodeKey"].as_str();
+    rows.iter().filter(|row| row["mediaFileId"].is_string() && row["sourceKind"]!="rule"
+        && if let Some(key)=key {row["episodeKey"]==key} else {row["mediaFileId"]==current["mediaFileId"]})
+        .cloned().collect()
+}
+
+fn discussion_images(comment: &crate::models::BangumiComment) -> Vec<String> {
+    static IMAGES: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(||regex::Regex::new(r"\[img(?:=[^\]]*)?\](https?://[^\s\[]+)\[/img\]").unwrap());
+    comment.user_avatar.iter().cloned().chain(IMAGES.captures_iter(&comment.comment).take(4).map(|cap|cap[1].to_owned())).collect()
+}
+
+async fn cache_discussion_image(state: &AppState, url: &str) -> AppResult<std::path::PathBuf> {
+    let directory=state.cover_cache_path.join("comment-discussions");
+    std::fs::create_dir_all(&directory)?;
+    let target=crate::metadata_aggregator::artwork_cache_path(&directory,"bangumi-discussion","comment",url);
+    if !target.is_file() {crate::metadata_aggregator::cache_banner(url,&target).await?;}
+    // Only this generated cache is trimmed; library covers and real media stay untouched.
+    let mut files=std::fs::read_dir(&directory)?.filter_map(Result::ok).filter_map(|entry| {
+        let path=entry.path();let metadata=std::fs::symlink_metadata(&path).ok()?;
+        (metadata.file_type().is_file() && path.file_name()?.to_str()?.starts_with("art-v2-") && path.file_name()?.to_str()?.ends_with("-comment.jpg"))
+            .then(||(metadata.modified().unwrap_or(std::time::UNIX_EPOCH),metadata.len(),path))
+    }).collect::<Vec<_>>();
+    let mut total=files.iter().map(|(_,size,_)|size).sum::<u64>(); files.sort_by_key(|(time,_,_)|*time);
+    for (_,size,path) in files {if total<=64*1024*1024 {break;} if path!=target && std::fs::remove_file(path).is_ok() {total=total.saturating_sub(size);} }
+    Ok(target)
 }
 
 fn comment_episode(rows: &[Value], media: Option<&str>) -> Option<(String,String)> {
@@ -48,7 +77,7 @@ async fn context(state: &AppState, session: &str, media: Option<&str>) -> AppRes
     let work = work.or_else(||preview.as_ref().and_then(|origin|origin.work.clone()));
     let title: Option<String> = if let Some(work) = &work { sqlx::query_scalar("SELECT title FROM works WHERE id=?").bind(work).fetch_optional(&state.pool).await? } else { None };
     let bangumi = if let Some(work) = &work { sqlx::query_scalar("SELECT external_id FROM work_external_ids WHERE work_id=? AND provider='bangumi'").bind(work).fetch_optional(&state.pool).await? } else { None };
-    let files: Vec<FileRow> = sqlx::query_as("SELECT m.id,m.file_name,m.library_root_id,m.missing,COALESCE(r.enabled,0) enabled,COALESCE(p.name,w.name,s.label,'本地') label,l.provider,l.episode_external_id external_id,m.parsed_episode_start original_number,e.episode_number official_number,e.title episode_title FROM media_files m LEFT JOIN library_roots r ON r.id=m.library_root_id LEFT JOIN rule_plugins p ON p.id=r.id LEFT JOIN remote_sources w ON w.id=r.id LEFT JOIN android_saf_sources s ON s.source_id=r.id LEFT JOIN media_episode_links l ON l.media_file_id=m.id AND l.work_id=m.work_id LEFT JOIN anime_episodes e ON e.work_id=l.work_id AND e.provider=l.provider AND e.external_id=l.episode_external_id WHERE m.media_type='video' AND ((? IS NOT NULL AND m.work_id=?) OR m.id=?) ORDER BY COALESCE(e.sort_number,m.parsed_episode_start),m.file_name,m.id")
+    let files: Vec<FileRow> = sqlx::query_as("SELECT m.id,m.file_name,m.library_root_id,CASE WHEN p.id IS NOT NULL OR EXISTS(SELECT 1 FROM rule_episodes re WHERE re.media_file_id=m.id) THEN 'rule' ELSE COALESCE(r.source_type,'local') END source_kind,m.missing,COALESCE(r.enabled,0) enabled,COALESCE(p.name,w.name,s.label,'本地') label,l.provider,l.episode_external_id external_id,m.parsed_episode_start original_number,e.episode_number official_number,e.title episode_title FROM media_files m LEFT JOIN library_roots r ON r.id=m.library_root_id LEFT JOIN rule_plugins p ON p.id=r.id LEFT JOIN remote_sources w ON w.id=r.id LEFT JOIN android_saf_sources s ON s.source_id=r.id LEFT JOIN media_episode_links l ON l.media_file_id=m.id AND l.work_id=m.work_id LEFT JOIN anime_episodes e ON e.work_id=l.work_id AND e.provider=l.provider AND e.external_id=l.episode_external_id WHERE m.media_type='video' AND ((? IS NOT NULL AND m.work_id=?) OR m.id=?) ORDER BY COALESCE(e.sort_number,m.parsed_episode_start),m.file_name,m.id")
         .bind(&work).bind(&work).bind(media).fetch_all(&state.pool).await?;
     let current_file = files.iter().find(|file|Some(file.id.as_str())==media);
     let mut rule = preview;
@@ -125,12 +154,12 @@ pub(crate) fn serve(state: AppState, session: String) {
             let state=state.clone();let session=session.clone();let page=page.clone();let slots=slots.clone();
             tauri::async_runtime::spawn(async move {
                 let action=request["action"].as_str().unwrap_or("");
-                let _permit=if action=="image" { slots.acquire().await.ok() } else { None };
+                let _permit=if matches!(action,"image"|"commentImage") { slots.acquire().await.ok() } else { None };
                 if !android_player::is_current(&session) { return; }
                 let result=async {
                     if action=="context" {
                         let context=context(&state,&session,request["mediaFileId"].as_str()).await?;
-                        let data=json!({"title":context.title,"rows":context.rows,"roads":context.roads,"selectedSource":context.selected_source,"hasBangumi":context.bangumi.is_some(),"commentEpisodeId":context.comment_episode.as_ref().map(|value|&value.0),"commentEpisodeLabel":context.comment_episode.as_ref().map(|value|&value.1)});
+                        let data=json!({"title":context.title,"fileChoices":same_episode_files(&context.rows,request["mediaFileId"].as_str()),"rows":context.rows,"roads":context.roads,"selectedSource":context.selected_source,"hasBangumi":context.bangumi.is_some(),"commentEpisodeId":context.comment_episode.as_ref().map(|value|&value.0),"commentEpisodeLabel":context.comment_episode.as_ref().map(|value|&value.1)});
                         *page.lock().await=Some(context); return Ok(data);
                     }
                     let context=page.lock().await.clone().ok_or_else(||AppError::Validation("播放资料尚未就绪，请稍后重试".into()))?;
@@ -149,6 +178,14 @@ pub(crate) fn serve(state: AppState, session: String) {
                             if !context.rows.iter().any(|row|row["episodeKey"]==key) { return Err(AppError::Validation("分集不属于当前作品".into())); }
                             let path=if let Some(work)=context.work { crate::episode_artwork::cache_for_player(&state,&work,key).await? } else {None};
                             Ok(json!({"episodeKey":key,"path":path}))
+                        },
+                        "commentImage" => {
+                            let url=request["url"].as_str().unwrap_or("");
+                            let allowed=context.comments.lock().await.as_ref().is_some_and(|rows| rows.iter().any(|row|
+                                discussion_images(&row.comment).iter().any(|image|image==url) || row.replies.iter().any(|reply|discussion_images(reply).iter().any(|image|image==url))));
+                            if !allowed {return Err(AppError::Validation("图片不属于当前分集讨论".into()));}
+                            let path=cache_discussion_image(&state,url).await?;
+                            Ok(json!({"url":url,"path":path.to_string_lossy()}))
                         },
                         "play" => {
                             let target=request["target"].as_str().unwrap_or("");
@@ -170,7 +207,7 @@ pub(crate) fn serve(state: AppState, session: String) {
                         _ => Err(AppError::Validation("未知播放器操作".into())),
                     }
                 }.await;
-                match result { Ok(data)=>reply(&session,id,action,data).await, Err(_)=>reply(&session,id,action,json!({"error":match action {"comments"=>"Bangumi 本集讨论读取失败，请检查网络后重试。","play"=>"打开剧集失败，请重试或返回选择其他来源。","image"=>"",_=>"播放资料读取失败，请重试。"}})).await }
+                match result { Ok(data)=>reply(&session,id,action,data).await, Err(_)=>reply(&session,id,action,json!({"error":match action {"comments"=>"Bangumi 本集讨论读取失败，请检查网络后重试。","play"=>"打开剧集失败，请重试或返回选择其他来源。","image"|"commentImage"=>"",_=>"播放资料读取失败，请重试。"}})).await }
             });
         }
         SERVING.lock().unwrap().retain(|id|id!=&session);
@@ -180,6 +217,25 @@ pub(crate) fn serve(state: AppState, session: String) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn file_choices_use_official_identity_across_sources_without_guessing_unmatched_numbers() {
+        let file = |id:&str,key:Value,kind:&str| json!({"id":id,"mediaFileId":id,"episodeKey":key,"sourceKind":kind,"fileName":format!("{id}.mp4")});
+        let rows=vec![file("local13",json!("bangumi:1212094"),"local"),file("webdav13",json!("bangumi:1212094"),"webdav"),
+            file("next14",json!("bangumi:1212095"),"webdav"),file("unmatched13",Value::Null,"local"),file("rule13",json!("bangumi:1212094"),"rule")];
+        let choices=same_episode_files(&rows,Some("local13"));
+        assert_eq!(choices.iter().map(|row|row["id"].as_str().unwrap()).collect::<Vec<_>>(),vec!["local13","webdav13"]);
+        assert_eq!(same_episode_files(&rows,Some("unmatched13")).len(),1);
+        assert!(same_episode_files(&rows,Some("other-work-file")).is_empty());
+        assert!(same_episode_files(&rows,None).is_empty());
+    }
+
+    #[test]
+    fn discussion_assets_only_include_provided_avatar_and_bounded_image_markup() {
+        let comment=crate::models::BangumiComment {id:"1".into(),user_name:"合成用户".into(),user_avatar:Some("https://lain.bgm.tv/pic/user/a.jpg".into()),
+            comment:"正文 https://unrelated.example/plain.jpg [img]https://lain.bgm.tv/pic/crt/a.jpg[/img] [img=640,360]https://lain.bgm.tv/pic/crt/b.jpg[/img] [img]file:///secret[/img]".into(),created_at:String::new(),rate:None};
+        assert_eq!(discussion_images(&comment),vec!["https://lain.bgm.tv/pic/user/a.jpg","https://lain.bgm.tv/pic/crt/a.jpg","https://lain.bgm.tv/pic/crt/b.jpg"]);
+    }
+
     #[test]
     fn episode_discussion_target_uses_explicit_link_and_never_filename_or_list_index() {
         let rows=vec![json!({"mediaFileId":"f","current":true,"episodeKey":"bangumi:1212094","label":"第01集","title":"13.mp4"})];
@@ -208,5 +264,12 @@ mod tests {
         assert_eq!(page.rows.iter().find(|row|row["mediaFileId"]=="unavailable").unwrap()["available"],false);
         assert!(!serde_json::to_string(&page.rows).unwrap().contains("content://"));
         assert_eq!(sqlx::query_scalar::<_,i64>("SELECT COUNT(*) FROM playback_progress").fetch_one(&pool).await.unwrap(),0);
+        // Rule roots really use source_type=local in existing databases.
+        sqlx::raw_sql("INSERT INTO library_roots(id,path,kind,source_type,enabled,created_at,updated_at) VALUES('rule-root','rule://qa','video','local',1,'t','t'),('dav','https://qa.invalid','video','webdav',1,'t','t'); INSERT INTO rule_plugins(id,name_key,name,version,definition_json,updated_at) VALUES('rule-root','qa-rule','QA Rule','1','{}','t'); INSERT INTO media_files(id,work_id,library_root_id,path,file_name,extension,media_type,size,created_at,updated_at) VALUES('rule-file','w','rule-root','rule://qa/1','规则第一集','mp4','video',1,'t','t'),('dav-file','w','dav','webdav://qa/13','云端13.mp4','mp4','video',1,'t','t'); INSERT INTO media_episode_links VALUES('rule-file','w','bangumi','ep1','manual',1,'t'),('dav-file','w','bangumi','ep1','manual',1,'t');")
+            .execute(&pool).await.unwrap();
+        let page=context(&state,"test-library",Some("f")).await.unwrap();
+        assert_eq!(page.rows.iter().find(|row|row["id"]=="rule-file").unwrap()["sourceKind"],"rule");
+        let mut ids=same_episode_files(&page.rows,Some("f")).iter().map(|row|row["id"].as_str().unwrap().to_owned()).collect::<Vec<_>>();ids.sort();
+        assert_eq!(ids,vec!["dav-file","f"]);
     }
 }

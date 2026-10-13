@@ -4,8 +4,10 @@ import { comicExploreApi, novelExploreApi, type CopyComment, type CopyCommentPag
 import { androidSession } from "./sessionCache";
 import LoadingIndicator from "./LoadingIndicator";
 import ComicReplies from "./ComicReplies";
+import AutoLoadSentinel from "./AutoLoadSentinel";
+import CommentIdentity from "./CommentIdentity";
 
-export default function ComicComments({ pathWord, kind = "comic", onClose }: { pathWord: string | null; kind?: "comic" | "novel"; onClose: () => void }) {
+export default function ComicComments({ pathWord, title, kind = "comic", onClose }: { pathWord: string | null; title?: string; kind?: "comic" | "novel"; onClose: () => void }) {
   const content = kind === "comic" ? comicExploreApi : novelExploreApi;
   const label = kind === "comic" ? "漫画" : "轻小说";
   const dialog = useRef<HTMLDialogElement>(null);
@@ -32,6 +34,7 @@ export default function ComicComments({ pathWord, kind = "comic", onClose }: { p
         ? await androidSession.load<CopyCommentPage>(`reading:comments:${kind}:${pathWord}`, () => content.comments(pathWord), force)
         : await content.comments(pathWord, offset.current);
       if (request !== generation.current) return;
+      if (page.offset !== (first ? 0 : offset.current) || page.limit <= 0 || (!page.items.length && page.offset < page.total)) throw new Error("Invalid comment page");
       offset.current = page.offset + page.limit;
       setItems(previous => [...new Map([...(first ? [] : previous), ...page.items].map(item => [item.id, item])).values()]);
       setTotal(page.total);
@@ -70,7 +73,7 @@ export default function ComicComments({ pathWord, kind = "comic", onClose }: { p
     <section className="gz-comments-panel">
       <span className="gz-comments-handle" aria-hidden="true" />
       <header className="gz-comments-header">
-        <div><h2 id="gz-comments-title">{label}评论</h2><span className="gz-meta">来自{label}来源的评论</span></div>
+        <div><h2 id="gz-comments-title">{label}评论</h2><span className="gz-meta">{title || `来自${label}来源的评论`}</span></div>
         <span className="gz-meta">{items.length} / {total}</span>
         <button className="gz-iconbtn" type="button" aria-label="评论排序" aria-expanded={sortOpen} onClick={() => setSortOpen(value => !value)}><SlidersHorizontal size={20} /></button>
         <button className="gz-iconbtn" type="button" aria-label="关闭评论" onClick={onClose} autoFocus><X size={20} /></button>
@@ -78,11 +81,7 @@ export default function ComicComments({ pathWord, kind = "comic", onClose }: { p
       {sortOpen && <div className="gz-comments-sort"><span className="gz-meta">仅排序已加载评论</span><div className="gz-seg" aria-label="已加载评论排序">{([["source", "来源顺序"], ["newest", "最新在前"], ["oldest", "最早在前"]] as const).map(([id, label]) => <button type="button" key={id} className={sort === id ? "active" : ""} aria-pressed={sort === id} onClick={() => setSort(id)}>{label}</button>)}</div></div>}
       <div className="gz-comments-list" ref={list}>
         {shown.map(item => <article className="gz-comment-card" key={item.id}>
-          <div className="gz-comment-byline">
-            <span className="gz-comment-avatar">{item.userName.slice(0, 1) || "匿"}{item.userAvatar && <img src={item.userAvatar} alt="" loading="lazy" decoding="async" onError={event => { event.currentTarget.hidden = true; }} />}</span>
-            <span className="gz-comment-name">{item.userName || "匿名用户"}</span>
-            {item.createAt && <time className="gz-meta">{item.createAt}</time>}
-          </div>
+          <CommentIdentity name={item.userName} avatar={item.userAvatar} time={item.createAt} />
           {item.parentUserName && <p className="gz-meta">回复 {item.parentUserName}</p>}
           <p className={`gz-comment-body ${!expanded.has(item.id) && (item.comment.length > 100 || item.comment.split("\n").length > 3) ? "is-collapsed" : ""}`}>{item.comment}</p>
           {(item.comment.length > 100 || item.comment.split("\n").length > 3) && <button type="button" className="gz-comment-expand" aria-expanded={expanded.has(item.id)} onClick={() => setExpanded(previous => { const next = new Set(previous); if (next.has(item.id)) next.delete(item.id); else next.add(item.id); return next; })}>{expanded.has(item.id) ? "收起正文" : "展开全文"}{expanded.has(item.id) ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</button>}
@@ -91,7 +90,7 @@ export default function ComicComments({ pathWord, kind = "comic", onClose }: { p
         {loading && <LoadingIndicator label="正在读取评论…" compact />}
         {error && <div className="gz-comments-error" role="alert"><p>{error}</p>{pathWord && <button type="button" className="gz-btn" onClick={() => void load(items.length === 0, true)}><RefreshCw size={16} />重试</button>}</div>}
         {!loading && !error && !items.length && <div className="gz-empty"><h2>暂无评论</h2><p>这本{label}还没有来源评论。</p></div>}
-        {!loading && !error && hasMore && <button type="button" className="gz-btn gz-comments-more" onClick={() => void load()}>加载更多评论</button>}
+        {hasMore && <AutoLoadSentinel enabled={!loading && !error} load={() => void load()} scrollRoot={list} />}
         {!loading && !error && items.length > 0 && !hasMore && <p className="gz-meta gz-comments-end">已显示全部可读取评论</p>}
       </div>
       <button type="button" className="gz-iconbtn gz-comments-top" aria-label="评论回到顶部" onClick={() => list.current?.scrollTo({ top: 0, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" })}><ArrowUp size={20} /></button>

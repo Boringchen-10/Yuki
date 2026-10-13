@@ -82,7 +82,7 @@ function createFixture() {
       const status = chapter === chapters[0] && offset === 30 && failAppend ? 503 : 200;
       if (status === 503) failAppend = false;
       const items = status === 200 ? Array.from({ length: Math.max(0, Math.min(30, chapter.total - offset)) }, (_, index) => ({
-        id: `${chapter.id}-${offset + index + 1}`, createAt: "2026-10-13", userId: `qa-${index}`, userName: `合成用户${offset + index + 1}`,
+        id: String(offset + index + 1), createAt: "2026-10-13", userId: `qa-${index}`, userName: `合成用户${offset + index + 1}`,
         userAvatar: "", comment: `合成${chapter === chapters[0] ? "甲" : "丙"}评论${String(offset + index + 1).padStart(2, "0")}`,
       })) : [];
       const event = { type: "comments", chapter: chapter.id, offset, status, count: items.length, total: chapter.total, at: Date.now() };
@@ -139,6 +139,18 @@ async function deviceTest() {
     return until(async () => dump(), value => !!node(value, "本话评论", true) && value.includes(title), "reader toolbar");
   };
   const comments = chapter => fixture.events.filter(event => event.type === "comments" && event.chapter === chapter.id);
+  const scrollCommentsUntil = async (accept, label) => {
+    for (let attempt = 0; attempt < 15 && !accept(); attempt++) {
+      const xml = dump();
+      const list = nodes(xml).find(item => item.includes('class="androidx.recyclerview.widget.RecyclerView"'));
+      assert.ok(list, "synthetic comment list must be visible");
+      const bounds = /bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/.exec(list); assert.ok(bounds);
+      const x = Math.round((Number(bounds[1]) + Number(bounds[3])) / 2);
+      command("shell", "input", "swipe", String(x), String(Number(bounds[4]) - 60), String(x), String(Number(bounds[2]) + 60), "240");
+      await delay(200);
+    }
+    assert.ok(accept(), label);
+  };
   try {
     command("shell", "am", "start", "-n", `${app}/com.genzo.android.MainActivity`); await delay(1000);
     const pid = command("shell", "pidof", app).trim(); assert.match(pid, /^\d+$/);
@@ -165,16 +177,17 @@ async function deviceTest() {
     tap(xml, "本话评论", true);
     xml = await until(async () => dump(), value => value.includes("75 条评论") && value.includes("合成甲评论01"), "first chapter comments");
     assert.ok(xml.includes(chapters[0].title)); assert.ok(xml.includes("来源暂未提供本话热度"));
+    assert.ok(!node(xml, "加载更多评论"));
     assert.deepEqual(comments(chapters[0]).map(({ offset, count }) => ({ offset, count })), [{ offset: 0, count: 30 }]);
     shot("first-30"); result.cases.firstPageTitleTotalAndHonestHeat = true;
-    tap(xml, "加载更多评论");
-    xml = await until(async () => dump(), value => value.includes("本话评论读取失败") && value.includes("合成甲评论01"), "append failure retains comments");
+    await scrollCommentsUntil(() => comments(chapters[0]).some(event => event.offset === 30), "scrolling must request offset30 automatically");
+    xml = await until(async () => dump(), value => value.includes("本话评论读取失败") && value.includes("合成甲评论"), "append failure retains comments");
     assert.ok(xml.includes("75 条评论")); assert.equal(comments(chapters[0]).at(-1).status, 503); shot("append-failure");
     tap(xml, "重试");
-    xml = await until(async () => dump(), value => !value.includes("本话评论读取失败") && !!node(value, "加载更多评论") && comments(chapters[0]).filter(event => event.offset === 30).length === 2, "retry same offset");
+    xml = await until(async () => dump(), value => !value.includes("本话评论读取失败") && !value.includes("正在读取本话评论") && comments(chapters[0]).filter(event => event.offset === 30).length === 2, "retry same offset");
     assert.deepEqual(comments(chapters[0]).map(event => event.offset), [0, 30, 30]); result.cases.appendFailureKeepsItemsAndRetriesSamePage = true;
-    tap(xml, "加载更多评论");
-    xml = await until(async () => dump(), value => value.includes("75 条评论") && !node(value, "加载更多评论") && comments(chapters[0]).at(-1)?.offset === 60, "final offset 60 page");
+    await scrollCommentsUntil(() => comments(chapters[0]).some(event => event.offset === 60), "scrolling must request offset60 automatically");
+    xml = await until(async () => dump(), value => value.includes("75 条评论") && !value.includes("正在读取本话评论") && !node(value, "加载更多评论") && comments(chapters[0]).at(-1)?.offset === 60, "final offset 60 page");
     assert.equal(comments(chapters[0]).at(-1).count, 15); shot("complete-75"); result.cases.sourcePagination30And60 = true;
     tap(xml, "关闭"); xml = await chrome(chapters[0].title);
     assert.deepEqual(position(xml), beforePosition);

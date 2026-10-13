@@ -5,14 +5,23 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
+import android.widget.ImageView
 import android.widget.TextView
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import android.graphics.BitmapFactory
+import android.graphics.drawable.GradientDrawable
+import java.io.File
 import org.json.JSONObject
 
 /** Chapter identity comes from the visible comic, scoped by the private reader session. */
@@ -27,6 +36,14 @@ class ReaderChapterComments(private val reader: ReaderActivity) {
     private var dialog: BottomSheetDialog? = null
     private var request: Job? = null
     private var generation = 0
+    private val avatarSlots = Semaphore(2)
+    private val avatarJobs = mutableMapOf<ImageView, Job>()
+
+    private fun cancelAvatars(view: View) {
+        if (view is ImageView) avatarJobs.remove(view)?.cancel()
+        if (view is ViewGroup) for (index in 0 until view.childCount) cancelAvatars(view.getChildAt(index))
+    }
+    private fun cancelAvatarJobs() { avatarJobs.values.toList().forEach { it.cancel() }; avatarJobs.clear() }
 
     fun show(chapter: String, title: String) {
         if (dialog?.isShowing == true) return
@@ -57,32 +74,53 @@ class ReaderChapterComments(private val reader: ReaderActivity) {
         column.addView(count)
         val message = text("", 13f)
         val retry = reader.button("重试") {}
-        val more = reader.button("加载更多评论") {}
+        val layout = LinearLayoutManager(reader)
+        val list = RecyclerView(reader).apply { layoutManager = layout }
+        val views = CommentViews(reader, reader.readerForeground, reader.mutedForeground) { view, url, width ->
+            val id = feed.items.firstOrNull { it.optString("userAvatar") == url }?.optString("id")
+            if (!id.isNullOrEmpty()) {
+                avatarJobs.remove(view)?.cancel()
+                val job = reader.lifecycleScope.launch(start = CoroutineStart.LAZY) {
+                    try {
+                        val bitmap = avatarSlots.withPermit { withContext(Dispatchers.IO) {
+                            val file = reader.client.image("chapter/$chapter/comment-avatar/$id", File(reader.cacheDir, "comment-avatars"))
+                            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }; BitmapFactory.decodeFile(file.path, bounds)
+                            val options = BitmapFactory.Options().apply { inSampleSize = CommentImageSampling.sample(bounds.outWidth, bounds.outHeight, width * 2, width * 2, 65_536) }
+                            BitmapFactory.decodeFile(file.path, options)
+                        } }
+                        if (sequence == generation && avatarJobs[view] === coroutineContext[Job] && bitmap != null) view.setImageBitmap(bitmap)
+                    } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { /* Keep the initial when the avatar is unavailable. */ }
+                    finally { if (avatarJobs[view] === coroutineContext[Job]) avatarJobs.remove(view) }
+                }
+                avatarJobs[view] = job
+                job.start()
+            }
+        }
         val adapter = object : RecyclerView.Adapter<CommentHolder>() {
             override fun getItemCount() = feed.items.size
             override fun onCreateViewHolder(parent: ViewGroup, type: Int): CommentHolder {
-                val row = LinearLayout(reader).apply { orientation = LinearLayout.VERTICAL; setPadding(0, reader.dp(10), 0, reader.dp(12)) }
-                row.layoutParams = RecyclerView.LayoutParams(-1, -2)
+                val row = LinearLayout(reader).apply { orientation = LinearLayout.VERTICAL; setPadding(reader.dp(12), reader.dp(12), reader.dp(12), reader.dp(12))
+                    background = GradientDrawable().apply { setColor(reader.hairlineColor); cornerRadius = reader.dp(18).toFloat() } }
+                row.layoutParams = RecyclerView.LayoutParams(-1, -2).apply { bottomMargin = reader.dp(10) }
                 return CommentHolder(row)
             }
             override fun onBindViewHolder(holder: CommentHolder, index: Int) {
                 val item = feed.items[index]
+                cancelAvatars(holder.row)
                 holder.row.removeAllViews()
-                holder.row.addView(text(item.optString("userName").ifBlank { "匿名用户" }, 14f).apply { setTypeface(typeface, Typeface.BOLD) })
-                holder.row.addView(text(item.optString("createAt"), 12f).apply { setTextColor(reader.mutedForeground) })
+                val identity = views.identity(item, "createAt", true)
+                holder.row.addView(identity)
                 holder.row.addView(text(item.optString("comment"), 14f).apply { setTextIsSelectable(true) })
-                holder.row.addView(View(reader).apply { setBackgroundColor(reader.hairlineColor) }, LinearLayout.LayoutParams(-1, reader.dp(1)))
             }
+            override fun onViewRecycled(holder: CommentHolder) { cancelAvatars(holder.row); super.onViewRecycled(holder) }
         }
-        column.addView(RecyclerView(reader).apply { layoutManager = LinearLayoutManager(reader); this.adapter = adapter }, LinearLayout.LayoutParams(-1, 0, 1f))
-        column.addView(message); column.addView(retry); column.addView(more)
+        list.adapter = adapter; column.addView(list, LinearLayout.LayoutParams(-1, 0, 1f))
+        column.addView(message); column.addView(retry)
         fun render() {
             count.text = if (feed.loaded) "${feed.total} 条评论 · 来源暂未提供本话热度" else "拷贝漫画每话评论"
             message.text = when { loading -> "正在读取本话评论…"; error -> "本话评论读取失败，请检查阅读网络设置后重试。"; feed.items.isEmpty() && feed.loaded -> "本话暂无评论"; else -> "" }
             message.visibility = if (message.text.isBlank()) View.GONE else View.VISIBLE
             retry.visibility = if (error) View.VISIBLE else View.GONE
-            more.visibility = if (feed.loaded && feed.offset < feed.total && !error) View.VISIBLE else View.GONE
-            more.isEnabled = !loading
             adapter.notifyDataSetChanged()
         }
         fun load() {
@@ -102,21 +140,28 @@ class ReaderChapterComments(private val reader: ReaderActivity) {
                         val item = items.getJSONObject(index)
                         if (existing.add(item.getString("id"))) feed.items.add(item)
                     }
-                    feed.offset = offset + items.length(); feed.total = total; feed.loaded = true
+                    feed.offset = offset + page.getInt("limit"); feed.total = total; feed.loaded = true
                 } catch (cancelled: CancellationException) { throw cancelled }
                 catch (_: Exception) { if (sequence == generation) error = true }
                 finally { if (sequence == generation) { loading = false; render() } }
             }
         }
-        retry.setOnClickListener { load() }; more.setOnClickListener { load() }
+        fun moreIfNeeded() {
+            if (sequence == generation && feed.loaded && !loading && !error && feed.offset < feed.total && layout.findLastVisibleItemPosition() >= feed.items.size - 4) load()
+        }
+        list.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(view: RecyclerView, dx: Int, dy: Int) { if (dy > 0) list.post { moreIfNeeded() } }
+        })
+        list.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> list.post { moreIfNeeded() } }
+        retry.setOnClickListener { load() }
         sheet.setContentView(column, LinearLayout.LayoutParams(-1, (reader.resources.displayMetrics.heightPixels * 0.75f).toInt()))
         sheet.setOnDismissListener {
-            if (sequence == generation) { generation++; request?.cancel(); request = null; dialog = null; if (feed.items.size > 200) cache.remove(chapter) }
+            if (sequence == generation) { generation++; request?.cancel(); request = null; cancelAvatarJobs(); list.adapter = null; dialog = null; if (feed.items.size > 200) cache.remove(chapter) }
         }
         sheet.show()
         sheet.behavior.apply { state = com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED; skipCollapsed = true }
         render(); if (!feed.loaded) load()
     }
-    fun close() { generation++; request?.cancel(); request = null; dialog?.dismiss(); dialog = null; cache.clear() }
+    fun close() { generation++; request?.cancel(); request = null; cancelAvatarJobs(); dialog?.dismiss(); dialog = null; cache.clear() }
     private class CommentHolder(val row: LinearLayout) : RecyclerView.ViewHolder(row)
 }

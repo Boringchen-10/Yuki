@@ -35,6 +35,10 @@ for number, media_id in enumerate(seed['mediaIds'], 1):
     images.append(filename)
     episodes.append({'season_number': 1, 'episode_number': number, 'still_path': still})
 data = json.dumps({'name': 'Genzo synthetic stills', 'episodes': episodes})
+if seed.get('variantMediaId'):
+    variant = seed['variantMediaId']
+    assert db.execute('SELECT work_id FROM media_files WHERE id=?', (variant,)).fetchone()[0] == work
+    db.execute("INSERT INTO media_episode_links VALUES(?,?,'bangumi','1212094','manual',1,?)", (variant, work, now))
 key = f'film-tv:zh-CN:tv/{series}/season/1:[]'
 db.execute("INSERT OR REPLACE INTO metadata_cache VALUES('tmdb',?,?,?,?)", (key, data, now, '2099-01-01T00:00:00Z'))
 db.commit()

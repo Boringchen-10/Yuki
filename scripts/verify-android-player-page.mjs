@@ -12,13 +12,13 @@ const command = (...args) => execFileSync(adb, ["-s", serial, ...args], { encodi
 const bytes = (...args) => execFileSync(adb, ["-s", serial, ...args], { timeout: 20000, maxBuffer: 24 * 1024 * 1024 });
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const media = readFileSync("D:/DevTools/Android/Samples/GenzoPrototype/h264.mp4");
-const names = [`GenzoPortraitQA-${run}-13.mp4`, `GenzoPortraitQA-${run}-14.mp4`];
+const names = [`GenzoPortraitQA-${run}-13.mp4`, `GenzoPortraitQA-${run}-14.mp4`, `GenzoPortraitQA-${run}-13-alt.mp4`];
 let stallSecond = false;
 let failSecond = false;
 const server = createServer((req, res) => {
   const path = new URL(req.url, "http://localhost").pathname;
-  if (path === "/rule/detail") { res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }); res.end('<div class="road"><a href="/rule/one">第01集</a><a href="/rule/two">第02集</a></div>'); return; }
-  if (path === "/rule/one" || path === "/rule/two") { res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }); res.end('<video src="/video.mp4"></video>'); return; }
+  if (path === "/rule/detail") { res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }); res.end('<div class="road"><a href="/rule/one">第01集</a><a href="/rule/two">第02集</a></div><div class="road"><a href="/rule/one-b">第01集</a><a href="/rule/two-b">第02集</a></div>'); return; }
+  if (/^\/rule\/(one|two)(-b)?$/.test(path)) { res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }); res.end('<video src="/video.mp4"></video>'); return; }
   if (req.method === "PROPFIND") {
     const item = (href, folder) => `<d:response><d:href>${href}</d:href><d:propstat><d:prop><d:resourcetype>${folder ? "<d:collection/>" : ""}</d:resourcetype>${folder ? "" : `<d:getcontentlength>${media.length}</d:getcontentlength>`}</d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>`;
     res.writeHead(207, { "Content-Type": "application/xml" }); res.end(`<d:multistatus xmlns:d="DAV:">${item("/dav/", true)}${names.map(name => item(`/dav/${name}`, false)).join("")}</d:multistatus>`); return;
@@ -75,11 +75,13 @@ try {
   command("shell", "input", "keyevent", "KEYCODE_WAKEUP"); command("shell", "wm", "dismiss-keyguard"); await connect();
   original = await invoke("get_android_playback_preferences"); await invoke("set_android_playback_preferences", { settings: { hardwareDecoding: true, hardwareDecoder: "mediacodec-copy", videoRenderer: "gpu", superResolution: 0 } });
   sourceId = await invoke("add_webdav_source", { input: { name: `QA Portrait ${run}`, endpoint: `http://127.0.0.1:${port}`, directory: "/dav/", username: "qa", password: "own-fixture", kind: "video" } });
-  const files = (await wait(() => invoke("list_unassigned_media", { destination: "media" }), items => items.filter(f => f.libraryRootId === sourceId).length === 2, "fixture scan")).filter(f => f.libraryRootId === sourceId).sort((a, b) => a.fileName.localeCompare(b.fileName));
+  const allFiles = (await wait(() => invoke("list_unassigned_media", { destination: "media" }), items => items.filter(f => f.libraryRootId === sourceId).length === 3, "fixture scan")).filter(f => f.libraryRootId === sourceId);
+  const files = names.slice(0, 2).map(name => allFiles.find(file => file.fileName === name));
+  const variant = allFiles.find(file => file.fileName === names[2]); assert.ok(variant && files.every(Boolean));
   await wait(() => invoke("list_source_imports"), tasks => !tasks.some(t => t.sourceIds.includes(sourceId) && ["queued", "scanning", "recognizing", "enriching"].includes(t.stage)), "background fixture import");
-  const work = await invoke("create_work_from_media", { mediaFileId: files[0].id, selectedMediaIds: files.map(f => f.id), input: { title: `GenzoPortraitQA-${run}`, originalTitle: null, type: "video", description: "Synthetic isolated player fixture", coverPath: null, status: "planned", favorite: false, rating: null, tags: [], notes: "" } });
+  const work = await invoke("create_work_from_media", { mediaFileId: files[0].id, selectedMediaIds: allFiles.map(f => f.id), input: { title: `GenzoPortraitQA-${run}`, originalTitle: null, type: "video", description: "Synthetic isolated player fixture", coverPath: null, status: "planned", favorite: false, rating: null, tags: [], notes: "" } });
   workId = work.id;
-  writeFileSync(`${output}/seed.json`, JSON.stringify({ app, dataDirectory: info.dataDirectory, workId, mediaIds: files.map(f => f.id), run }));
+  writeFileSync(`${output}/seed.json`, JSON.stringify({ app, dataDirectory: info.dataDirectory, workId, mediaIds: files.map(f => f.id), variantMediaId: variant.id, run }));
   await browser.close(); browser = null; command("shell", "am", "force-stop", app);
   // Only this guarded synthetic QA database is copied. Never run against readerqa or the release package.
   writeFileSync(`${output}/genzo.db`, bytes("exec-out", "run-as", app, "cat", "genzo.db"));
@@ -98,6 +100,17 @@ try {
   assert.equal(covers.length, 2); writeFileSync(`${output}/cover-bounds.json`, JSON.stringify(covers));
   const fraction = Number(execFileSync(python, ["-c", "from PIL import Image;import json,sys;im=Image.open(sys.argv[1]).convert('RGB'); boxes=json.load(open(sys.argv[2])); print(min(sum(max(p)-min(p)>70 for p in im.crop(b).resize((80,45)).getdata())/3600 for b in boxes))", `${output}/portrait.png`, `${output}/cover-bounds.json`], { encoding: "utf8" }));
   assert.ok(fraction > .4, `real episode bitmap missing: ${fraction}`); result.cases.actualCachedEpisodeStills = true;
+  tapPrefix(dump(), "播放文件");
+  xml = await wait(async () => dump(), xml => xml.includes("选择本集文件") && xml.includes(names[2]), "same episode file picker"); shot("file-choices");
+  assert.ok(!xml.includes(names[1]), "another episode leaked into file choices");
+  tap(xml, names[2]);
+  current = await wait(() => native("playerState"), state => state.mediaFileId === variant.id && state.status === "playing", "variant file identity");
+  await native("playerControl", { action: "pause", sessionId: current.sessionId });
+  await wait(async () => dump(), xml => !!node(xml, "第01集 当前选集"), "variant keeps official episode");
+  tapPrefix(dump(), "播放文件"); tap(dump(), names[0]);
+  current = await wait(() => native("playerState"), state => state.mediaFileId === files[0].id && state.status === "playing", "original file identity");
+  await native("playerControl", { action: "pause", sessionId: current.sessionId });
+  result.cases.sameEpisodeFilePickerSwitchesStableMediaId = true;
   const dimensions = /(?:Physical|Override) size: (\d+)x(\d+)/.exec(command("shell", "wm", "size")); const width = Number(dimensions[1]);
   for (let i = 0; i < 2; i++) { command("shell", "input", "tap", String(width >> 1), String(Math.round(width * 9 / 32))); await delay(300); }
   tap(dump(), "更多播放设置"); await delay(250); command("shell", "input", "keyevent", "KEYCODE_BACK"); await delay(250);
@@ -133,6 +146,12 @@ try {
   tap(dump(), "评论");
   xml = await wait(async () => dump(), xml => xml.includes("第02集 · Bangumi 分集讨论") && !xml.includes("正在读取 Bangumi 本集讨论"), "Bangumi comments", 45000); shot("comments");
   assert.ok(!xml.includes("读取失败"), "live Bangumi comments failed"); assert.ok(xml.includes("Bangumi")); result.cases.liveCurrentEpisodeDiscussion = true;
+  const assets = await wait(async () => {
+    try { return command("shell", "run-as", app, "ls", "covers/comment-discussions").trim().split("\n").filter(name => name.endsWith("-comment.jpg")); }
+    catch { return []; }
+  }, files => files.length > 0, "real discussion avatar cache", 30000);
+  assert.ok(xml.includes("头像")); await delay(500); shot("comments-with-avatars");
+  result.cases.realDiscussionImagesUseBoundedPrivateCache = true;
   tap(xml, "选集");
   await native("playerControl", { action: "close", sessionId: current.sessionId }); result.cases.closeReturnsToLibrary = true;
   current = await invoke("open_internal_player", { mediaFileId: files[0].id, restart: true, subtitleId: null });
@@ -158,6 +177,11 @@ try {
   await wait(() => native("playerState"), s => s.sessionId === current.sessionId && s.status === "playing", "rule preview player");
   await native("playerControl", { action: "pause", sessionId: current.sessionId });
   await wait(async () => dump(), xml => !!node(xml, "第01集 当前选集") && !!node(xml, "第02集"), "rule episode panel");
+  tapPrefix(dump(), "播放线路");
+  xml = await wait(async () => dump(), xml => xml.includes("选择播放线路") && xml.includes("线路2"), "current source roads only"); shot("rule-roads");
+  assert.ok(xml.includes("2 集") && !xml.includes("选择本集文件")); tap(xml, "线路2");
+  await wait(async () => dump(), xml => xml.includes("播放线路  ·  线路2"), "selected road label");
+  result.cases.currentRuleSourceRoadPicker = true;
   tap(dump(), "第02集"); await wait(() => native("playerState"), s => s.sessionId !== current.sessionId && s.status === "playing", "rule page switches episode");
   current = await native("playerState"); await native("playerControl", { action: "pause", sessionId: current.sessionId });
   await wait(async () => dump(), xml => !!node(xml, "第02集 当前选集"), "rule current selection");

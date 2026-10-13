@@ -36,6 +36,9 @@ class PlayerPage(context: Context, private val session: String?, private val med
     private val comments = mutableListOf<JSONObject>()
     private val imagePaths = mutableMapOf<String, String>()
     private val requestedImages = mutableSetOf<String>()
+    private val commentRequests = mutableMapOf<Long, String>()
+    private val failedCommentImages = mutableSetOf<String>()
+    private val commentTargets = mutableMapOf<String, MutableList<Pair<java.lang.ref.WeakReference<ImageView>, Int>>>()
     private val shownImages = mutableSetOf<String>()
     private val bitmaps = object : android.util.LruCache<String, android.graphics.Bitmap>(8 * 1024 * 1024) {
         override fun sizeOf(key: String, value: android.graphics.Bitmap) = value.allocationByteCount
@@ -48,8 +51,10 @@ class PlayerPage(context: Context, private val session: String?, private val med
     private var commentsTotal = 0
     private var commentsOffset = 0
     private var commentsHasMore = false
+    private var commentsFailed = false
     private var commentsRequest = 0L
     private var repliesDialog: BottomSheetDialog? = null
+    private var sourceDialog: BottomSheetDialog? = null
     private var playing = false
     private val tabs = LinearLayout(context)
     private val episodesTab = tab("选集") { selectTab("episodes") }
@@ -59,10 +64,11 @@ class PlayerPage(context: Context, private val session: String?, private val med
     private val summary = text("", 13f)
     private val message = text("", 14f)
     private val retry = text("重试", 14f, true)
-    private val more = text("加载更多评论", 14f, true)
+    private val more = text("正在读取更多评论…", 14f)
     private val grid = GridLayoutManager(context, 2)
     private val list = RecyclerView(context)
     private val adapter = RowsAdapter()
+    private val commentViews = CommentViews(context, foregroundColor, muted) { view, url, width -> bindCommentImage(view, url, width) }
 
     init {
         orientation = VERTICAL; setBackgroundColor(Color.rgb(13, 22, 18)); setPadding(dp(16), 0, dp(16), 0)
@@ -74,10 +80,13 @@ class PlayerPage(context: Context, private val session: String?, private val med
         source.setPadding(dp(16), dp(16), dp(16), dp(16)); source.background = shape(surface, 16); source.foreground = ripple(); source.setOnClickListener { chooseSource() }
         addView(source, LayoutParams(-1, -2)); addView(summary, LayoutParams(-1, dp(44)))
         message.gravity = Gravity.CENTER; message.setPadding(dp(8), dp(12), dp(8), dp(12)); addView(message)
-        retry.gravity = Gravity.CENTER; retry.setTextColor(accent); retry.foreground = ripple(); retry.minimumHeight = dp(48); retry.setOnClickListener { if (selectedTab == "comments") loadComments() else loadContext() }; addView(retry)
+        retry.gravity = Gravity.CENTER; retry.setTextColor(accent); retry.foreground = ripple(); retry.minimumHeight = dp(48); retry.setOnClickListener { if (selectedTab == "comments") { failedCommentImages.clear(); loadComments() } else loadContext() }; addView(retry)
         list.layoutManager = grid; list.adapter = adapter; list.clipToPadding = false; list.setPadding(0, 0, 0, dp(16)); list.itemAnimator = null
         addView(list, LayoutParams(-1, 0, 1f))
-        more.gravity = Gravity.CENTER; more.setTextColor(accent); more.foreground = ripple(); more.minimumHeight = dp(48); more.setOnClickListener { loadComments(commentsOffset) }; addView(more)
+        more.gravity = Gravity.CENTER; more.setTextColor(muted); more.minimumHeight = dp(44); addView(more)
+        list.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(view: RecyclerView, dx: Int, dy: Int) { if (dy > 0) maybeLoadComments() }
+        })
         render(); loadContext()
     }
 
@@ -95,6 +104,7 @@ class PlayerPage(context: Context, private val session: String?, private val med
         if (action == "context") contextRequest = sequence
         if (action == "comments") commentsRequest = sequence
         if (action in listOf("play", "comments", "context")) requests.addFirst(value) else if (requests.size < 32) requests.addLast(value) else return false
+        if (action == "commentImage") commentRequests[sequence] = "comment:${extra.optString("url")}"
         return true
     }
     fun takeRequest(): JSONObject? = if (disposed) null else requests.pollFirst()
@@ -108,9 +118,9 @@ class PlayerPage(context: Context, private val session: String?, private val med
                 if (value.has("error")) { message.text = value.optString("error"); message.visibility = VISIBLE; retry.visibility = VISIBLE; return }
                 val changed = data.optString("commentEpisodeId") != value.optString("commentEpisodeId")
                 if (changed) {
-                    repliesDialog?.dismiss(); repliesDialog = null
+                    repliesDialog?.dismiss(); repliesDialog = null; sourceDialog?.dismiss(); sourceDialog = null
                     commentsRequest = ++sequence; comments.clear(); commentsLoaded = false; commentsLoading = false
-                    commentsOffset = 0; commentsTotal = 0; commentsHasMore = false
+                    commentsOffset = 0; commentsTotal = 0; commentsHasMore = false; commentsFailed = false
                 }
                 data = value; title.text = value.optString("title", "视频播放")
                 allRows = objects(value.optJSONArray("rows")); selectedSource = value.optString("selectedSource")
@@ -120,6 +130,7 @@ class PlayerPage(context: Context, private val session: String?, private val med
             }
             "comments" -> {
                 commentsLoading = false
+                commentsFailed = value.has("error")
                 if (value.has("error")) { if (selectedTab == "comments") { message.text = value.optString("error"); retry.visibility = VISIBLE } }
                 else {
                     if (value.optInt("offset") == 0) comments.clear()
@@ -136,6 +147,15 @@ class PlayerPage(context: Context, private val session: String?, private val med
                 val key = value.optString("episodeKey"); imagePaths[key] = it
                 if (selectedTab == "episodes") visibleRows.forEachIndexed { index, row -> if (row.optString("episodeKey") == key) adapter.notifyItemChanged(index) }
             } }
+            "commentImage" -> {
+                val key = commentRequests.remove(requestId) ?: return
+                requestedImages.remove(key)
+                val path = value.optString("path").takeIf { it.isNotBlank() && it != "null" }
+                if (path != null) { imagePaths[key] = path; failedCommentImages.remove(key)
+                    commentTargets.remove(key)?.forEach { (reference, width) -> reference.get()?.takeIf { it.tag == key && it.isAttachedToWindow }?.let { bindCommentImage(it, key.removePrefix("comment:"), width) } }
+                } else failedCommentImages.add(key)
+                if (path == null) commentTargets.remove(key)
+            }
             "play" -> { playing = false; if (value.has("error")) { message.text = value.optString("error"); retry.visibility = GONE }; adapter.notifyDataSetChanged() }
         }
     }
@@ -145,7 +165,9 @@ class PlayerPage(context: Context, private val session: String?, private val med
         if (tab == selectedTab) return
         PlayerMotion.swap(list) {
             selectedTab = tab; message.text = ""; retry.visibility = GONE
-            if (tab == "comments" && !commentsLoaded && !commentsLoading) loadComments()
+            if (tab == "comments") failedCommentImages.clear()
+            if (tab == "comments" && commentsFailed) { message.text = "Bangumi 本集讨论读取失败，请重试。"; retry.visibility = VISIBLE }
+            else if (tab == "comments" && !commentsLoaded && !commentsLoading) loadComments()
             render()
         }
     }
@@ -155,8 +177,32 @@ class PlayerPage(context: Context, private val session: String?, private val med
             render(); return
         }
         if (commentsLoading) return
-        commentsLoading = true; message.text = if (offset == 0) "正在读取 Bangumi 本集讨论…" else ""; retry.visibility = GONE
+        commentsLoading = true; commentsFailed = false; message.text = if (offset == 0) "正在读取 Bangumi 本集讨论…" else ""; retry.visibility = GONE
         request("comments", JSONObject().put("offset", offset)); render()
+    }
+    private fun maybeLoadComments() {
+        if (!disposed && selectedTab == "comments" && commentsLoaded && commentsHasMore && !commentsLoading && !commentsFailed
+            && grid.findLastVisibleItemPosition() >= comments.size - 4) loadComments()
+    }
+    private fun bindCommentImage(view: ImageView, url: String, width: Int) {
+        val key = "comment:$url"
+        val path = imagePaths[key]?.takeIf { File(it).isFile }
+        if (path == null) {
+            view.tag = key
+            if (key !in failedCommentImages) commentTargets.getOrPut(key) { mutableListOf() }.apply { removeAll { it.first.get() == null }; add(java.lang.ref.WeakReference(view) to width) }
+            if (key !in requestedImages && key !in failedCommentImages && request("commentImage", JSONObject().put("url", url))) requestedImages.add(key)
+            return
+        }
+        view.tag = path
+        val cached = bitmaps.get(path)
+        if (cached != null) { view.setImageBitmap(cached); return }
+        images.execute {
+            if (!File(path).canonicalPath.startsWith(File(context.applicationInfo.dataDir).canonicalPath + "/")) return@execute
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }; BitmapFactory.decodeFile(path, bounds)
+            val options = BitmapFactory.Options().apply { inSampleSize = CommentImageSampling.sample(bounds.outWidth, bounds.outHeight, width * 2, if (view.adjustViewBounds) resources.displayMetrics.heightPixels * 2 else width * 2) }
+            val bitmap = BitmapFactory.decodeFile(path, options)
+            view.post { if (!disposed && view.tag == path && view.isAttachedToWindow && bitmap != null) { bitmaps.put(path, bitmap); view.setImageBitmap(bitmap) } }
+        }
     }
     private fun showReplies(parent: JSONObject, replies: JSONArray) {
         repliesDialog?.dismiss()
@@ -178,9 +224,8 @@ class PlayerPage(context: Context, private val session: String?, private val med
             override fun onBindViewHolder(holder: RowHolder, index: Int) {
                 val item = if (index == 0) parent else replies.getJSONObject(index - 1)
                 holder.column.removeAllViews()
-                holder.column.addView(text((if (index == 0) "楼主 · " else "") + item.optString("userName", "匿名用户"), 14f, true))
-                holder.column.addView(text(item.optString("createdAt").take(10), 12f).apply { setTextColor(muted) })
-                holder.column.addView(text(item.optString("comment"), 14f).apply { setTextIsSelectable(true) })
+                holder.column.addView(commentViews.identity(item))
+                holder.column.addView(commentViews.body(item.optString("comment")))
             }
         }
         column.addView(rows, LayoutParams(-1, -1))
@@ -190,15 +235,30 @@ class PlayerPage(context: Context, private val session: String?, private val med
     }
 
     private fun chooseSource() {
-        val options = linkedMapOf<String, String>()
-        allRows.forEach { row -> row.optString("sourceId").takeIf { it.isNotBlank() && it != "null" }?.let { options[it] = row.optString("sourceLabel", "播放来源") } }
+        val rules = objects(data.optJSONArray("roads"))
+        val ruleMode = rules.isNotEmpty()
+        val options = if (ruleMode) rules else objects(data.optJSONArray("fileChoices"))
         if (options.isEmpty()) return
         val dialog = BottomSheetDialog(context); val column = LinearLayout(context).apply { orientation = VERTICAL; setPadding(dp(16), dp(16), dp(16), dp(24)); setBackgroundColor(surface) }
-        column.addView(text("播放来源与线路", 18f, true), LayoutParams(-1, dp(48)))
-        options.forEach { (id, label) -> column.addView(text((if (id == selectedSource) "✓  " else "") + label, 15f).apply {
-            minimumHeight = dp(52); foreground = ripple(); setTextColor(if (id == selectedSource) accent else foregroundColor)
-            setOnClickListener { PlayerMotion.swap(list) { selectedSource = id; render() }; dialog.dismiss() }
-        }) }
+        sourceDialog?.dismiss(); sourceDialog = dialog
+        dialog.setOnDismissListener { if (sourceDialog === dialog) sourceDialog = null }
+        column.addView(text(if (ruleMode) "选择播放线路" else "选择本集文件", 18f, true), LayoutParams(-1, dp(48)))
+        options.forEach { option ->
+            val id = option.optString("id")
+            val chosen = if (ruleMode) id == selectedSource else option.optBoolean("current")
+            val available = ruleMode || option.optBoolean("available")
+            val card = LinearLayout(context).apply { orientation = VERTICAL; setPadding(dp(14), dp(12), dp(14), dp(12)); minimumHeight = dp(68)
+                background = shape(if (chosen) Color.rgb(45, 77, 63) else Color.rgb(31, 43, 36), 16); foreground = ripple(); alpha = if (available) 1f else .45f }
+            card.addView(text((if (chosen) "✓  " else "") + (if (ruleMode) option.optString("label") else option.optString("fileName", "视频文件")), 15f, true).apply { maxLines = 3; ellipsize = TextUtils.TruncateAt.END })
+            card.addView(text(if (ruleMode) "${allRows.count { it.optString("sourceId") == id }} 集" else option.optString("sourceLabel") + if (available) "" else " · 来源停用或文件缺失", 12f).apply { setTextColor(muted) })
+            card.isEnabled = available && !playing
+            card.setOnClickListener {
+                if (ruleMode) PlayerMotion.swap(list) { selectedSource = id; render(); list.scrollToPosition(0) }
+                else if (!chosen && !playing) { playing = true; request("play", JSONObject().put("target", id)); adapter.notifyDataSetChanged() }
+                dialog.dismiss()
+            }
+            column.addView(card, LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
+        }
         dialog.setDismissWithAnimation(PlayerMotion.enabled); dialog.setContentView(android.widget.ScrollView(context).apply { addView(column) }); dialog.show()
     }
     private fun render() {
@@ -207,14 +267,17 @@ class PlayerPage(context: Context, private val session: String?, private val med
         episodesTab.isSelected = episodes; commentsTab.isSelected = !episodes
         source.visibility = if (episodes) VISIBLE else GONE
         visibleRows = allRows.filter { selectedSource.isEmpty() || it.optString("sourceId") == selectedSource }
-        source.text = "播放来源  ·  ${visibleRows.firstOrNull()?.optString("sourceLabel") ?: "暂无来源"}  ﹀"
+        val ruleMode = objects(data.optJSONArray("roads")).isNotEmpty()
+        if (!ruleMode) visibleRows = visibleRows.groupBy { it.optString("episodeKey").takeUnless { key -> key.isBlank() || key == "null" } ?: it.optString("id") }.values.map { group -> group.firstOrNull { it.optBoolean("current") } ?: group.firstOrNull { it.optBoolean("available") } ?: group.first() }
+        val currentFile = allRows.firstOrNull { it.optBoolean("current") && it.has("mediaFileId") }
+        source.text = if (ruleMode) "播放线路  ·  ${visibleRows.firstOrNull()?.optString("sourceLabel") ?: "暂无线路"}  ﹀" else "播放文件  ·  ${currentFile?.optString("fileName") ?: "当前文件"}  ﹀"
         summary.text = if (episodes) "全部剧集 · ${visibleRows.size} 集" else "${data.optString("commentEpisodeLabel").takeUnless { it == "null" || it.isBlank() } ?: "当前集"} · Bangumi 分集讨论${if (commentsLoaded) " · $commentsTotal 条" else ""}"
         summary.setTextColor(muted); grid.spanCount = if (episodes) 2 else 1
-        more.visibility = if (!episodes && commentsLoaded && commentsHasMore) VISIBLE else GONE
-        more.isEnabled = !commentsLoading; more.text = if (commentsLoading) "正在读取…" else "加载更多评论"
+        more.visibility = if (!episodes && commentsLoaded && commentsLoading) VISIBLE else GONE
         if (episodes && data.has("rows") && visibleRows.isEmpty()) message.text = "暂无可播放剧集，请返回关联本地、WebDAV 或规则来源。"
         message.visibility = if (message.text.isBlank()) GONE else VISIBLE
         adapter.notifyDataSetChanged()
+        list.post { maybeLoadComments() }
     }
 
     private inner class RowHolder(val column: LinearLayout) : RecyclerView.ViewHolder(column)
@@ -227,11 +290,11 @@ class PlayerPage(context: Context, private val session: String?, private val med
         }
         override fun onBindViewHolder(holder: RowHolder, index: Int) {
             val column = holder.column; column.removeAllViews(); column.setOnClickListener(null)
+            column.setPadding(dp(8), dp(8), dp(8), dp(10))
             if (selectedTab == "comments") {
-                val item = comments[index]; column.background = shape(surface, 12)
-                column.addView(text("#${item.optInt("floor")}  ${item.optString("userName", "匿名用户")}", 14f, true))
-                column.addView(text(item.optString("createdAt").take(10) + item.optDouble("rate").takeIf { !it.isNaN() && it > 0 }?.let { " · $it 分" }.orEmpty(), 12f).apply { setTextColor(muted); setPadding(0, dp(5), 0, dp(8)) })
-                column.addView(text(item.optString("comment"), 14f).apply { setTextIsSelectable(true) })
+                val item = comments[index]; column.background = shape(surface, 20); column.setPadding(dp(14), dp(14), dp(14), dp(14))
+                column.addView(commentViews.identity(item))
+                column.addView(commentViews.body(item.optString("comment")))
                 val replies = item.optJSONArray("replies")
                 if (replies != null && replies.length() > 0) column.addView(tab("查看 ${replies.length()} 条回复") { showReplies(item, replies) })
                 return
@@ -269,5 +332,5 @@ class PlayerPage(context: Context, private val session: String?, private val med
             column.setOnClickListener { if (!current && !playing) { playing = true; request("play", JSONObject().put("target", row.optString("id"))); adapter.notifyDataSetChanged() } }
         }
     }
-    fun dispose() { repliesDialog?.dismiss(); repliesDialog = null; disposed = true; requests.clear(); images.shutdownNow(); bitmaps.evictAll(); list.adapter = null; list.animate().cancel() }
+    fun dispose() { repliesDialog?.dismiss(); repliesDialog = null; sourceDialog?.dismiss(); sourceDialog = null; disposed = true; requests.clear(); commentRequests.clear(); commentTargets.clear(); failedCommentImages.clear(); images.shutdownNow(); bitmaps.evictAll(); list.adapter = null; list.animate().cancel() }
 }

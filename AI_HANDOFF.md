@@ -1,5 +1,17 @@
 # Codex 与 DeepSeek Harness 项目交接记录
 
+## 评论呈现 / 自动追加 / 播放选择 v0.13.0（2026-10-13）
+
+- 基线 `fec8d44`，同一 `.tmp/android-first` / `codex/android-first`。用户六图确认评论和发现列表下滑自动追加、漫画小说卡片与内联回复、动漫作品吐槽含评分、分集讨论卡片和线路 / 同集文件选择；中途用户“继续”保持该范围。完整OpenDesign工作树参与构建。AndroidApp / BangumiCommentFeed自身增量保存 `COMMENT_PRESENTATION_SOURCE_HANDOFF.patch`，ExplorePanel自身增量保存 `COMMENT_DISCOVERY_SOURCE_HANDOFF.patch`，均在docs/android下、**当前已应用**；用 `git apply --unidiff-zero --reverse --check`核对，不重复应用，不把其他维护者WIP整文件提交。
+- React评论按实际面板滚动容器自动追加，回复首次展开才取10条，收起不继续加载；同步pending、成功源offset+limit / page+1游标、ID去重、错误停自动请求 / 保留列表 / 重试原页、退出与跨作品晚到隔离均保留。头像 / 相对时间共用小组件，回复同样呈现；动漫吐槽7分准确为3.5星。参考图保留Genzo主题，标题区显示作品，不复制第三方素材或发帖功能。
+- 发现热门、漫画分类、小说及拷贝漫画 / 小说搜索自动追加；修复追加失败循环、漫画去重游标、小说失败丢旧网格及题材 / 搜索晚到覆盖。隐藏页 / 详情 / 搜索不误触发后台发现分页。漫画首页“更多”为进入分类导航，热门更新与Bangumi搜索无现有分页接口，未伪造下一页。
+- Native播放与本话评论去掉更多按钮，按RecyclerView可见项追加，失败明确重试。分集讨论头像和最多4个来源内嵌图经当前讨论内容allowlist、既有可信HTTPS / 域名 / 字节 / 图片限制及Bangumi网络读取；生成缓存独立按64MiB预算淘汰，Kotlin宽高 / 像素采样、定点更新图片，pending与失败区分。只读审查发现原新写路径会让失败URL永久pending、长图仅按宽采样及全列表重绑，均在最终构建前修正。阅读器头像只允许本会话已读取的本话实际评论ID，按View管理任务，回收 / 关闭取消，旧图不能进入新话。
+- 播放器规则只列当前来源实际线路及集数；本地 / WebDAV按当前官方分集列实际文件 / 来源 / 当前项，缺失停用不可选，无分集只给当前文件，不猜文件名。切换用既有稳定mediaID / 各自进度，网格同源多版本合为分集卡。审查发现规则根在真实DB也为source_type=local，最终SQL以rule_plugins / rule_episodes关联辨别，补实际数据库同集DAV / 规则根回归，不用手工sourceKind假数据掩盖混入。
+- 最终完整Rust **374通过 / 18忽略 / 0失败**，前端 **112通过**、TypeScript通过；Android / Release和优化日常包构建通过，Kotlin **12项通过**（新增时间 / 长图预算2项）。真实React评论 **16场景**、发现 **10场景**和各自 **6宽度（360 / 412 / 915 / 1024 / 1366 / 1920）**通过，无横溢出 / pageerror，源码哈希与构建锁定一致。评论脚本最初在180ms展开动画未完成时滚动，改等待实际opacity=1后通过，没有为脚本修改生产。QA总目录 `D:/DevTools/Android/Build/qa/comment-ui-20261013/`。
+- 同一加PLK110 / Android16独立organizeqa：原生instrumentation **7项通过**（340.162秒，包含加载壳Espresso等待，不能作为接口延迟），覆盖两种选择器 / 同集目标ID、自动20/20/5、失败停请求 / 同页重试、回复 / 切集 / 未关联、头像实际ID / 关闭取消 / 跨话；合成播放器 **18项通过** `player-page-1791887537107`，含同集两个真实视频文件切换稳定ID、规则两线路、真实Bangumi头像缓存、封面 / GPU / 横屏 / 全屏 / 取消 / 503 / 试播隐私；本话评论 **9项通过** `chapter-comments-1791887714253`，含30/30/15滚动追加、503保留重试、缓存 / 阅读位置 / 切话 / 晚到隔离。真实拷贝作品zangsongdefulilian自动10→20条且无更多按钮，主评论30194真实1回复parentId一致 / 约549ms并实际展开收起；数量与时间仅采样，评论正文只临时截图，不进Git / APK。
+- 最终签名 `D:/DevTools/Android/Build/previews/comment-ui-20261013/Genzo_0.13.0_comment-ui_arm64-v8a.apk`，**50,317,235字节**，SHA256 **4699dacc5bd997e92e2dbc54d4c4416de39dfaf36f6b086ab673dc2d420eda9a**，0.13.0 / code13000 / com.genzo.android / arm64 / min26 / target36 / 非debuggable / 原证书，v2/v3及16KiB ZIP通过。411份完整当前生产源匹配D构建副本、3原生库匹配Gradle stripped、8官方shader / 许可匹配，内嵌index-BdSetwEu.js / index-HxLXc3Fo.css，无用户DB / 图书 / 测试媒体。日常APK归档qa/comment-ui-20261013/reader-final.apk；依赖和数据库迁移未改变。
+- 普通签名包与原日常readerqa均覆盖安装，安装哈希匹配。新取更新前后 **34作品 / 17来源 / 23播放记录 / 16规则**、个人字段、来源 / 规则ID及版本 / 启停、位置 / 时长 / 完成及4播放偏好一致；用户期间已有23条，不能套用上一轮21条。无清库 / 隐式扫描，不复制用户DB / 凭据或向用户包写合成数据。测试组件organizeqa.test已卸载，9352及各测试转发 / 反向端口清理，无录屏 / 重启；共享前端同步D构建dist，9228 / 9351指向新日常PID，最后停播放设置，不自动播放用户媒体。仅单机短测，不宣称全部机型 / 长时网络性能；不创建公开Release / 标签 / 推送，公开版仍v0.5.2。说明见docs/android/COMMENT_PRESENTATION.md。
+
 ## 拷贝作品评论展开回复 v0.12.0（2026-10-13）
 
 - 基线 `f16708f`，同一 `.tmp/android-first` / `codex/android-first`，用户要求“拷贝回复内容可展开”。原ComicComments仅显示回复数量与“回复内容待接入”，Rust两接口固定空reply_id。沿用Kira快照fc3f242f的漫画comments / 轻小说bookcomments约定，增加可选reply_id，旧主评论调用兼容；正整数与分页校验在元数据 / 网络前完成。当前每话roasts没有回复关系，不冒充每话回复；无新依赖 / 迁移 / 登录发帖。

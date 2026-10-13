@@ -5,6 +5,7 @@ import android.content.Intent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
+import androidx.recyclerview.widget.RecyclerView
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.espresso.Espresso.onView
@@ -30,6 +31,11 @@ class PlayerEpisodeCommentsTest {
     private fun page(view: View): PlayerPage? {
         if (view is PlayerPage) return view
         if (view is ViewGroup) for (i in 0 until view.childCount) page(view.getChildAt(i))?.let { return it }
+        return null
+    }
+    private fun list(view: View): RecyclerView? {
+        if (view is RecyclerView) return view
+        if (view is ViewGroup) for (i in 0 until view.childCount) list(view.getChildAt(i))?.let { return it }
         return null
     }
     private fun context(id: String?, label: String) = JSONObject().put("title", "合成作品").put("rows", JSONArray()).put("roads", JSONArray())
@@ -72,6 +78,66 @@ class PlayerEpisodeCommentsTest {
             onView(withText("评论")).perform(click()); Thread.sleep(350)
             onView(withText(containsString("未匹配 Bangumi 分集"))).check(matches(isDisplayed()))
             scene.onActivity { assertNull(panel.takeRequest()) }
+        }
+    }
+
+    @Test fun scrollingAppendsCommentsAndFailureRetriesTheSameOffsetWithoutLooping() {
+        fun comments(offset: Int, size: Int, total: Int) = JSONObject().put("offset", offset).put("limit", 20).put("total", total).put("items", JSONArray().apply {
+            repeat(size) { index -> put(JSONObject().put("id", offset + index + 1).put("userName", "用户${offset + index}")
+                .put("createdAt", "2026-10-13T07:00:00Z").put("comment", "第${offset + index}条合成评论\n用于滚动自动分页的正文。\n保留当前列表。")) }
+        })
+        scenario().use { scene ->
+            lateinit var panel: PlayerPage
+            scene.onActivity { activity -> panel=requireNotNull(page(activity.window.decorView)); panel.accept("context", context("1212094", "第01集"), requireNotNull(panel.takeRequest()).getLong("id")) }
+            onView(withText("评论")).perform(click())
+            val first=take(scene,panel)
+            scene.onActivity { panel.accept("comments",comments(0,20,45),first.getLong("id")); requireNotNull(list(panel)).scrollToPosition(19) }
+            val next=take(scene,panel); assertEquals("comments",next.getString("action")); assertEquals(20,next.getInt("offset"))
+            scene.onActivity { panel.accept("comments",JSONObject().put("error","合成网络失败"),next.getLong("id")) }
+            Thread.sleep(300)
+            scene.onActivity { assertNull(panel.takeRequest()); assertEquals(20,requireNotNull(list(panel)).adapter!!.itemCount) }
+            onView(withText("加载更多评论")).check(doesNotExist())
+            onView(withText("重试")).perform(click())
+            val retry=take(scene,panel); assertEquals(20,retry.getInt("offset"))
+            scene.onActivity { panel.accept("comments",comments(20,20,45),retry.getLong("id")); requireNotNull(list(panel)).scrollToPosition(39) }
+            val last=take(scene,panel); assertEquals(40,last.getInt("offset"))
+            scene.onActivity { panel.accept("comments",comments(40,5,45),last.getLong("id")); requireNotNull(list(panel)).scrollToPosition(44) }
+            Thread.sleep(200)
+            scene.onActivity { assertEquals(45,requireNotNull(list(panel)).adapter!!.itemCount); assertNull(panel.takeRequest()) }
+        }
+    }
+
+    @Test fun filePickerKeepsOnlyTheCurrentEpisodeAndRequestsTheChosenFileIdentity() {
+        fun file(id:String,name:String,key:String,source:String,current:Boolean)=JSONObject().put("id",id).put("mediaFileId",id).put("fileName",name).put("title","官方分集")
+            .put("episodeKey",key).put("label",if(key.endsWith("94")) "第01集" else "第02集").put("sourceId",source).put("sourceLabel",source).put("available",true).put("current",current)
+        scenario().use { scene ->
+            lateinit var panel:PlayerPage
+            val local=file("local13","本地13.mkv","bangumi:1212094","local",true)
+            val cloud=file("cloud13","云端13.mp4","bangumi:1212094","webdav",false)
+            val next=file("next14","下一集14.mp4","bangumi:1212095","local",false)
+            val data=context("1212094","第01集").put("selectedSource","local").put("rows",JSONArray().put(local).put(cloud).put(next)).put("fileChoices",JSONArray().put(local).put(cloud))
+            scene.onActivity { activity -> panel=requireNotNull(page(activity.window.decorView)); panel.accept("context",data,requireNotNull(panel.takeRequest()).getLong("id")) }
+            onView(withText(containsString("播放文件"))).perform(click())
+            onView(withText("选择本集文件")).check(matches(isDisplayed()))
+            onView(withText("下一集14.mp4")).check(doesNotExist())
+            onView(withText("云端13.mp4")).perform(click())
+            val play=take(scene,panel); assertEquals("play",play.getString("action")); assertEquals("cloud13",play.getString("target"))
+        }
+    }
+
+    @Test fun rulePickerShowsOnlyRoadsAndTheirEpisodeCounts() {
+        scenario().use { scene ->
+            lateinit var panel:PlayerPage
+            val rows=JSONArray()
+            repeat(2) { road -> repeat(2) { index -> rows.put(JSONObject().put("id","rule:$road:$index").put("label","第0${index+1}集").put("sourceId","rule:$road")
+                .put("sourceLabel",if(road==0) "线路一" else "线路二").put("ruleRoad",road).put("ruleIndex",index).put("current",road==0&&index==0).put("available",true)) } }
+            val data=context(null,"").put("selectedSource","rule:0").put("rows",rows).put("roads",JSONArray().put(JSONObject().put("id","rule:0").put("label","线路一")).put(JSONObject().put("id","rule:1").put("label","线路二")))
+            scene.onActivity { activity -> panel=requireNotNull(page(activity.window.decorView)); panel.accept("context",data,requireNotNull(panel.takeRequest()).getLong("id")) }
+            onView(withText(containsString("播放线路"))).perform(click())
+            onView(withText("选择播放线路")).check(matches(isDisplayed()))
+            onView(withText("选择本集文件")).check(doesNotExist())
+            onView(withText("线路二")).perform(click())
+            onView(withText(containsString("播放线路  ·  线路二"))).check(matches(isDisplayed()))
         }
     }
 }

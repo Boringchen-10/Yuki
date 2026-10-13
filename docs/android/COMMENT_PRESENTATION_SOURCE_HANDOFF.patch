@@ -1,0 +1,16 @@
+--- a/src/android/AndroidApp.tsx
++++ b/src/android/AndroidApp.tsx
+@@ -1278 +1278 @@
+-    {comicCommentsOpen && <ComicComments pathWord={readingSource?.pathWord ?? null} kind={readingSource?.kind ?? "comic"} onClose={() => setComicCommentsOpen(false)} />}
++    {comicCommentsOpen && <ComicComments pathWord={readingSource?.pathWord ?? null} title={detail?.title} kind={readingSource?.kind ?? "comic"} onClose={() => setComicCommentsOpen(false)} />}
+--- a/src/android/BangumiCommentFeed.tsx
++++ b/src/android/BangumiCommentFeed.tsx
+@@ -1,0 +2 @@
++import CommentRate from "./CommentRating";
+@@ -19,6 +19,0 @@
+-function CommentRate({ rate }: { rate: number | null }) {
+-  if (rate == null || rate <= 0) return null;
+-  const filled = Math.max(0, Math.min(5, Math.round(rate / 2)));
+-  return <span className="gz-comment-rate" aria-label={`评分 ${rate.toFixed(1)} 分`}>{Array.from({ length: 5 }, (_, index) => <i key={index} className={index < filled ? "is-on" : ""} aria-hidden="true">★</i>)}</span>;
+-}
+-

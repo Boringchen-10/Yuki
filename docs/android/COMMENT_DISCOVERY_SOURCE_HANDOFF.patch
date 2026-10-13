@@ -1,0 +1,239 @@
+--- a/src/android/ExplorePanel.tsx
++++ b/src/android/ExplorePanel.tsx
+@@ -134,0 +135,3 @@
++  const [searchPage, setSearchPage] = useState(0);
++  const [searchTotal, setSearchTotal] = useState(0);
++  const [searchError, setSearchError] = useState("");
+@@ -148,0 +152 @@
++  const [rankingMoreError, setRankingMoreError] = useState("");
+@@ -166,0 +171 @@
++  const [comicSectionMoreError, setComicSectionMoreError] = useState("");
+@@ -174,0 +180 @@
++  const [bookMoreError, setBookMoreError] = useState("");
+@@ -194,0 +201,7 @@
++  const searchSentinelRef = useRef<HTMLDivElement>(null);
++  const searchRequest = useRef(0);
++  const searchPending = useRef(false);
++  const rankingPending = useRef(false);
++  const bookRequest = useRef(0);
++  const bookPending = useRef(false);
++  const comicSectionPending = useRef(false);
+@@ -254 +267 @@
+-  useEffect(() => () => { bookDetailRequest.current++; subjectRequest.current++; }, []);
++  useEffect(() => () => { bookDetailRequest.current++; subjectRequest.current++; animeLoadRef.current++; readingLoadRef.current++; comicSectionReqRef.current++; bookRequest.current++; searchRequest.current++; }, []);
+@@ -266,0 +280 @@
++    rankingPending.current = false; setRankingLoadingMore(false); setRankingMoreError("");
+@@ -305 +319 @@
+-    if (rankingLoadingMore || !rankingHasMore) return;
++    if (rankingPending.current || !rankingHasMore || popularLoading) return;
+@@ -307 +321,2 @@
+-    setRankingLoadingMore(true);
++    rankingPending.current = true;
++    setRankingLoadingMore(true); setRankingMoreError("");
+@@ -309 +324 @@
+-      const page = rankingPage + 1;
++      const page = (popularSnapshotRef.current?.page ?? rankingPage) + 1;
+@@ -311,0 +327 @@
++      if (next.hasMore && !next.items.length) throw new Error("来源未返回下一页，请稍后重试。");
+@@ -318,3 +334,3 @@
+-    } catch (reason) { onToast(String(reason)); }
+-    finally { setRankingLoadingMore(false); }
+-  }, [onToast, rankingHasMore, rankingLoadingMore, rankingPage]);
++    } catch (reason) { if (loadId === animeLoadRef.current) setRankingMoreError(String(reason)); }
++    finally { if (loadId === animeLoadRef.current) { rankingPending.current = false; setRankingLoadingMore(false); } }
++  }, [rankingHasMore, popularLoading, rankingPage]);
+@@ -322,0 +339 @@
++    if (append && bookPending.current) return;
+@@ -323,0 +341 @@
++    const request = append ? bookRequest.current : ++bookRequest.current;
+@@ -325,0 +344,3 @@
++    if (append && cached && nextPage <= cached.page) return;
++    if (!append) { bookPending.current = false; setBookLoadingMore(false); }
++    setBookMoreError("");
+@@ -327 +348 @@
+-      setNovels(cached.items); setNovelState("ready");
++      setNovels(cached.items); setNovelState("ready"); setNovelError("");
+@@ -330,0 +352 @@
++    bookPending.current = true;
+@@ -332 +354 @@
+-    else { setNovelState("loading"); setNovelError(""); }
++    else { setNovels([]); setBookPage(0); setBookTotal(0); setNovelState("loading"); setNovelError(""); }
+@@ -335,4 +357,4 @@
+-      if (generation !== readingLoadRef.current) return;
+-      const previous = append && cached ? { items: cached.items, total: cached.total, page: cached.page, stale: cached.stale } : { items: [], total: 0, page: 0, stale: false };
+-      const merged = append && previous.page > 0 ? appendComicPage(previous, page) : page;
+-      bookExplorePages.set(key, { items: merged.items, total: merged.total, page: page.page, stale: merged.stale });
++      if (generation !== readingLoadRef.current || request !== bookRequest.current) return;
++      if (page.page !== nextPage || !page.items.length && (page.page - 1) * 24 < page.total) throw new Error("来源未返回当前页，请稍后重试。");
++      const merged = append && cached ? appendComicPage(cached, page) : page;
++      bookExplorePages.set(key, merged);
+@@ -342,3 +364,4 @@
+-      if (generation !== readingLoadRef.current) return;
+-      setNovelError(String(reason)); setNovelState("error");
+-    } finally { if (generation === readingLoadRef.current) setBookLoadingMore(false); }
++      if (generation !== readingLoadRef.current || request !== bookRequest.current) return;
++      if (append) setBookMoreError(String(reason));
++      else { setNovelError(String(reason)); setNovelState("error"); }
++    } finally { if (generation === readingLoadRef.current && request === bookRequest.current) { bookPending.current = false; setBookLoadingMore(false); } }
+@@ -362 +385,2 @@
+-    setComicSectionError(""); setComicSectionMore(false);
++    comicSectionPending.current = false;
++    setComicSectionError(""); setComicSectionMore(false); setComicSectionMoreError("");
+@@ -376 +400 @@
+-    if (!comicSection || !comicSectionPage || comicSectionMore || !comicSectionPage.hasMore || comicSectionState !== "ready") return;
++    if (!comicSection || !comicSectionPage || comicSectionPending.current || !comicSectionPage.hasMore || comicSectionState !== "ready") return;
+@@ -378 +402,2 @@
+-    setComicSectionMore(true);
++    comicSectionPending.current = true;
++    setComicSectionMore(true); setComicSectionMoreError("");
+@@ -380 +405,4 @@
+-      const next = await comicExploreApi.section(makeSectionQuery(comicSection.section, comicSection.period, comicSectionPage.items.length));
++      const key = `${comicSection.section}:${comicSection.period ?? ""}`;
++      const current = comicSectionCache.get(key) ?? comicSectionPage;
++      const offset = current.offset + current.limit;
++      const next = await comicExploreApi.section(makeSectionQuery(comicSection.section, comicSection.period, offset));
+@@ -382,2 +410,3 @@
+-      const merged = { ...next, items: [...comicSectionPage.items, ...next.items] };
+-      comicSectionCache.set(`${comicSection.section}:${comicSection.period ?? ""}`, merged);
++      if (next.offset !== offset || next.limit <= 0 || next.hasMore && !next.items.length) throw new Error("来源未返回下一页，请稍后重试。");
++      const merged = { ...next, items: [...new Map([...current.items, ...next.items].map(entry => [entry.item.pathWord, entry])).values()] };
++      comicSectionCache.set(key, merged);
+@@ -385,3 +414,3 @@
+-    } catch (reason) { onToast(String(reason)); }
+-    finally { setComicSectionMore(false); }
+-  }, [comicSection, comicSectionPage, comicSectionMore, comicSectionState, onToast]);
++    } catch (reason) { if (comicSectionReqRef.current === request) setComicSectionMoreError(String(reason)); }
++    finally { if (comicSectionReqRef.current === request) { comicSectionPending.current = false; setComicSectionMore(false); } }
++  }, [comicSection, comicSectionPage, comicSectionState]);
+@@ -392,0 +422 @@
++      if (tab === "anime" && searchTerm !== null) clearSearch();
+@@ -400 +430 @@
+-  }, [loadAnime, subject]);
++  }, [loadAnime, subject, tab, searchTerm]);
+@@ -404,0 +435 @@
++      if (tab !== "anime" && searchTerm !== null) clearSearch();
+@@ -416 +447 @@
+-  }, [tab, novelTheme, comicSection, comicDetail, comicDetailKind, loadComicHome, loadBooks, openComicSection]);
++  }, [tab, novelTheme, comicSection, comicDetail, comicDetailKind, loadComicHome, loadBooks, openComicSection, searchTerm]);
+@@ -442 +473 @@
+-    if (!node || !active || tab !== "novel") return;
++    if (!node || !active || subject || comicDetail || view !== "feed" || searchTerm !== null || tab !== "novel" || novelState !== "ready" || bookMoreError || bookLoadingMore || bookPage * 24 >= bookTotal) return;
+@@ -444,2 +475 @@
+-      if (!entries.some(entry => entry.isIntersecting) || bookLoadingMore || bookPage * 24 >= bookTotal) return;
+-      void loadBooks(novelTheme, bookPage + 1, true);
++      if (entries.some(entry => entry.isIntersecting)) void loadBooks(novelTheme, bookPage + 1, true);
+@@ -449 +479 @@
+-  }, [active, bookLoadingMore, bookPage, bookTotal, loadBooks, novelTheme, tab]);
++  }, [active, subject, comicDetail, view, searchTerm, novelState, bookMoreError, bookLoadingMore, bookPage, bookTotal, loadBooks, novelTheme, tab]);
+@@ -453 +483 @@
+-    if (!node || !active || view !== "section" || !comicSection) return;
++    if (!node || !active || subject || comicDetail || view !== "section" || !comicSection || comicSectionMore || comicSectionMoreError) return;
+@@ -459 +489 @@
+-  }, [active, comicSection, comicSectionPage?.items.length, loadMoreComicSection, view]);
++  }, [active, subject, comicDetail, comicSection, comicSectionMore, comicSectionMoreError, loadMoreComicSection, view]);
+@@ -463 +493 @@
+-    if (!node || !active || tab !== "anime" || !rankingHasMore) return;
++    if (!node || !active || subject || comicDetail || view !== "feed" || searchTerm !== null || tab !== "anime" || selectedTags.length || !rankingHasMore || rankingLoadingMore || rankingMoreError || animeError) return;
+@@ -469 +499 @@
+-  }, [active, loadMoreRanking, rankingHasMore, tab, trending.length, selectedTags.length]);
++  }, [active, subject, comicDetail, view, searchTerm, loadMoreRanking, rankingHasMore, rankingLoadingMore, rankingMoreError, animeError, tab, trending.length, selectedTags.length]);
+@@ -542,2 +572 @@
+-      setSearchTerm(null); setQuery(""); setSearchOpen(false);
+-      setAnimeResults([]); setComicResults([]); setNovelResults([]);
++      clearSearch(); setSearchOpen(false);
+@@ -547 +576,33 @@
+-  const submit = async (event: FormEvent) => {
++  const loadSearch = useCallback(async (term: string, nextPage = 1, append = false) => {
++    if (append && searchPending.current) return;
++    const request = append ? searchRequest.current : ++searchRequest.current;
++    searchPending.current = true;
++    setSearching(true); setSearchError(""); setSearchTerm(term);
++    if (!append) { setSearchPage(0); setSearchTotal(0); setAnimeResults([]); setComicResults([]); setNovelResults([]); }
++    try {
++      if (tab === "anime") {
++        const items = await api.searchExplore(term);
++        if (request === searchRequest.current) setAnimeResults(items);
++      } else {
++        const page = await (tab === "comic" ? comicExploreApi : novelExploreApi).list({ query: term, theme: "", top: "", sort: "popular", page: nextPage });
++        if (request !== searchRequest.current) return;
++        if (page.page !== nextPage || !page.items.length && (page.page - 1) * 24 < page.total) throw new Error("来源未返回当前页，请稍后重试。");
++        const setResults = tab === "comic" ? setComicResults : setNovelResults;
++        setResults(previous => append ? [...new Map([...previous, ...page.items].map(item => [item.pathWord, item])).values()] : page.items);
++        setSearchPage(page.page); setSearchTotal(page.total);
++      }
++    } catch (reason) { if (request === searchRequest.current) setSearchError(String(reason)); }
++    finally { if (request === searchRequest.current) { searchPending.current = false; setSearching(false); } }
++  }, [tab]);
++
++  useEffect(() => {
++    const node = searchSentinelRef.current;
++    if (!node || !active || subject || comicDetail || view !== "feed" || searchTerm === null || tab === "anime" || searching || searchError || searchPage * 24 >= searchTotal) return;
++    const observer = new IntersectionObserver(entries => {
++      if (entries.some(entry => entry.isIntersecting)) void loadSearch(searchTerm, searchPage + 1, true);
++    }, { rootMargin: "320px" });
++    observer.observe(node);
++    return () => observer.disconnect();
++  }, [active, subject, comicDetail, view, searchTerm, tab, searching, searchError, searchPage, searchTotal, loadSearch]);
++
++  const submit = (event: FormEvent) => {
+@@ -551,12 +612 @@
+-    setSearching(true); setSearchTerm(term);
+-    try {
+-      if (tab === "anime") setAnimeResults(await api.searchExplore(term));
+-      else if (tab === "comic") {
+-        const page = await comicExploreApi.list({ query: term, theme: "", top: "", sort: "popular", page: 1 });
+-        setComicResults(page.items);
+-      } else {
+-        const page = await novelExploreApi.list({ query: term, theme: "", top: "", sort: "popular", page: 1 });
+-        setNovelResults(page.items);
+-      }
+-    } catch (reason) { onToast(String(reason)); }
+-    finally { setSearching(false); }
++    void loadSearch(term);
+@@ -565 +615,5 @@
+-  const clearSearch = () => { setSearchTerm(null); setQuery(""); setAnimeResults([]); setComicResults([]); setNovelResults([]); };
++  const clearSearch = () => {
++    searchRequest.current++; searchPending.current = false;
++    setSearchTerm(null); setQuery(""); setSearching(false); setSearchError(""); setSearchPage(0); setSearchTotal(0);
++    setAnimeResults([]); setComicResults([]); setNovelResults([]);
++  };
+@@ -820 +874 @@
+-          {comicSectionPage.hasMore && <div className="gz-sentinel" ref={comicSectionSentinelRef} aria-hidden="true" />}
++          {comicSectionMoreError ? <div className="gz-error" role="alert"><span>更多作品读取失败，保留已有内容。</span><button className="gz-iconbtn" aria-label="重试更多漫画" onClick={() => void loadMoreComicSection()}><RefreshCw size={16} /></button></div> : comicSectionPage.hasMore && <div className="gz-sentinel" ref={comicSectionSentinelRef} aria-hidden="true" />}
+@@ -826 +880 @@
+-  if (comicDetail) return <div className="gz-explore">{comicDetailView}{comicCommentsOpen && <ComicComments pathWord={comicDetail.item.pathWord} kind={comicDetailKind} onClose={() => setComicCommentsOpen(false)} />}{readerEntry && <BookReader kind={comicDetailKind} pathWord={comicDetail.item.pathWord} entryId={readerEntry.id} group={readerGroup} onClose={() => setReaderEntry(null)} />}</div>;
++  if (comicDetail) return <div className="gz-explore">{comicDetailView}{comicCommentsOpen && <ComicComments pathWord={comicDetail.item.pathWord} title={comicDetail.item.title} kind={comicDetailKind} onClose={() => setComicCommentsOpen(false)} />}{readerEntry && <BookReader kind={comicDetailKind} pathWord={comicDetail.item.pathWord} entryId={readerEntry.id} group={readerGroup} onClose={() => setReaderEntry(null)} />}</div>;
+@@ -845 +899 @@
+-        {searching ? <LoadingIndicator label="正在搜索…" compact /> : animeResults.length
++        {searching && !animeResults.length ? <LoadingIndicator label="正在搜索…" compact /> : animeResults.length
+@@ -847 +901 @@
+-          : <div className="gz-empty"><Search size={26} /><h2>没有匹配的条目</h2><p>换一个关键词再试。</p></div>}
++          : !searchError && <div className="gz-empty"><Search size={26} /><h2>没有匹配的条目</h2><p>换一个关键词再试。</p></div>}
+@@ -871 +925 @@
+-          </> : hotItems.length ? <><div className="gz-explore-grid">{hotItems.map(animeCard)}</div>{rankingHasMore && selectedTags.length === 0 && <div className="gz-sentinel" ref={hotSentinelRef} aria-hidden="true" />}{rankingLoadingMore && <LoadingIndicator label="正在加载更多热门番组…" compact />}</> : <p className="gz-panel gz-meta">没有符合所选标签的热门番组。</p>}
++          </> : hotItems.length ? <><div className="gz-explore-grid">{hotItems.map(animeCard)}</div>{!rankingMoreError && rankingHasMore && selectedTags.length === 0 && <div className="gz-sentinel" ref={hotSentinelRef} aria-hidden="true" />}{rankingLoadingMore && <LoadingIndicator label="正在加载更多热门番组…" compact />}{rankingMoreError && <div className="gz-error" role="alert"><span>更多热门番组读取失败，保留已有内容。</span><button className="gz-iconbtn" aria-label="重试更多热门番组" onClick={() => void loadMoreRanking()}><RefreshCw size={16} /></button></div>}</> : <p className="gz-panel gz-meta">没有符合所选标签的热门番组。</p>}
+@@ -877,2 +931,2 @@
+-        <p className="gz-meta">「{searchTerm}」共 {comicResults.length} 条</p>
+-        {searching ? <LoadingIndicator label="正在搜索…" compact /> : comicResults.length
++        <p className="gz-meta">「{searchTerm}」共 {searchTotal} 条 · 已显示 {comicResults.length} 条</p>
++        {searching && !comicResults.length ? <LoadingIndicator label="正在搜索…" compact /> : comicResults.length
+@@ -880 +934 @@
+-          : <div className="gz-empty"><Search size={26} /><h2>没有匹配的漫画</h2><p>换一个关键词再试。</p></div>}
++          : !searchError && <div className="gz-empty"><Search size={26} /><h2>没有匹配的漫画</h2><p>换一个关键词再试。</p></div>}
+@@ -917,2 +971,2 @@
+-        <p className="gz-meta">「{searchTerm}」共 {novelResults.length} 条</p>
+-        {searching ? <LoadingIndicator label="正在搜索…" compact /> : novelResults.length
++        <p className="gz-meta">「{searchTerm}」共 {searchTotal} 条 · 已显示 {novelResults.length} 条</p>
++        {searching && !novelResults.length ? <LoadingIndicator label="正在搜索…" compact /> : novelResults.length
+@@ -920 +974 @@
+-          : <div className="gz-empty"><Search size={26} /><h2>没有匹配的轻小说</h2><p>换一个关键词再试。</p></div>}
++          : !searchError && <div className="gz-empty"><Search size={26} /><h2>没有匹配的轻小说</h2><p>换一个关键词再试。</p></div>}
+@@ -928 +982 @@
+-            : novels.length ? <><div className="gz-explore-grid">{novels.map(item => comicCard(item, "novel"))}</div>{novels.length < bookTotal && <div className="gz-sentinel" ref={bookSentinelRef} aria-hidden="true" />}{bookLoadingMore && <LoadingIndicator label="正在加载更多…" compact />}</>
++            : novels.length ? <><div className="gz-explore-grid">{novels.map(item => comicCard(item, "novel"))}</div>{!bookMoreError && bookPage * 24 < bookTotal && <div className="gz-sentinel" ref={bookSentinelRef} aria-hidden="true" />}{bookLoadingMore && <LoadingIndicator label="正在加载更多…" compact />}{bookMoreError && <div className="gz-error" role="alert"><span>更多轻小说读取失败，保留已有内容。</span><button className="gz-iconbtn" aria-label="重试更多轻小说" onClick={() => void loadBooks(novelTheme, bookPage + 1, true)}><RefreshCw size={16} /></button></div>}</>
+@@ -930,0 +985,5 @@
++      {searchTerm !== null && <>
++        {searchError ? <div className="gz-error" role="alert"><span>搜索读取失败，请重试。</span><button className="gz-iconbtn" aria-label="重试搜索" onClick={() => void loadSearch(searchTerm, searchPage ? searchPage + 1 : 1, searchPage > 0)}><RefreshCw size={16} /></button></div>
++          : tab !== "anime" && searchPage * 24 < searchTotal && <div className="gz-sentinel" ref={searchSentinelRef} aria-hidden="true" />}
++        {searching && searchPage > 0 && <LoadingIndicator label="正在加载更多搜索结果…" compact />}
++      </>}

@@ -21,6 +21,7 @@ struct Session {
     initial: String,
     base: String,
     chapters: Mutex<HashMap<String, Arc<Chapter>>>,
+    comment_avatars: Mutex<HashMap<String, String>>,
     loading: Mutex<()>,
     closed: Arc<Notify>,
 }
@@ -173,7 +174,7 @@ async fn start_reader(state: AppState, kind: String, path_word: String, entry_id
     let token = uuid::Uuid::new_v4().to_string();
     let base = format!("http://{}/{token}/", listener.local_addr()?);
     let session = Arc::new(Session { state, kind:kind.clone(), book:path_word,
-        group, initial:entry_id.clone(), base:base.clone(), chapters:Mutex::new(chapters), loading:Mutex::new(()), closed:closed.clone() });
+        group, initial:entry_id.clone(), base:base.clone(), chapters:Mutex::new(chapters), comment_avatars:Mutex::new(HashMap::new()), loading:Mutex::new(()), closed:closed.clone() });
     let active = ACTIVE.get_or_init(|| Mutex::new(None));
     if let Some((_, previous)) = active.lock().await.replace((id.clone(), closed.clone())) { previous.notify_one(); }
     tauri::async_runtime::spawn(async move {
@@ -249,9 +250,22 @@ async fn route(session: &Session, method: &str, path: &str, body: &[u8]) -> AppR
         ["chapter", entry, "comments", offset] if method == "GET" => {
             if session.kind != "comic" { return Err(invalid("本话评论仅支持漫画来源")); }
             let offset = offset.parse::<u32>().map_err(|_| invalid("评论页码无效"))?;
-            serde_json::to_value(crate::comic_explore::chapter_comments_for(
+            let page=crate::comic_explore::chapter_comments_for(
                 &session.state.pool, &session.book, entry, &session.group, offset, 30,
-            ).await?)?
+            ).await?;
+            let mut avatars=session.comment_avatars.lock().await;
+            if avatars.len()>900 {avatars.clear();}
+            for item in &page.items { if !item.user_avatar.is_empty() {avatars.insert(format!("{entry}:{}",item.id),item.user_avatar.clone());} }
+            serde_json::to_value(page)?
+        }
+        ["chapter", entry, "comment-avatar", id] if method=="GET" => {
+            if session.kind != "comic" || entry.len() != 36 || uuid::Uuid::parse_str(entry).is_err()
+                || id.parse::<u64>().ok().filter(|id| *id > 0).is_none() {
+                return Err(invalid("本话评论头像标识无效"));
+            }
+            let url=session.comment_avatars.lock().await.get(&format!("{entry}:{id}")).cloned().ok_or_else(||invalid("头像不属于已读取的本话评论"))?;
+            let bytes=book_content::reader_image(&session.state.pool,&url,timeout).await?;
+            let mime=image_mime(&bytes);return Ok((bytes,mime));
         }
         ["chapter", entry, "page", index] if method == "GET" => {
             let chapter = session.chapter(entry).await?;
@@ -357,7 +371,7 @@ mod tests {
         crate::migration_compat::run(&pool).await.unwrap();
         let state = AppState { pool, database_path:root.path().join("db"),data_directory:root.path().into(),cover_cache_path:root.path().join("covers"),thumbnail_cache_path:root.path().join("thumbs") };
         let session = Session { state,kind:kind.into(),book:"book".into(),group:"default".into(),initial:"one".into(),base:"http://127.0.0.1:1234/test/".into(),
-            chapters:Mutex::new(HashMap::from([("one".into(),Arc::new(Chapter {title:"第一章".into(),archive:None,pages:vec!["one".into(),"two".into()],sections:vec![json!({"title":"正文","text":"<正文>\n第二段"})],inline_images:HashMap::new()}))])),loading:Mutex::new(()),closed:Arc::new(Notify::new()) };
+            chapters:Mutex::new(HashMap::from([("one".into(),Arc::new(Chapter {title:"第一章".into(),archive:None,pages:vec!["one".into(),"two".into()],sections:vec![json!({"title":"正文","text":"<正文>\n第二段"})],inline_images:HashMap::new()}))])),comment_avatars:Mutex::new(HashMap::new()),loading:Mutex::new(()),closed:Arc::new(Notify::new()) };
         (session, root)
     }
 
@@ -446,6 +460,53 @@ mod tests {
         for table in ["android_reading_progress","android_reading_bookmarks"] {
             let count:i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}")).fetch_one(&session.state.pool).await.unwrap();
             assert_eq!(count,0);
+        }
+    }
+    #[tokio::test]
+    async fn comment_avatars_reject_unread_comments_other_chapters_and_sessions_without_network() {
+        let (session,_root) = fixture("comic").await;
+        let proxy = comment_proxy(&session).await;
+        session.comment_avatars.lock().await.insert(format!("{COMMENT_CHAPTER}:11"),"https://s3.mangafunb.fun/avatar.png".into());
+        for path in [
+            format!("chapter/{COMMENT_CHAPTER}/comment-avatar/12"),
+            "chapter/c2d8f146-17b6-11e9-bfa4-00163e0ca5bd/comment-avatar/11".into(),
+            "chapter/one/comment-avatar/11".into(),
+            format!("chapter/{COMMENT_CHAPTER}/comment-avatar/0"),
+            format!("chapter/{COMMENT_CHAPTER}/comment-avatar/-1"),
+            format!("chapter/{COMMENT_CHAPTER}/comment-avatar/18446744073709551616"),
+            format!("chapter/{COMMENT_CHAPTER}/comment-avatar/https://example.com"),
+        ] {
+            let result = tokio::time::timeout(Duration::from_secs(1),route(&session,"GET",&path,b"")).await.unwrap();
+            assert!(matches!(result,Err(AppError::Validation(_))),"{path}: {result:?}");
+        }
+        let (other,_other_root) = fixture("comic").await;
+        assert!(matches!(route(&other,"GET",&format!("chapter/{COMMENT_CHAPTER}/comment-avatar/11"),b"").await,Err(AppError::Validation(_))));
+        let (novel,_novel_root) = fixture("novel").await;
+        novel.comment_avatars.lock().await.insert(format!("{COMMENT_CHAPTER}:11"),"https://s3.mangafunb.fun/avatar.png".into());
+        assert!(matches!(route(&novel,"GET",&format!("chapter/{COMMENT_CHAPTER}/comment-avatar/11"),b"").await,Err(AppError::Validation(_))));
+        assert!(tokio::time::timeout(Duration::from_millis(50),proxy.accept()).await.is_err());
+        assert_eq!(session.chapters.lock().await.len(),1);
+    }
+
+    #[tokio::test]
+    async fn registered_comment_avatar_uses_source_transport_without_loading_chapter_or_writing_progress() {
+        let (session,_root) = fixture("comic").await;
+        let proxy = comment_proxy(&session).await;
+        session.comment_avatars.lock().await.insert(format!("{COMMENT_CHAPTER}:11"),"https://s3.mangafunb.fun/avatar.png".into());
+        let server = tokio::spawn(async move {
+            let (mut socket,_) = proxy.accept().await.unwrap();
+            let mut request = [0;4096]; let length = socket.read(&mut request).await.unwrap();
+            let text = String::from_utf8_lossy(&request[..length]);
+            assert!(text.starts_with("CONNECT s3.mangafunb.fun:443 "),"{text}");
+            socket.write_all(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
+        });
+        let result = tokio::time::timeout(Duration::from_secs(2),route(&session,"GET",&format!("chapter/{COMMENT_CHAPTER}/comment-avatar/11"),b"")).await.unwrap();
+        assert!(matches!(result,Err(AppError::Network(_))));
+        server.await.unwrap();
+        assert_eq!(session.chapters.lock().await.len(),1);
+        assert!(!session.chapters.lock().await.contains_key(COMMENT_CHAPTER));
+        for table in ["android_reading_progress","android_reading_bookmarks"] {
+            assert_eq!(sqlx::query_scalar::<_,i64>(&format!("SELECT COUNT(*) FROM {table}")).fetch_one(&session.state.pool).await.unwrap(),0);
         }
     }
     #[tokio::test]

@@ -1,0 +1,2 @@
+.android-app .gz-comment-star { position: relative; display: inline-block; color: var(--line); }
+.android-app .gz-comment-star > span { position: absolute; top: 0; left: 0; overflow: hidden; color: var(--warn); }
