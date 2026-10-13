@@ -1,0 +1,77 @@
+package com.genzo.android
+
+import android.content.Context
+import android.content.Intent
+import android.view.View
+import android.view.ViewGroup
+import android.widget.TextView
+import androidx.test.core.app.ActivityScenario
+import androidx.test.core.app.ApplicationProvider
+import androidx.test.espresso.Espresso.onView
+import androidx.test.espresso.action.ViewActions.click
+import androidx.test.espresso.assertion.ViewAssertions.*
+import androidx.test.espresso.matcher.ViewMatchers.*
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.hamcrest.Matchers.containsString
+import org.json.JSONArray
+import org.json.JSONObject
+import org.junit.Assert.*
+import org.junit.Test
+import org.junit.runner.RunWith
+import java.util.UUID
+
+@RunWith(AndroidJUnit4::class)
+class PlayerEpisodeCommentsTest {
+    private fun scenario(): ActivityScenario<PlayerActivity> {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        assertEquals("com.genzo.android.organizeqa", context.packageName)
+        return ActivityScenario.launch(Intent(context, PlayerActivity::class.java).putExtra("loading", true).putExtra("sessionId", UUID.randomUUID().toString()))
+    }
+    private fun page(view: View): PlayerPage? {
+        if (view is PlayerPage) return view
+        if (view is ViewGroup) for (i in 0 until view.childCount) page(view.getChildAt(i))?.let { return it }
+        return null
+    }
+    private fun context(id: String?, label: String) = JSONObject().put("title", "合成作品").put("rows", JSONArray()).put("roads", JSONArray())
+        .put("hasBangumi", true).put("commentEpisodeId", id ?: JSONObject.NULL).put("commentEpisodeLabel", label)
+    private fun response(body: String, reply: Boolean = false) = JSONObject().put("offset", 0).put("limit", 20).put("total", 1).put("items", JSONArray().put(
+        JSONObject().put("id", body).put("userName", "合成楼主").put("createdAt", "2026-10-13").put("comment", body).put("floor", 7)
+            .put("replies", if (reply) JSONArray().put(JSONObject().put("id", "reply").put("userName", "合成回复者").put("comment", "回复甲").put("createdAt", "2026-10-13")) else JSONArray())))
+    private fun take(scenario: ActivityScenario<PlayerActivity>, page: PlayerPage): JSONObject {
+        repeat(30) {
+            var value: JSONObject? = null
+            scenario.onActivity { value = page.takeRequest() }
+            value?.let { return it }; Thread.sleep(50)
+        }
+        error("Native page did not produce a request")
+    }
+    @Test fun repliesOpenAndEpisodeChangeRejectsOldComments() {
+        scenario().use { scene ->
+            lateinit var panel: PlayerPage
+            scene.onActivity { activity -> panel = requireNotNull(page(activity.window.decorView)); panel.accept("context", context("1212094", "第01集"), requireNotNull(panel.takeRequest()).getLong("id")) }
+            onView(withText("评论")).perform(click())
+            val request = take(scene, panel)
+            scene.onActivity { panel.accept("comments", response("主楼甲", true), request.getLong("id")) }
+            onView(withText("主楼甲")).check(matches(isDisplayed()))
+            onView(withText("查看 1 条回复")).perform(click())
+            onView(withText("回复甲")).check(matches(isDisplayed()))
+            scene.onActivity { panel.loadContext(); panel.accept("context", context("1212095", "第02集"), requireNotNull(panel.takeRequest()).getLong("id")); panel.accept("comments", response("过期评论"), request.getLong("id")) }
+            Thread.sleep(600)
+            onView(withText("回复甲")).check(doesNotExist())
+            onView(withText("过期评论")).check(doesNotExist())
+            val next = take(scene, panel)
+            scene.onActivity { panel.accept("comments", response("主楼乙"), next.getLong("id")) }
+            onView(withText("主楼乙")).check(matches(isDisplayed()))
+            onView(withText(containsString("第02集 · Bangumi 分集讨论"))).check(matches(isDisplayed()))
+        }
+    }
+    @Test fun unmatchedFileShowsMappingHintWithoutFetchingAnotherEpisode() {
+        scenario().use { scene ->
+            lateinit var panel: PlayerPage
+            scene.onActivity { activity -> panel=requireNotNull(page(activity.window.decorView)); panel.accept("context", context(null, ""), requireNotNull(panel.takeRequest()).getLong("id")) }
+            onView(withText("评论")).perform(click()); Thread.sleep(350)
+            onView(withText(containsString("未匹配 Bangumi 分集"))).check(matches(isDisplayed()))
+            scene.onActivity { assertNull(panel.takeRequest()) }
+        }
+    }
+}

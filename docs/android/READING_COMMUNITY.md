@@ -12,6 +12,8 @@ Tauri `get_comic_chapter_comments(pathWord,chapterId,group,offset,limit)` 及私
 
 ## Bangumi
 
+同日后续用户明确播放页需要每集讨论，播放器改为官方分集ID对应的独立接口，见 `EPISODE_DISCUSSIONS.md`；以下作品短评恢复仍适用于作品详情。
+
 官网P1评论固定next.bgm.tv，不发往v0镜像；沿用公开网络代理配置与官网限流。最多2次、单次6秒、含排队总计16秒，只恢复瞬断 / 5xx / 响应体截断，429、4xx及完整非法数据保留错误。失败不冒充空评论。
 
 两处详情页面共用专用评论控制器：同步pending去重、代次隔离、独立offset+limit游标、会话缓存、追加失败暂停自动Observer并手动重试。原生播放器同步修正源游标及失败重试同页。刷新失败保留已有内容。

@@ -358,6 +358,15 @@ pub struct BangumiComment {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct BangumiEpisodeDiscussion {
+    #[serde(flatten)]
+    pub comment: BangumiComment,
+    pub floor: u32,
+    pub replies: Vec<BangumiComment>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BangumiCommentPage {
     pub items: Vec<BangumiComment>,
     pub total: u64,

@@ -23,7 +23,7 @@ struct FileRow {
     original_number: Option<i64>, official_number: Option<i64>, episode_title: Option<String>,
 }
 #[derive(Clone)]
-struct PageContext { work: Option<String>, bangumi: Option<String>, rule: Option<RuleOrigin>, rows: Vec<Value>, title: String, roads: Vec<Value>, selected_source: String }
+struct PageContext { work: Option<String>, bangumi: Option<String>, comment_episode: Option<(String,String)>, comments: Arc<tokio::sync::Mutex<Option<Vec<crate::models::BangumiEpisodeDiscussion>>>>, rule: Option<RuleOrigin>, rows: Vec<Value>, title: String, roads: Vec<Value>, selected_source: String }
 
 fn episode_key(file: &FileRow) -> Option<String> {
     Some(format!("{}:{}", file.provider.as_ref()?, file.external_id.as_ref()?))
@@ -32,6 +32,14 @@ fn file_card(file: &FileRow, current: &str) -> Value {
     json!({"id":file.id,"mediaFileId":file.id,"label":file.official_number.or(file.original_number).map(|n|format!("第{n:02}集")).unwrap_or_else(||"视频文件".into()),
         "title":file.episode_title.as_ref().unwrap_or(&file.file_name),"sourceId":file.library_root_id,"sourceLabel":file.label,
         "episodeKey":episode_key(file),"current":file.id==current,"available":!file.missing&&file.enabled})
+}
+
+fn comment_episode(rows: &[Value], media: Option<&str>) -> Option<(String,String)> {
+    // A real file's explicit official link takes precedence, including an explicit unlink.
+    let file = media.and_then(|id| rows.iter().find(|row|row["mediaFileId"]==id && row["current"]==true));
+    let row = file.or_else(|| rows.iter().find(|row|row["current"]==true && row.get("ruleRoad").is_some()))?;
+    let id = row["episodeKey"].as_str()?.strip_prefix("bangumi:")?.parse::<u64>().ok().filter(|id|*id>0)?;
+    Some((id.to_string(), row["label"].as_str().unwrap_or("当前集").into()))
 }
 
 async fn context(state: &AppState, session: &str, media: Option<&str>) -> AppResult<PageContext> {
@@ -94,7 +102,8 @@ async fn context(state: &AppState, session: &str, media: Option<&str>) -> AppRes
             }
         }
     }
-    Ok(PageContext {work,bangumi,rule,rows,title,roads,selected_source})
+    let comment_episode=comment_episode(&rows,media);
+    Ok(PageContext {work,bangumi,comment_episode,comments:Arc::new(tokio::sync::Mutex::new(None)),rule,rows,title,roads,selected_source})
 }
 
 async fn reply(session: &str, id: u64, channel: &str, data: Value) {
@@ -121,16 +130,19 @@ pub(crate) fn serve(state: AppState, session: String) {
                 let result=async {
                     if action=="context" {
                         let context=context(&state,&session,request["mediaFileId"].as_str()).await?;
-                        let data=json!({"title":context.title,"rows":context.rows,"roads":context.roads,"selectedSource":context.selected_source,"hasBangumi":context.bangumi.is_some()});
+                        let data=json!({"title":context.title,"rows":context.rows,"roads":context.roads,"selectedSource":context.selected_source,"hasBangumi":context.bangumi.is_some(),"commentEpisodeId":context.comment_episode.as_ref().map(|value|&value.0),"commentEpisodeLabel":context.comment_episode.as_ref().map(|value|&value.1)});
                         *page.lock().await=Some(context); return Ok(data);
                     }
                     let context=page.lock().await.clone().ok_or_else(||AppError::Validation("播放资料尚未就绪，请稍后重试".into()))?;
                     match action {
                         "comments" => {
-                            let bangumi=context.bangumi.ok_or_else(||AppError::Validation("此作品尚未关联 Bangumi，暂无条目评论".into()))?;
-                            let offset=request["offset"].as_u64().filter(|n|*n<=1_000_000).unwrap_or(0) as u32;
-                            let comments=crate::bangumi::BangumiProvider::new()?.comments(&bangumi,offset,20).await?;
-                            Ok(serde_json::to_value(comments)?)
+                            let (episode,label)=context.comment_episode.ok_or_else(||AppError::Validation("当前视频未匹配 Bangumi 分集，请先完成剧集匹配".into()))?;
+                            let offset=request["offset"].as_u64().filter(|n|*n<=1_000_000).unwrap_or(0) as usize;
+                            let mut cached=context.comments.lock().await;
+                            if cached.is_none() { *cached=Some(crate::bangumi::BangumiProvider::new()?.episode_comments(&episode).await?); }
+                            let all=cached.as_ref().unwrap();
+                            let items=all.iter().skip(offset).take(20).collect::<Vec<_>>();
+                            Ok(json!({"items":items,"total":all.len(),"offset":offset,"limit":20,"episodeId":episode,"episodeLabel":label}))
                         },
                         "image" => {
                             let key=request["episodeKey"].as_str().unwrap_or("");
@@ -158,7 +170,7 @@ pub(crate) fn serve(state: AppState, session: String) {
                         _ => Err(AppError::Validation("未知播放器操作".into())),
                     }
                 }.await;
-                match result { Ok(data)=>reply(&session,id,action,data).await, Err(_)=>reply(&session,id,action,json!({"error":match action {"comments"=>"Bangumi 评论读取失败，请检查网络后重试。","play"=>"打开剧集失败，请重试或返回选择其他来源。","image"=>"",_=>"播放资料读取失败，请重试。"}})).await }
+                match result { Ok(data)=>reply(&session,id,action,data).await, Err(_)=>reply(&session,id,action,json!({"error":match action {"comments"=>"Bangumi 本集讨论读取失败，请检查网络后重试。","play"=>"打开剧集失败，请重试或返回选择其他来源。","image"=>"",_=>"播放资料读取失败，请重试。"}})).await }
             });
         }
         SERVING.lock().unwrap().retain(|id|id!=&session);
@@ -168,6 +180,19 @@ pub(crate) fn serve(state: AppState, session: String) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn episode_discussion_target_uses_explicit_link_and_never_filename_or_list_index() {
+        let rows=vec![json!({"mediaFileId":"f","current":true,"episodeKey":"bangumi:1212094","label":"第01集","title":"13.mp4"})];
+        assert_eq!(comment_episode(&rows,Some("f")),Some(("1212094".into(),"第01集".into())));
+        let unlinked=vec![json!({"mediaFileId":"f","current":true,"episodeKey":null,"label":"第13集"}),json!({"current":true,"ruleRoad":0,"episodeKey":"bangumi:1212094"})];
+        assert!(comment_episode(&unlinked,Some("f")).is_none());
+        let other=vec![json!({"mediaFileId":"f","current":true,"episodeKey":"tmdb:1212094"})];
+        assert!(comment_episode(&other,Some("f")).is_none());
+        let rule=vec![json!({"current":true,"ruleRoad":0,"episodeKey":"bangumi:1212095","label":"第02集"})];
+        assert_eq!(comment_episode(&rule,None),Some(("1212095".into(),"第02集".into())));
+        assert!(comment_episode(&[json!({"current":true,"ruleRoad":0,"label":"第01集"})],None).is_none());
+    }
+
     use super::*;
     #[tokio::test]
     async fn library_page_uses_actual_official_links_and_keeps_other_works_out() {

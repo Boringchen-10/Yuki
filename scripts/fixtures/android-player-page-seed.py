@@ -11,15 +11,15 @@ db = sqlite3.connect(folder / 'genzo.db')
 db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
 work = seed['workId']
 assert db.execute('SELECT title FROM works WHERE id=?', (work,)).fetchone()[0].startswith('GenzoPortraitQA-')
-anchors = ['400602', '302286', '292970']
-bangumi = next(value for value in anchors if not db.execute("SELECT 1 FROM work_external_ids WHERE provider='bangumi' AND external_id=?", (value,)).fetchone())
+bangumi = '373247'
+assert not db.execute("SELECT 1 FROM work_external_ids WHERE provider='bangumi' AND external_id=?", (bangumi,)).fetchone(), 'public sample anchor is already in this QA library'
 now = '2026-10-12T00:00:00Z'
 db.execute("INSERT INTO work_external_ids VALUES(?,?,?,?,?)", (work, 'bangumi', bangumi, now, now))
 series = 900000001
 db.execute("INSERT INTO episode_artwork_sources(work_id,anchor,series_id,season_number,method,updated_at,episode_offset) VALUES(?,?,?,1,'manual',?,0)", (work, f'bangumi:{bangumi}', series, now))
 episodes, images = [], []
 for number, media_id in enumerate(seed['mediaIds'], 1):
-    external = f'genzo-portrait-{seed["run"]}-{number}'
+    external = str(1212093 + number)
     assert db.execute('SELECT work_id FROM media_files WHERE id=?', (media_id,)).fetchone()[0] == work
     db.execute("INSERT INTO anime_episodes(work_id,provider,external_id,episode_number,sort_number,title,fetched_at,episode_type) VALUES(?,'bangumi',?,?,?,?,?,0)", (work, external, number, number, f'QA 官方第 {number} 集', now))
     db.execute("INSERT INTO media_episode_links VALUES(?,?,'bangumi',?,'manual',1,?)", (media_id, work, external, now))

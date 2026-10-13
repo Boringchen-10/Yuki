@@ -2,7 +2,7 @@ use crate::error::{AppError, AppResult};
 use crate::metadata_provider::{MetadataProvider, MetadataSearchQuery, ProviderRateLimiter};
 use crate::models::{
     AnimeCharacter, AnimeCredit, AnimeEpisodeMetadata, AnimeSeasonOption, BangumiComment,
-    BangumiCommentPage, MetadataProviderStatus, WorkMetadata,
+    BangumiCommentPage, BangumiEpisodeDiscussion, MetadataProviderStatus, WorkMetadata,
 };
 use async_trait::async_trait;
 use chrono::Utc;
@@ -309,6 +309,17 @@ impl BangumiProvider {
         fetch_comments(self.comments_request(subject_id, offset, limit), subject_id, offset, limit).await
     }
 
+    pub async fn episode_comments(&self, episode_id: &str) -> AppResult<Vec<BangumiEpisodeDiscussion>> {
+        let id = episode_id.parse::<u64>().ok().filter(|id| *id > 0)
+            .ok_or_else(|| AppError::Validation("Bangumi 分集 ID 无效".into()))?;
+        // Unlike subject comments, this endpoint returns all floors and replies in one array.
+        parse_episode_comments(fetch_comment_data(self.episode_comments_request(id)).await?)
+    }
+
+    fn episode_comments_request(&self, id: u64) -> reqwest::RequestBuilder {
+        self.client.get(format!("https://next.bgm.tv/p1/episodes/{id}/comments"))
+    }
+
     fn comments_request(&self, subject_id: i64, offset: u32, limit: u32) -> reqwest::RequestBuilder {
         // P1 is a website route, independently of the configured v0 API mirror.
         self.client.get(format!("https://next.bgm.tv/p1/subjects/{subject_id}/comments"))
@@ -348,6 +359,10 @@ impl BangumiProvider {
 }
 
 async fn fetch_comments(request: reqwest::RequestBuilder, subject_id: i64, offset: u32, limit: u32) -> AppResult<BangumiCommentPage> {
+    parse_comments(fetch_comment_data(request).await?, subject_id, offset, limit)
+}
+
+async fn fetch_comment_data(request: reqwest::RequestBuilder) -> AppResult<Value> {
     let operation = async {
         for attempt in 0..2 {
             WEBSITE_RATE_LIMITER.get_or_init(|| ProviderRateLimiter::new(Duration::from_secs(2))).wait().await;
@@ -369,13 +384,43 @@ async fn fetch_comments(request: reqwest::RequestBuilder, subject_id: i64, offse
             };
             // A complete invalid response is a contract error, not a transient connection failure.
             let body = serde_json::from_slice(&bytes).map_err(|error| AppError::Network(format!("Bangumi 返回了无法解析的吐槽数据：{error}")))?;
-            return parse_comments(body, subject_id, offset, limit);
+            return Ok(body);
         }
         unreachable!("the final comments attempt always returns")
     };
     // Includes rate-limit queueing and both attempts, so a busy website queue cannot wait forever.
     tokio::time::timeout(Duration::from_secs(16), operation).await
         .map_err(|_| AppError::Network("连接 Bangumi 超时，请检查网络后重试".into()))?
+}
+
+fn parse_episode_comments(body: Value) -> AppResult<Vec<BangumiEpisodeDiscussion>> {
+    let invalid = || AppError::Network("Bangumi 分集讨论格式无效，请重试".into());
+    let rows = body.as_array().ok_or_else(invalid)?;
+    fn comment(row: &Value) -> AppResult<BangumiComment> {
+        let invalid = || AppError::Network("Bangumi 分集讨论内容无效，请重试".into());
+        let id = row["id"].as_u64().filter(|id| *id > 0).ok_or_else(invalid)?;
+        let user = &row["user"];
+        Ok(BangumiComment {
+            id: id.to_string(),
+            user_name: user["nickname"].as_str().or_else(||user["username"].as_str()).unwrap_or("匿名用户").into(),
+            user_avatar: user["avatar"].get("large").or_else(||user["avatar"].get("medium")).or_else(||user["avatar"].get("small"))
+                .and_then(Value::as_str).map(normalize_bangumi_image_url),
+            comment: row["content"].as_str().ok_or_else(invalid)?.trim().into(),
+            created_at: row["createdAt"].as_i64().and_then(|time|chrono::DateTime::from_timestamp(time,0)).map(|time|time.to_rfc3339()).unwrap_or_default(),
+            rate: None,
+        })
+    }
+    let mut items = Vec::new();
+    for (index, row) in rows.iter().enumerate() {
+        // Do not reveal deleted / moderated posts returned with a non-visible state.
+        if row["state"].as_i64().unwrap_or(0) != 0 { continue; }
+        let main = comment(row)?;
+        let replies = row["replies"].as_array().ok_or_else(invalid)?.iter()
+            .filter(|reply|reply["state"].as_i64().unwrap_or(0)==0)
+            .map(comment).collect::<AppResult<Vec<_>>>()?;
+        items.push(BangumiEpisodeDiscussion { comment:main, floor:index as u32 + 1, replies });
+    }
+    Ok(items)
 }
 
 fn parse_comments(body: Value, subject_id: i64, offset: u32, limit: u32) -> AppResult<BangumiCommentPage> {
@@ -681,6 +726,27 @@ fn extract_season(value: &Value) -> Option<i64> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn episode_discussion_keeps_floors_replies_and_hides_removed_content() {
+        let post = |id, text, state| json!({"id":id,"content":text,"state":state,"createdAt":1660000000,"user":{"nickname":"合成用户","avatar":{"small":"https://lain.bgm.tv/pic/user/test.jpg"}},"replies":[]});
+        let mut visible=post(2,"本集主楼",0);
+        visible["replies"]=json!([post(3,"本楼回复",0),post(4,"隐藏回复",6)]);
+        let parsed=parse_episode_comments(json!([post(1,"隐藏主楼",6),visible])).unwrap();
+        assert_eq!(parsed.len(),1); assert_eq!(parsed[0].floor,2);
+        assert_eq!(parsed[0].comment.comment,"本集主楼"); assert_eq!(parsed[0].replies.len(),1);
+        assert_eq!(parsed[0].replies[0].comment,"本楼回复");
+        assert!(!serde_json::to_string(&parsed).unwrap().contains("隐藏"));
+        assert!(parse_episode_comments(json!({"data":[],"total":0})).is_err());
+        assert!(parse_episode_comments(json!([{"id":1,"content":"缺少回复结构"}])).is_err());
+        assert!(parse_episode_comments(json!([])).unwrap().is_empty());
+    }
+    #[test]
+    fn episode_endpoint_uses_official_episode_identity_without_subject_paging() {
+        let provider=BangumiProvider {client:Client::new(),api_root:"https://mirror.invalid/v0".into(),background:false};
+        let request=provider.episode_comments_request(1212094).build().unwrap();
+        assert_eq!(request.url().as_str(),"https://next.bgm.tv/p1/episodes/1212094/comments");
+    }
+
     #[test]
     fn comments_use_the_official_website_even_with_a_v0_mirror() {
         let config = crate::bangumi_network::BangumiNetwork { mode: "mirror".into(), mirror_url: "https://example.com/api".into() };

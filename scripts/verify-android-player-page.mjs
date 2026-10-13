@@ -110,7 +110,12 @@ try {
   result.cases.onlyImplementedMenuActions = true;
   tapPrefix(xml, "倍速"); tap(dump(), "1.5×"); await wait(() => native("playerState"), state => state.rate === 1.5, "speed menu applies"); result.cases.actualSpeedMenu = true;
   tap(dump(), "更多播放设置"); tapPrefix(dump(), "超分辨率"); tap(dump(), "流畅档");
-  await wait(() => native("playerState"), s => s.status === "paused" && s.superResolution === 1 && s.shaderPasses.some(pass => pass.includes("Anime4K")), "real shader menu");
+  await wait(() => native("playerState"), s => s.status === "paused" && s.superResolution === 1 && s.shaderCount === 6, "shader menu selection");
+  // A paused frame can retain the prior GPU statistics. Verify an actual new frame,
+  // then pause again; selecting a preset itself must not reopen the episode.
+  await native("playerControl", { action: "play" });
+  await wait(() => native("playerState"), s => s.status === "playing" && s.shaderPasses.some(pass => pass.includes("Anime4K")), "real shader frame");
+  await native("playerControl", { action: "pause" });
   assert.ok(node(dump(), "第01集 当前选集")); result.cases.actualSuperResolutionKeepsEpisodePanel = true;
   await native("playerControl", { action: "superResolution", value: 0 });
   xml = dump(); tap(xml, "第02集");
@@ -126,8 +131,8 @@ try {
   command("shell", "input", "keyevent", "KEYCODE_BACK"); command("shell", "input", "keyevent", "KEYCODE_BACK"); await delay(600);
   await wait(async () => dump(), xml => !!node(xml, "第02集 当前选集"), "fullscreen returns without closing"); assert.equal((await native("playerState")).sessionId, current.sessionId); result.cases.fullscreenBackKeepsSessionAndEpisode = true;
   tap(dump(), "评论");
-  xml = await wait(async () => dump(), xml => xml.includes("Bangumi 条目评论") && !xml.includes("正在读取 Bangumi 评论"), "Bangumi comments", 45000); shot("comments");
-  assert.ok(!xml.includes("读取失败"), "live Bangumi comments failed"); assert.ok(xml.includes("Bangumi")); result.cases.liveBangumiComments = true;
+  xml = await wait(async () => dump(), xml => xml.includes("第02集 · Bangumi 分集讨论") && !xml.includes("正在读取 Bangumi 本集讨论"), "Bangumi comments", 45000); shot("comments");
+  assert.ok(!xml.includes("读取失败"), "live Bangumi comments failed"); assert.ok(xml.includes("Bangumi")); result.cases.liveCurrentEpisodeDiscussion = true;
   tap(xml, "选集");
   await native("playerControl", { action: "close", sessionId: current.sessionId }); result.cases.closeReturnsToLibrary = true;
   current = await invoke("open_internal_player", { mediaFileId: files[0].id, restart: true, subtitleId: null });

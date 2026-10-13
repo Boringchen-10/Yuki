@@ -1,5 +1,16 @@
 # Codex 与 DeepSeek Harness 项目交接记录
 
+## 播放页当前集 Bangumi 讨论 v0.11.1（2026-10-13）
+
+- 基线 `d82020d`，同一 `.tmp/android-first` / `codex/android-first`。用户明确动画播放页应显示每集对应的评论，取代上一轮播放器条目短评决策；作品详情仍保留作品短评。保留完整当前 OpenDesign 工作树，只提交本轮自身增量，不重复应用上一轮已生效的 `READING_COMMUNITY_SOURCE_HANDOFF.patch`。
+- 参考已固定 Kazumi 源码的 `/p1/episodes/<官方分集ID>/comments` 与 EpisodeCommentItem / replies 模型，直接接入既有 Rust 网络层，没有加入 Flutter / Dart 或新依赖。该接口返回完整主楼数组，当前会话获取一次，界面每20个主楼分页；非公开状态的主楼 / 回复在解析时过滤，楼层保留源位置，楼中楼按需展开。沿用公开官网限流、最多2次 / 单次6秒 / 含排队总计16秒边界；失败可重试，不把错误当成空列表。
+- 本地 / WebDAV 使用当前文件显式绑定的 Bangumi 分集ID，人工修正和显式解除优先；规则使用当前已匹配分集。文件13→官方1直接读取官方1，不用文件名 / 排列下标猜ID；未匹配显示回详情匹配提示，不回退为作品短评。原生上下文切集清空旧列表 / 游标、关闭回复面板，废弃旧请求ID，防止旧讨论晚到覆盖新集。
+- 完整 Rust **369通过 / 18忽略 / 0失败**，前端 **111通过**、TypeScript通过；最终 Android / Release 与日常优化包构建通过，既有 Kotlin **10项**通过。新增独立原生界面 instrumentation **2项通过**：回复展开、切集关闭回复并拒绝旧响应、无对应关系不发评论请求。日志目录 `D:/DevTools/Android/Build/qa/episode-comments-20261013/`；instrumentation variant未裁剪Kotlin运行时，最终普通 / 日常包仍优化。
+- 同一加 PLK110 / Android16 / SM8850 独立 organizeqa 实机播放回归 **15项通过**，`D:/DevTools/Android/Build/qa/player-page-1791874304504/`。覆盖人工13→1、真实分集封面、选集与标签 / 菜单、真实shader帧、稳定媒体ID切集、横屏 / 全屏返回、真实当前集讨论、取消慢选集 / 503失败、不绑定规则试播不冒充评论。公共样本为作品373247 / 分集1212094与1212095，切到第02集截图实际显示对应讨论和回复入口；公开数据数量仅代表采样时刻，正文未加入Git。第一次暂停状态shader断言读到旧GPU帧统计，修正测试为等待实际新渲染帧后再暂停，未为脚本改动生产播放器。
+- 最终签名包 `D:/DevTools/Android/Build/previews/episode-comments-20261013/Genzo_0.11.1_episode-discussions_arm64-v8a.apk`，**50,284,467字节**，SHA256 **7d8084bb4759583717d98448a991d81babba33fedac310b2292288ae1b5e4afa**。0.11.1 / code11001 / com.genzo.android / arm64 / min26 / target36 / 非debuggable / 原证书cee90e5f…cdb，v2/v3与16KiB ZIP通过。403份完整生产源码匹配当前 OpenDesign 构建副本、3原生库匹配Gradle stripped、8官方shader及许可一致；内嵌 `index-CRniIZaW.js` / `index-CDhOjwTu.css`，无用户DB、图书或测试媒体。
+- 普通签名包与日常readerqa均已覆盖安装，安装后APK哈希与制品一致。最终新取升级前基线，前后 **34作品 / 17来源 / 21播放记录 / 16规则**、作品个人字段、来源 / 规则ID及版本 / 启停、观看位置 / 时长 / 完成、四项播放偏好逐项一致，无清库或隐式扫描。日常APK归档 `qa/episode-comments-20261013/reader-final.apk`；没有复制用户DB / 凭据 / Cookie，也未向日常包写合成测试数据。仅合成测试在独立包进行，本轮测试组件 `com.genzo.android.organizeqa.test` 已卸载；无录屏 / 重启。
+- 共享前端预览已同步，9228 / 9351指向新日常PID，最后停在日常播放设置，未自动播放用户真实媒体。仅单设备短测，不宣称所有网络 / 设备或长时性能验证。说明见 `docs/android/EPISODE_DISCUSSIONS.md`；本轮可交付Bug修复按补丁号提升本机预览，不创建公开Release / 标签 / 推送，公开版仍v0.5.2。
+
 ## 安卓每话评论 / Bangumi 恢复 / 局部详情动画 v0.11.0（2026-10-13）
 
 - 基线 `3dcb85a`，`.tmp/android-first` / `codex/android-first`。用户明确每话数据指评论 / 热度等来源数据；随后纠正详情概览 / 剧集等标签只允许正文左右滑动，封面 / 标题 / 标签栏固定。保留完整OpenDesign工作树；其他维护者未提交代码不混入提交。AndroidApp / ExplorePanel的自身增量记录 `docs/android/READING_COMMUNITY_SOURCE_HANDOFF.patch`，当前已应用，`git apply --unidiff-zero --ignore-whitespace --reverse --check`可核对。viewTransition.ts仅提交HEAD上独立局部动画函数与必要flushSync导入，原有OpenDesign面板转场仍为WIP。电脑临时夹具 `.tmp/comments-ui-20261013/` 不纳产品提交，证据已复制D盘。
