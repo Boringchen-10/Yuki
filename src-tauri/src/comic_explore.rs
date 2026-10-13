@@ -90,6 +90,26 @@ pub struct CopyCommentPage {
     pub limit: u32,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChapterComment {
+    pub id: String,
+    pub create_at: String,
+    pub user_id: String,
+    pub user_name: String,
+    pub user_avatar: String,
+    pub comment: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChapterCommentPage {
+    pub items: Vec<ChapterComment>,
+    pub total: u64,
+    pub offset: u32,
+    pub limit: u32,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ComicQuery {
@@ -352,6 +372,59 @@ pub async fn get_comic_explore_comments(path_word: String, offset: u32, limit: u
     comments_for(&state.pool, &path_word, offset, limit).await
 }
 
+fn chapter_comment_params(book: &str, chapter: &str, group: &str, offset: u32, limit: u32) -> AppResult<Vec<(String, String)>> {
+    if !valid_id(book) || Uuid::parse_str(chapter).is_err() || chapter.len() != 36
+        || (!group.is_empty() && !valid_id(group)) || offset > 1_000_000 || !(1..=100).contains(&limit) {
+        return Err(AppError::Validation("每话评论标识或分页参数无效".into()));
+    }
+    Ok(vec![
+        ("chapter_id".into(), chapter.into()),
+        ("limit".into(), limit.to_string()),
+        ("offset".into(), offset.to_string()),
+        ("_update".into(), "true".into()),
+    ])
+}
+
+fn parse_chapter_comments(value: Value, offset: u32, limit: u32) -> AppResult<ChapterCommentPage> {
+    let invalid = || AppError::Network("来源没有返回有效的每话评论，请重试".into());
+    let integer = |value: &Value| value.as_u64().or_else(|| value.as_str().and_then(|value| value.parse::<u64>().ok()));
+    let rows = value["list"].as_array().ok_or_else(invalid)?;
+    let total = integer(&value["total"]).ok_or_else(invalid)?;
+    if integer(&value["offset"]) != Some(u64::from(offset)) || integer(&value["limit"]) != Some(u64::from(limit))
+        || rows.len() > limit as usize || (!rows.is_empty() && u64::from(offset) + rows.len() as u64 > total)
+        || (rows.is_empty() && u64::from(offset) < total) {
+        return Err(invalid());
+    }
+    let mut ids = std::collections::HashSet::new();
+    let items = rows.iter().map(|row| {
+        let id = integer(&row["id"]).filter(|id| *id > 0).ok_or_else(invalid)?.to_string();
+        if !ids.insert(id.clone()) { return Err(invalid()); }
+        Ok(ChapterComment {
+            id,
+            create_at: string_value(&row["create_at"]),
+            user_id: string_value(&row["user_id"]),
+            user_name: string_value(&row["user_name"]),
+            user_avatar: string_value(&row["user_avatar"]),
+            comment: row["comment"].as_str().ok_or_else(invalid)?.into(),
+        })
+    }).collect::<AppResult<Vec<_>>>()?;
+    Ok(ChapterCommentPage { items, total, offset, limit })
+}
+
+pub(crate) async fn chapter_comments_for(pool: &SqlitePool, book: &str, chapter: &str, group: &str, offset: u32, limit: u32) -> AppResult<ChapterCommentPage> {
+    let params = chapter_comment_params(book, chapter, group, offset, limit)?;
+    crate::book_content::verify_source_entry(pool, "comic", book, chapter, group).await?;
+    // COPY exposes chapter roasts separately from whole-work comments. It does
+    // not provide chapter popularity, views or likes in this response.
+    let value = request_comments_in_pool(pool, CATALOG_HOST, "/api/v3/roasts", &params, "same-site").await?;
+    parse_chapter_comments(value, offset, limit)
+}
+
+#[tauri::command]
+pub async fn get_comic_chapter_comments(path_word: String, chapter_id: String, group: String, offset: u32, limit: u32, state: State<'_, AppState>) -> AppResult<ChapterCommentPage> {
+    chapter_comments_for(&state.pool, &path_word, &chapter_id, &group, offset, limit).await
+}
+
 async fn cached_request<T: Serialize + DeserializeOwned>(
     pool: &SqlitePool, host: &str, path: &str, params: &[(String, String)],
     hours: i64, refresh: bool, parse: impl FnOnce(Value) -> AppResult<T>,
@@ -524,6 +597,144 @@ mod tests {
     }
     use super::*;
     use serde_json::json;
+
+    const CHAPTER_ONE: &str = "52615840-10a4-11e9-b68d-00163e0ca5bd";
+    const CHAPTER_TWO: &str = "c2d8f146-17b6-11e9-bfa4-00163e0ca5bd";
+
+    #[test]
+    fn chapter_comments_use_chapter_uuid_and_independent_pagination() {
+        let first = chapter_comment_params("book", CHAPTER_ONE, "default", 0, 30).unwrap();
+        let next = chapter_comment_params("book", CHAPTER_ONE, "default", 30, 30).unwrap();
+        let other = chapter_comment_params("book", CHAPTER_TWO, "default", 0, 30).unwrap();
+        assert_eq!(first[0], ("chapter_id".into(), CHAPTER_ONE.into()));
+        assert_eq!(next[2], ("offset".into(), "30".into()));
+        assert_eq!(other[0], ("chapter_id".into(), CHAPTER_TWO.into()));
+        assert!(first.iter().all(|(key, _)| !matches!(key.as_str(), "comic_id" | "reply_id")));
+        for (book, chapter, group, offset, limit) in [
+            ("../book", CHAPTER_ONE, "default", 0, 30),
+            ("book", "not-a-chapter-uuid", "default", 0, 30),
+            ("book", CHAPTER_ONE, "../default", 0, 30),
+            ("book", CHAPTER_ONE, "default", 1_000_001, 30),
+            ("book", CHAPTER_ONE, "default", 0, 0),
+            ("book", CHAPTER_ONE, "default", 0, 101),
+        ] {
+            assert!(chapter_comment_params(book, chapter, group, offset, limit).is_err());
+        }
+    }
+
+    #[test]
+    fn chapter_comments_preserve_source_total_without_inventing_metrics() {
+        let page = parse_chapter_comments(json!({"total":"334","offset":"2","limit":"30","list":[
+            {"id":"11","create_at":"2026-10-13","user_id":"synthetic-user","user_name":"合成用户","user_avatar":"","comment":"合成评论"}
+        ]}), 2, 30).unwrap();
+        assert_eq!(page.total, 334); assert_eq!(page.offset, 2); assert_eq!(page.limit, 30);
+        assert_eq!(page.items[0].id, "11"); assert_eq!(page.items[0].comment, "合成评论");
+        let item = serde_json::to_value(&page.items[0]).unwrap();
+        assert_eq!(item.as_object().unwrap().len(), 6);
+        assert!(item.get("replyCount").is_none()); assert!(item.get("popularity").is_none());
+        assert!(parse_chapter_comments(json!({"total":0,"offset":0,"limit":30,"list":[]}), 0, 30).unwrap().items.is_empty());
+    }
+
+    #[test]
+    fn malformed_chapter_comments_are_errors_instead_of_empty_success() {
+        for value in [
+            json!({}),
+            json!({"total":1,"offset":0,"limit":30,"list":[]}),
+            json!({"total":0,"offset":30,"limit":30,"list":[]}),
+            json!({"total":0,"offset":0,"limit":10,"list":[]}),
+            json!({"total":0,"offset":0,"limit":30,"list":[{"id":1,"comment":"合成评论"}]}),
+            json!({"total":1,"offset":0,"limit":30,"list":[{"id":0,"comment":"合成评论"}]}),
+            json!({"total":1,"offset":0,"limit":30,"list":[{"id":1}]}),
+            json!({"total":2,"offset":0,"limit":30,"list":[{"id":1,"comment":"a"},{"id":"1","comment":"b"}]}),
+        ] {
+            assert!(parse_chapter_comments(value, 0, 30).is_err());
+        }
+    }
+
+    async fn cache_chapter_directory(pool: &SqlitePool, book: &str, group: &str, chapter: &str) {
+        let host = crate::reading_network::ReadingNetwork::default().detail_hosts()[0].clone();
+        let detail = json!({"comic":{"path_word":book},"groups":{"default":{"name":"默认"},"volume":{"name":"单行本"}}});
+        let page = crate::book_content::SourcePage {
+            entries: vec![crate::book_content::SourceEntry {id:chapter.into(), title:"合成章节".into(),order:0.0,count:61}],
+            total:1,offset:0,group:group.into(),groups:vec![crate::book_content::SourceGroup {id:group.into(),title:group.into()}],stale:false,
+        };
+        let params = vec![("limit".to_string(),"100".to_string()),("offset".to_string(),"0".to_string())];
+        for (key, value) in [
+            (format!("v1:{host}/api/v3/comic2/{book}:[]"), detail.to_string()),
+            (format!("v1:{host}/api/v3/comic/{book}/group/{group}/chapters:{}",serde_json::to_string(&params).unwrap()),serde_json::to_string(&page).unwrap()),
+        ] {
+            sqlx::query("INSERT INTO metadata_cache(provider,cache_key,response_json,fetched_at,expires_at) VALUES('copy-reading',?,?,?,?) ON CONFLICT(provider,cache_key) DO UPDATE SET response_json=excluded.response_json,expires_at=excluded.expires_at")
+                .bind(key).bind(value).bind(Utc::now().to_rfc3339()).bind((Utc::now()+ChronoDuration::hours(1)).to_rfc3339()).execute(pool).await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn chapter_comments_check_book_and_group_before_any_comment_request() {
+        let pool = crate::db::test_pool().await.unwrap();
+        cache_chapter_directory(&pool, "book", "default", CHAPTER_ONE).await;
+        cache_chapter_directory(&pool, "other-book", "default", CHAPTER_TWO).await;
+        cache_chapter_directory(&pool, "book", "volume", CHAPTER_TWO).await;
+        crate::book_content::verify_source_entry(&pool, "comic", "book", CHAPTER_ONE, "default").await.unwrap();
+        for (book, chapter, group) in [
+            ("book", CHAPTER_TWO, "default"),
+            ("other-book", CHAPTER_ONE, "default"),
+            ("book", CHAPTER_ONE, "volume"),
+            ("book", "not-a-uuid", "default"),
+        ] {
+            let error = chapter_comments_for(&pool, book, chapter, group, 0, 30).await.unwrap_err();
+            assert!(matches!(error, AppError::Validation(_)), "{error}");
+        }
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM android_reading_progress").fetch_one(&pool).await.unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn chapter_comment_transport_rejects_business_errors_and_keeps_paging() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let pool = crate::db::test_pool().await.unwrap();
+        let config = crate::reading_network::ReadingNetwork {proxy_mode:"direct".into(),..Default::default()};
+        sqlx::query("INSERT INTO app_settings(key,value,updated_at) VALUES('reading.network',?,'now')").bind(serde_json::to_string(&config).unwrap()).execute(&pool).await.unwrap();
+        for (body, valid) in [
+            (r#"{"code":401,"results":{}}"#, false),
+            (r#"{"code":500,"results":{}}"#, false),
+            (r#"{"code":200,"results":{"list":[],"total":0,"limit":30,"offset":30}}"#, true),
+        ] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let host = format!("http://{}",listener.local_addr().unwrap());
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut buffer = [0;4096]; let length = socket.read(&mut buffer).await.unwrap();
+                let request = String::from_utf8_lossy(&buffer[..length]);
+                assert!(request.contains(&format!("chapter_id={CHAPTER_ONE}"))); assert!(request.contains("offset=30"));
+                assert!(request.to_ascii_lowercase().contains("sec-fetch-site: same-site"));
+                assert!(!request.contains("comic_id="));
+                socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
+            });
+            let params = chapter_comment_params("book",CHAPTER_ONE,"default",30,30).unwrap();
+            let response = request_comments_in_pool(&pool,&host,"/api/v3/roasts",&params,"same-site").await;
+            if valid {
+                let page = parse_chapter_comments(response.unwrap(),30,30).unwrap();
+                assert_eq!(page.total,0); assert_eq!(page.offset,30);
+            } else { assert!(response.is_err()); }
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn empty_cached_chapter_page_with_remaining_total_fails_without_looping() {
+        let pool = crate::db::test_pool().await.unwrap();
+        cache_chapter_directory(&pool, "book", "default", CHAPTER_ONE).await;
+        let (key, data): (String, String) = sqlx::query_as("SELECT cache_key,response_json FROM metadata_cache WHERE provider='copy-reading' AND instr(cache_key,'/group/default/chapters:')>0")
+            .fetch_one(&pool).await.unwrap();
+        let mut page: Value = serde_json::from_str(&data).unwrap();
+        page["entries"] = json!([]);
+        assert_eq!(page["total"], 1);
+        sqlx::query("UPDATE metadata_cache SET response_json=? WHERE provider='copy-reading' AND cache_key=?")
+            .bind(page.to_string()).bind(key).execute(&pool).await.unwrap();
+        let result = tokio::time::timeout(Duration::from_millis(500), crate::book_content::verify_source_entry(&pool, "comic", "book", CHAPTER_ONE, "default"))
+            .await.expect("empty cached pages must not repeat indefinitely");
+        assert!(matches!(result, Err(AppError::Validation(_))));
+    }
 
     fn fixture() -> ComicDetail {
         parse_detail(json!({"comic":{"name":"短篇","path_word":"short-comic","author":[{"name":"作者"}],

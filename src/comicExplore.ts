@@ -49,6 +49,15 @@ export interface CopyComment {
   parentUserName: string | null;
 }
 export interface CopyCommentPage { items: CopyComment[]; total: number; offset: number; limit: number }
+export interface ChapterComment {
+  id: string;
+  createAt: string;
+  userId: string;
+  userName: string;
+  userAvatar: string;
+  comment: string;
+}
+export interface ChapterCommentPage { items: ChapterComment[]; total: number; offset: number; limit: number }
 
 export function comicQueryFromParams(params: URLSearchParams): ComicQuery {
   const page = Number(params.get("page") ?? 1);
@@ -90,6 +99,7 @@ export const comicExploreApi = {
   cacheCover: (pathWord: string, coverUrl: string, refresh = false) => call<{ coverPath: string; thumbnailPath: string | null }>("cache_comic_explore_cover", { pathWord, coverUrl, refresh }),
   save: (pathWord: string, favorite: boolean) => call<string>("save_comic_explore_work", { pathWord, favorite }),
   comments: (pathWord: string, offset = 0, limit = 10) => call<CopyCommentPage>("get_comic_explore_comments", { pathWord, offset, limit }),
+  chapterComments: (pathWord: string, chapterId: string, group = "", offset = 0, limit = 30) => call<ChapterCommentPage>("get_comic_chapter_comments", { pathWord, chapterId, group, offset, limit }),
 };
 
 export const novelExploreApi = {

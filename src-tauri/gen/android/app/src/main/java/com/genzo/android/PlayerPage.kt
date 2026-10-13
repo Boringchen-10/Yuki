@@ -46,6 +46,9 @@ class PlayerPage(context: Context, private val session: String?, private val med
     private var commentsLoading = false
     private var commentsLoaded = false
     private var commentsTotal = 0
+    private var commentsOffset = 0
+    private var commentsHasMore = false
+    private var commentsRequest = 0L
     private var playing = false
     private val tabs = LinearLayout(context)
     private val episodesTab = tab("选集") { selectTab("episodes") }
@@ -73,7 +76,7 @@ class PlayerPage(context: Context, private val session: String?, private val med
         retry.gravity = Gravity.CENTER; retry.setTextColor(accent); retry.foreground = ripple(); retry.minimumHeight = dp(48); retry.setOnClickListener { if (selectedTab == "comments") loadComments() else loadContext() }; addView(retry)
         list.layoutManager = grid; list.adapter = adapter; list.clipToPadding = false; list.setPadding(0, 0, 0, dp(16)); list.itemAnimator = null
         addView(list, LayoutParams(-1, 0, 1f))
-        more.gravity = Gravity.CENTER; more.setTextColor(accent); more.foreground = ripple(); more.minimumHeight = dp(48); more.setOnClickListener { loadComments(comments.size) }; addView(more)
+        more.gravity = Gravity.CENTER; more.setTextColor(accent); more.foreground = ripple(); more.minimumHeight = dp(48); more.setOnClickListener { loadComments(commentsOffset) }; addView(more)
         render(); loadContext()
     }
 
@@ -89,6 +92,7 @@ class PlayerPage(context: Context, private val session: String?, private val med
     private fun request(action: String, extra: JSONObject = JSONObject()): Boolean {
         val value = JSONObject(extra.toString()).put("id", ++sequence).put("action", action).put("sessionId", session).put("mediaFileId", mediaId())
         if (action == "context") contextRequest = sequence
+        if (action == "comments") commentsRequest = sequence
         if (action in listOf("play", "comments", "context")) requests.addFirst(value) else if (requests.size < 32) requests.addLast(value) else return false
         return true
     }
@@ -97,6 +101,7 @@ class PlayerPage(context: Context, private val session: String?, private val med
     fun accept(channel: String, value: JSONObject, requestId: Long) {
         if (disposed) return
         if (channel == "context" && requestId != contextRequest) return
+        if (channel == "comments" && requestId != commentsRequest) return
         when (channel) {
             "context" -> {
                 if (value.has("error")) { message.text = value.optString("error"); message.visibility = VISIBLE; retry.visibility = VISIBLE; return }
@@ -113,6 +118,8 @@ class PlayerPage(context: Context, private val session: String?, private val med
                     val existing = comments.map { it.optString("id") }.toSet()
                     comments.addAll(objects(value.optJSONArray("items")).filter { it.optString("id") !in existing })
                     commentsTotal = value.optInt("total"); commentsLoaded = true
+                    commentsOffset = value.optInt("offset") + value.optInt("limit", 20)
+                    commentsHasMore = objects(value.optJSONArray("items")).isNotEmpty() && commentsOffset < commentsTotal
                     if (selectedTab == "comments") { message.text = if (comments.isEmpty()) "Bangumi 暂无条目评论" else ""; retry.visibility = GONE }
                 }
                 render()
@@ -134,7 +141,7 @@ class PlayerPage(context: Context, private val session: String?, private val med
             render()
         }
     }
-    private fun loadComments(offset: Int = 0) {
+    private fun loadComments(offset: Int = commentsOffset) {
         if (!data.optBoolean("hasBangumi")) { message.text = "此视频尚未关联 Bangumi，暂无条目评论"; return }
         if (commentsLoading) return
         commentsLoading = true; message.text = if (offset == 0) "正在读取 Bangumi 评论…" else ""; retry.visibility = GONE
@@ -161,7 +168,7 @@ class PlayerPage(context: Context, private val session: String?, private val med
         source.text = "播放来源  ·  ${visibleRows.firstOrNull()?.optString("sourceLabel") ?: "暂无来源"}  ﹀"
         summary.text = if (episodes) "全部剧集 · ${visibleRows.size} 集" else "Bangumi 条目评论 · $commentsTotal 条"
         summary.setTextColor(muted); grid.spanCount = if (episodes) 2 else 1
-        more.visibility = if (!episodes && commentsLoaded && comments.size < commentsTotal) VISIBLE else GONE
+        more.visibility = if (!episodes && commentsLoaded && commentsHasMore) VISIBLE else GONE
         more.isEnabled = !commentsLoading; more.text = if (commentsLoading) "正在读取…" else "加载更多评论"
         if (episodes && data.has("rows") && visibleRows.isEmpty()) message.text = "暂无可播放剧集，请返回关联本地、WebDAV 或规则来源。"
         message.visibility = if (message.text.isBlank()) GONE else VISIBLE

@@ -361,15 +361,20 @@ where F: FnMut(reqwest::Url, usize) -> Fut, Fut: std::future::Future<Output = Ap
 async fn lock(path: &Path) -> Arc<Mutex<()>> {
     LOCKS.get_or_init(|| Mutex::new(HashMap::new())).lock().await.entry(path.to_path_buf()).or_insert_with(|| Arc::new(Mutex::new(()))).clone()
 }
-async fn source_value(pool: &sqlx::SqlitePool, kind: &str, book: &str, entry: &str, group: &str) -> AppResult<Value> {
+pub(crate) async fn verify_source_entry(pool: &sqlx::SqlitePool, kind: &str, book: &str, entry: &str, group: &str) -> AppResult<()> {
     check(kind, book, Some(entry))?;
     let mut offset = 0;
     loop {
         let page = directory(pool, kind, book, group, offset, false).await?;
         if page.entries.iter().any(|v| v.id == entry) { break; }
+        if page.entries.is_empty() { return Err(invalid("来源返回了不完整目录，请刷新重试")); }
         offset += page.entries.len() as u32;
         if offset as u64 >= page.total || kind == "novel" { return Err(invalid("章卷不属于当前作品目录，请刷新后重试")); }
     }
+    Ok(())
+}
+async fn source_value(pool: &sqlx::SqlitePool, kind: &str, book: &str, entry: &str, group: &str) -> AppResult<Value> {
+    verify_source_entry(pool, kind, book, entry, group).await?;
     let (host, path) = if kind == "novel" { (catalog::CATALOG_HOST, format!("/api/v3/book/{book}/volume/{entry}")) }
         else { (catalog::DETAIL_HOST, format!("/api/v3/comic/{book}/chapter/{entry}")) };
     catalog::request_in_pool(pool, host, &path, &[("platform".into(), "3".into()), ("in_mainland".into(), "true".into())]).await

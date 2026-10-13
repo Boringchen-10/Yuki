@@ -1,0 +1,136 @@
+--- a/src/android/AndroidApp.tsx
++++ b/src/android/AndroidApp.tsx
+@@ -6 +6 @@
+-import { startAndroidTransition as startViewTransition, startPanelTransition } from "./viewTransition";
++import { startAndroidTransition as startViewTransition, startPanelTransition, startDetailTabTransition } from "./viewTransition";
+@@ -12 +12 @@
+-import type { AnimeCharacter, AnimeWorkStructure, BangumiComment, BangumiCommentPage, MediaFile, ThemeMode, UnassignedMediaGroup, WorkDetail, WorkInput, WorkListItem, WorkStatus } from "../types";
++import type { AnimeCharacter, AnimeWorkStructure, MediaFile, ThemeMode, UnassignedMediaGroup, WorkDetail, WorkInput, WorkListItem, WorkStatus } from "../types";
+@@ -21,0 +22 @@
++import { useBangumiComments } from "./useBangumiComments";
+@@ -377,5 +377,0 @@
+-  const [subjectComments, setSubjectComments] = useState<BangumiComment[]>([]);
+-  const [subjectCommentsState, setSubjectCommentsState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+-  const [subjectCommentsTotal, setSubjectCommentsTotal] = useState(0);
+-  const [subjectCommentsLoadingMore, setSubjectCommentsLoadingMore] = useState(false);
+-  const [commentsAttempt, setCommentsAttempt] = useState(0);
+@@ -411,0 +408 @@
++  const detailContentRef = useRef<HTMLDivElement>(null);
+@@ -680,5 +676,0 @@
+-    setSubjectComments([]);
+-    setSubjectCommentsState("idle");
+-    setSubjectCommentsTotal(0);
+-    setSubjectCommentsLoadingMore(false);
+-    setCommentsAttempt(0);
+@@ -715,0 +708 @@
++  const comments = useBangumiComments(bangumiId || null, detailTab === "comments");
+@@ -728,20 +720,0 @@
+-    if (detailTab !== "comments" || !bangumiId) return;
+-    const key = `bangumi:comments:${bangumiId}`;
+-    const cached = androidSession.peek<BangumiCommentPage>(key);
+-    if (cached) { setSubjectComments(cached.items); setSubjectCommentsTotal(cached.total); setSubjectCommentsState("ready"); return; }
+-    let active = true;
+-    setSubjectCommentsState("loading");
+-    void androidSession.load(key, () => api.bangumiComments(bangumiId)).then(page => { if (active) { setSubjectComments(page.items); setSubjectCommentsTotal(page.total); setSubjectCommentsState("ready"); } }).catch(() => { if (active) setSubjectCommentsState("error"); });
+-    return () => { active = false; };
+-  }, [detailTab, bangumiId, commentsAttempt]);
+-  async function loadMoreSubjectComments() {
+-    if (!bangumiId || subjectCommentsLoadingMore || subjectComments.length >= subjectCommentsTotal) return;
+-    setSubjectCommentsLoadingMore(true);
+-    try {
+-      const next = await api.bangumiComments(bangumiId, subjectComments.length);
+-      setSubjectComments(previous => [...new Map([...previous, ...next.items].map(comment => [comment.id, comment])).values()]);
+-      setSubjectCommentsTotal(next.total);
+-    } catch (reason) { setError(String(reason)); }
+-    finally { setSubjectCommentsLoadingMore(false); }
+-  }
+-  useEffect(() => {
+@@ -749,2 +722,2 @@
+-    if (!node || detailTab !== "comments" || subjectCommentsState !== "ready" || subjectCommentsLoadingMore || subjectComments.length >= subjectCommentsTotal) return;
+-    const observer = new IntersectionObserver(entries => { if (entries.some(entry => entry.isIntersecting)) void loadMoreSubjectComments(); }, { rootMargin: "320px" });
++    if (!node || detailTab !== "comments" || comments.state !== "ready" || comments.loadingMore || !comments.hasMore || comments.moreError) return;
++    const observer = new IntersectionObserver(entries => { if (entries.some(entry => entry.isIntersecting)) void comments.loadMore(); }, { rootMargin: "320px" });
+@@ -753 +726 @@
+-  }, [detailTab, subjectCommentsState, subjectCommentsLoadingMore, subjectComments.length, subjectCommentsTotal, bangumiId]);
++  }, [detailTab, comments.state, comments.loadingMore, comments.hasMore, comments.moreError, comments.nextOffset, comments.subjectId, comments.loadMore]);
+@@ -1235 +1208,2 @@
+-        <div className="gz-detail-tabs" role="tablist" aria-label="作品详情分类">{detailTabs.map(tab => <button type="button" role="tab" key={tab.id} aria-selected={detailTab === tab.id} className={detailTab === tab.id ? "active" : ""} onClick={() => { if (tab.id === detailTab) return; const from = detailTabs.findIndex(item => item.id === detailTab); const to = detailTabs.findIndex(item => item.id === tab.id); withSwapTransition(to < from ? "back" : "forward", () => setDetailTab(tab.id)); }}>{tab.label}</button>)}</div>
++        <div className="gz-detail-tabs" role="tablist" aria-label="作品详情分类">{detailTabs.map(tab => <button type="button" role="tab" key={tab.id} aria-selected={detailTab === tab.id} className={detailTab === tab.id ? "active" : ""} onClick={() => { if (tab.id === detailTab) return; const from = detailTabs.findIndex(item => item.id === detailTab); const to = detailTabs.findIndex(item => item.id === tab.id); startDetailTabTransition(to < from ? "back" : "forward", detailContentRef.current, () => setDetailTab(tab.id)); }}>{tab.label}</button>)}</div>
++        <div className="gz-detail-content" ref={detailContentRef}>
+@@ -1247 +1221 @@
+-        {detailTab === "comments" && <Section title="吐槽" action={subjectCommentsState === "ready" && subjectCommentsTotal > 0 ? <span className="gz-meta">{subjectCommentsTotal} 条</span> : <span className="gz-meta">Bangumi 条目评论</span>}>
++        {detailTab === "comments" && <Section title="吐槽" action={comments.state === "ready" && comments.total > 0 ? <span className="gz-meta">{comments.total} 条</span> : <span className="gz-meta">Bangumi 条目评论</span>}>
+@@ -1249,3 +1223,3 @@
+-            : subjectCommentsState === "loading" || subjectCommentsState === "idle" ? <RowsSkeleton count={4} label="正在读取吐槽…" />
+-            : subjectCommentsState === "error" ? <div className="gz-error" role="alert"><span>吐槽读取失败，请检查 Bangumi 网络设置。</span><button className="gz-iconbtn" aria-label="重试吐槽" onClick={() => { androidSession.invalidate(`bangumi:comments:${bangumiId}`); setCommentsAttempt(value => value + 1); }}><RefreshCw size={16} /></button></div>
+-            : subjectComments.length ? <><BangumiCommentFeed items={subjectComments} />{subjectComments.length < subjectCommentsTotal && <><div className="gz-sentinel" ref={subjectCommentsSentinelRef} aria-hidden="true" />{subjectCommentsLoadingMore && <LoadingIndicator label="正在加载更多吐槽…" compact />}</>}</>
++            : (comments.state === "loading" || comments.state === "idle") && !comments.items.length ? <RowsSkeleton count={4} label="正在读取吐槽…" />
++            : comments.state === "error" && !comments.items.length ? <div className="gz-error" role="alert"><span>吐槽读取失败，请检查 Bangumi 网络设置。</span><button className="gz-iconbtn" aria-label="重试吐槽" onClick={() => void comments.retry()}><RefreshCw size={16} /></button></div>
++            : comments.items.length ? <><BangumiCommentFeed items={comments.items} />{comments.state === "loading" ? <LoadingIndicator label="正在更新吐槽…" compact /> : comments.state === "error" ? <div className="gz-error" role="alert"><span>刷新失败，保留已有内容。</span><button className="gz-iconbtn" aria-label="重试刷新吐槽" onClick={() => void comments.retry()}><RefreshCw size={16} /></button></div> : comments.moreError ? <div className="gz-error" role="alert"><span>更多吐槽读取失败，请重试。</span><button className="gz-iconbtn" aria-label="重试更多吐槽" onClick={() => void comments.retryMore()}><RefreshCw size={16} /></button></div> : comments.hasMore && <><div className="gz-sentinel" ref={subjectCommentsSentinelRef} aria-hidden="true" />{comments.loadingMore && <LoadingIndicator label="正在加载更多吐槽…" compact />}</>}</>
+@@ -1257,0 +1232 @@
++        </div>
+--- a/src/android/ExplorePanel.tsx
++++ b/src/android/ExplorePanel.tsx
+@@ -3 +3 @@
+-import { startAndroidTransition as startExploreTransition, startPanelTransition } from "./viewTransition";
++import { startAndroidTransition as startExploreTransition, startPanelTransition, startDetailTabTransition } from "./viewTransition";
+@@ -8 +8 @@
+-import type { AnimeSeasonOption, AnimeWorkStructure, BangumiComment, ExploreSubject, WeeklyCalendar, WeeklyCalendarDay, WorkStatus } from "../types";
++import type { AnimeSeasonOption, AnimeWorkStructure, ExploreSubject, WeeklyCalendar, WeeklyCalendarDay, WorkStatus } from "../types";
+@@ -14,0 +15 @@
++import { useBangumiComments } from "./useBangumiComments";
+@@ -191,4 +192 @@
+-  const [subjectComments, setSubjectComments] = useState<BangumiComment[]>([]);
+-  const [subjectCommentsState, setSubjectCommentsState] = useState<LoadState>("ready");
+-  const [subjectCommentsTotal, setSubjectCommentsTotal] = useState(0);
+-  const [subjectCommentsLoadingMore, setSubjectCommentsLoadingMore] = useState(false);
++  const comments = useBangumiComments(subject?.externalId ?? null, active);
+@@ -212,0 +211 @@
++  const subjectContentRef = useRef<HTMLDivElement>(null);
+@@ -397 +395,0 @@
+-        void androidSession.load(`bangumi:comments:${subject.externalId}`, () => api.bangumiComments(subject.externalId)).then(value => { if (request === subjectRequest.current) { setSubjectComments(value.items); setSubjectCommentsTotal(value.total); setSubjectCommentsState("ready"); } }).catch(() => { if (request === subjectRequest.current) setSubjectCommentsState("error"); });
+@@ -501,2 +498,0 @@
+-    const commentsKey = `bangumi:comments:${item.externalId}`;
+-    const cachedComments = androidSession.peek<Awaited<ReturnType<typeof api.bangumiComments>>>(commentsKey);
+@@ -505 +500,0 @@
+-    setSubjectComments(cachedComments?.items ?? []); setSubjectCommentsState(cachedComments ? "ready" : "loading"); setSubjectCommentsTotal(cachedComments?.total ?? 0);
+@@ -507,5 +501,0 @@
+-    try {
+-      const comments = await androidSession.load(commentsKey, () => api.bangumiComments(item.externalId));
+-      if (request !== subjectRequest.current) return;
+-      setSubjectComments(comments.items); setSubjectCommentsTotal(comments.total); setSubjectCommentsState("ready");
+-    } catch { if (request === subjectRequest.current) setSubjectCommentsState("error"); }
+@@ -539,11 +528,0 @@
+-  const loadMoreSubjectComments = async () => {
+-    if (!subject || subjectCommentsLoadingMore || subjectComments.length >= subjectCommentsTotal) return;
+-    setSubjectCommentsLoadingMore(true);
+-    try {
+-      const next = await api.bangumiComments(subject.externalId, subjectComments.length);
+-      setSubjectComments(previous => [...new Map([...previous, ...next.items].map(comment => [comment.id, comment])).values()]);
+-      setSubjectCommentsTotal(next.total);
+-    } catch (reason) { onToast(String(reason)); }
+-    finally { setSubjectCommentsLoadingMore(false); }
+-  };
+-
+@@ -552,2 +531,2 @@
+-    if (!node || !active || subjectTab !== "comments" || subjectCommentsState !== "ready" || subjectCommentsLoadingMore || subjectComments.length >= subjectCommentsTotal) return;
+-    const observer = new IntersectionObserver(entries => { if (entries.some(entry => entry.isIntersecting)) void loadMoreSubjectComments(); }, { rootMargin: "320px" });
++    if (!node || !active || subjectTab !== "comments" || comments.state !== "ready" || comments.loadingMore || !comments.hasMore || comments.moreError) return;
++    const observer = new IntersectionObserver(entries => { if (entries.some(entry => entry.isIntersecting)) void comments.loadMore(); }, { rootMargin: "320px" });
+@@ -556 +535 @@
+-  }, [active, subjectTab, subjectCommentsState, subjectCommentsLoadingMore, subjectComments.length, subjectCommentsTotal, subject?.externalId]);
++  }, [active, subjectTab, comments.state, comments.loadingMore, comments.hasMore, comments.moreError, comments.nextOffset, comments.subjectId, comments.loadMore]);
+@@ -735 +714 @@
+-      {SUBJECT_TABS.map(tab => <button type="button" role="tab" key={tab.id} aria-selected={subjectTab === tab.id} className={subjectTab === tab.id ? "active" : ""} onClick={() => setSubjectTab(tab.id)}>{tab.label}</button>)}
++      {SUBJECT_TABS.map(tab => <button type="button" role="tab" key={tab.id} aria-selected={subjectTab === tab.id} className={subjectTab === tab.id ? "active" : ""} onClick={() => { if (tab.id === subjectTab) return; const from = SUBJECT_TABS.findIndex(item => item.id === subjectTab); const to = SUBJECT_TABS.findIndex(item => item.id === tab.id); startDetailTabTransition(to < from ? "back" : "forward", subjectContentRef.current, () => setSubjectTab(tab.id)); }}>{tab.label}</button>)}
+@@ -736,0 +716 @@
++    <div className="gz-detail-content" ref={subjectContentRef}>
+@@ -770,3 +750,3 @@
+-      {subjectCommentsState === "loading" ? <LoadingIndicator label="正在读取吐槽…" compact />
+-        : subjectCommentsState === "error" ? <div className="gz-error" role="alert"><span>吐槽读取失败，请检查 Bangumi 网络设置。</span><button className="gz-iconbtn" aria-label="重试吐槽" onClick={() => void api.bangumiComments(subject.externalId).then(page => { setSubjectComments(page.items); setSubjectCommentsTotal(page.total); setSubjectCommentsState("ready"); }).catch(() => setSubjectCommentsState("error"))}><RefreshCw size={16} /></button></div>
+-          : subjectComments.length ? <><BangumiCommentFeed items={subjectComments} />{subjectComments.length < subjectCommentsTotal && <><div className="gz-sentinel" ref={subjectCommentsSentinelRef} aria-hidden="true" />{subjectCommentsLoadingMore && <LoadingIndicator label="正在加载更多吐槽…" compact />}</>}</>
++      {(comments.state === "loading" || comments.state === "idle") && !comments.items.length ? <LoadingIndicator label="正在读取吐槽…" compact />
++        : comments.state === "error" && !comments.items.length ? <div className="gz-error" role="alert"><span>吐槽读取失败，请检查 Bangumi 网络设置。</span><button className="gz-iconbtn" aria-label="重试吐槽" onClick={() => void comments.retry()}><RefreshCw size={16} /></button></div>
++          : comments.items.length ? <><BangumiCommentFeed items={comments.items} />{comments.state === "loading" ? <LoadingIndicator label="正在更新吐槽…" compact /> : comments.state === "error" ? <div className="gz-error" role="alert"><span>刷新失败，保留已有内容。</span><button className="gz-iconbtn" aria-label="重试刷新吐槽" onClick={() => void comments.retry()}><RefreshCw size={16} /></button></div> : comments.moreError ? <div className="gz-error" role="alert"><span>更多吐槽读取失败，请重试。</span><button className="gz-iconbtn" aria-label="重试更多吐槽" onClick={() => void comments.retryMore()}><RefreshCw size={16} /></button></div> : comments.hasMore && <><div className="gz-sentinel" ref={subjectCommentsSentinelRef} aria-hidden="true" />{comments.loadingMore && <LoadingIndicator label="正在加载更多吐槽…" compact />}</>}</>
+@@ -789,0 +770 @@
++    </div>

@@ -365,8 +365,12 @@ class ReaderActivity : AppCompatActivity() {
     }
     /** Reload the current chapter while keeping the reader's own position. */
     fun refresh() { if (!loading && !isFinishing) load(entry, surface?.location()) }
-    /** Chapter-scoped comments: awaits the per-chapter endpoint from the backend. */
-    fun chapterComments() { notify("本话评论待接入") }
+    private var commentsPanel: ReaderChapterComments? = null
+    fun chapterComments() {
+        if (kind != "comic" || loading) return
+        val panel = commentsPanel ?: ReaderChapterComments(this).also { commentsPanel = it }
+        panel.show(entry, chapterTitle)
+    }
     /**
      * Continuous comic scroll: the surface owns several chapters and reports which one is on
      * screen so progress saving, the toolbar title and the comments button target the right chapter.
@@ -764,6 +768,7 @@ class ReaderActivity : AppCompatActivity() {
         super.finish()
     }
     override fun onDestroy() {
+        commentsPanel?.close()
         generation++;stopNextPreparation();surface?.close(); super.onDestroy()
         if (current?.get() === this) { current = null; snapshot = JSONObject().put("status", "closed") }
         if (isFinishing) writes.launch { writeLock.lock(); try { client.json("close", JSONObject()) } catch (_: Exception) {} finally { writeLock.unlock(); writes.cancel() } }

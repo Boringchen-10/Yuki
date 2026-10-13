@@ -151,6 +151,7 @@ pub fn run() {
             comic_explore::get_comic_explore_detail,
             comic_explore::save_comic_explore_work,
             comic_explore::get_comic_explore_comments,
+            comic_explore::get_comic_chapter_comments,
             novel_explore::get_novel_explore_comments,
             book_scrape::search_book_candidates,
             book_scrape::search_book_import_candidates,

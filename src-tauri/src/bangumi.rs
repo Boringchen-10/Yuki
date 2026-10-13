@@ -306,14 +306,13 @@ impl BangumiProvider {
     pub async fn comments(&self, external_id: &str, offset: u32, limit: u32) -> AppResult<BangumiCommentPage> {
         let subject_id = external_id.trim().parse::<i64>().map_err(|_| AppError::Validation("Bangumi 条目 ID 无效".into()))?;
         if offset > 1_000_000 || !(1..=100).contains(&limit) { return Err(AppError::Validation("Bangumi 评论分页参数无效".into())); }
-        WEBSITE_RATE_LIMITER.get_or_init(|| ProviderRateLimiter::new(Duration::from_secs(2))).wait().await;
-        let website = if self.api_root == "https://api.bgm.tv/v0" { "https://next.bgm.tv" } else { self.api_root.trim_end_matches("/v0") };
-        let response = self.client.get(format!("{website}/p1/subjects/{subject_id}/comments"))
+        fetch_comments(self.comments_request(subject_id, offset, limit), subject_id, offset, limit).await
+    }
+
+    fn comments_request(&self, subject_id: i64, offset: u32, limit: u32) -> reqwest::RequestBuilder {
+        // P1 is a website route, independently of the configured v0 API mirror.
+        self.client.get(format!("https://next.bgm.tv/p1/subjects/{subject_id}/comments"))
             .query(&[("limit", limit.to_string()), ("offset", offset.to_string())])
-            .send().await.map_err(network_error)?;
-        if !response.status().is_success() { return Err(AppError::Network(format!("Bangumi 吐槽读取失败（HTTP {}）", response.status().as_u16()))); }
-        let body: Value = response.json().await.map_err(|error| AppError::Network(format!("Bangumi 返回了无法解析的吐槽数据：{error}")))?;
-        parse_comments(body,subject_id,offset,limit)
     }
 
     async fn get_subject_collection(
@@ -346,6 +345,37 @@ impl BangumiProvider {
             .wait()
             .await;
     }
+}
+
+async fn fetch_comments(request: reqwest::RequestBuilder, subject_id: i64, offset: u32, limit: u32) -> AppResult<BangumiCommentPage> {
+    let operation = async {
+        for attempt in 0..2 {
+            WEBSITE_RATE_LIMITER.get_or_init(|| ProviderRateLimiter::new(Duration::from_secs(2))).wait().await;
+            let request = request.try_clone().expect("public comments GET has no streaming body")
+                .timeout(Duration::from_secs(6));
+            let response = match request.send().await {
+                Err(error) if attempt == 0 && (error.is_timeout() || error.is_connect() || error.is_request()) => continue,
+                Err(error) => return Err(network_error(error)),
+                Ok(response) => response,
+            };
+            if response.status().is_server_error() && attempt == 0 { continue; }
+            if !response.status().is_success() {
+                return Err(AppError::Network(format!("Bangumi 吐槽读取失败（HTTP {}）", response.status().as_u16())));
+            }
+            let bytes = match response.bytes().await {
+                Err(error) if attempt == 0 && (error.is_timeout() || error.is_body() || error.is_decode()) => continue,
+                Err(error) => return Err(network_error(error)),
+                Ok(bytes) => bytes,
+            };
+            // A complete invalid response is a contract error, not a transient connection failure.
+            let body = serde_json::from_slice(&bytes).map_err(|error| AppError::Network(format!("Bangumi 返回了无法解析的吐槽数据：{error}")))?;
+            return parse_comments(body, subject_id, offset, limit);
+        }
+        unreachable!("the final comments attempt always returns")
+    };
+    // Includes rate-limit queueing and both attempts, so a busy website queue cannot wait forever.
+    tokio::time::timeout(Duration::from_secs(16), operation).await
+        .map_err(|_| AppError::Network("连接 Bangumi 超时，请检查网络后重试".into()))?
 }
 
 fn parse_comments(body: Value, subject_id: i64, offset: u32, limit: u32) -> AppResult<BangumiCommentPage> {
@@ -651,6 +681,65 @@ fn extract_season(value: &Value) -> Option<i64> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn comments_use_the_official_website_even_with_a_v0_mirror() {
+        let config = crate::bangumi_network::BangumiNetwork { mode: "mirror".into(), mirror_url: "https://example.com/api".into() };
+        let provider = super::BangumiProvider::with_transport(&config, reqwest::Client::new());
+        let request = provider.comments_request(400602, 20, 10).build().unwrap();
+        assert_eq!(request.url().as_str(), "https://next.bgm.tv/p1/subjects/400602/comments?limit=10&offset=20");
+    }
+
+    async fn comments_http_fixture(responses: Vec<(u16, &'static str)>) -> (crate::error::AppResult<crate::models::BangumiCommentPage>, Vec<String>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let mut requests = Vec::new();
+            for (status, body) in responses {
+                let (mut stream, _) = tokio::time::timeout(std::time::Duration::from_secs(4), listener.accept()).await.unwrap().unwrap();
+                let mut bytes = [0; 2048];
+                let count = stream.read(&mut bytes).await.unwrap();
+                requests.push(String::from_utf8_lossy(&bytes[..count]).lines().next().unwrap().to_string());
+                if status == 0 { continue; }
+                let length = if status == 999 { body.len() + 20 } else { body.len() };
+                let status = if status == 999 { 200 } else { status };
+                stream.write_all(format!("HTTP/1.1 {status} Test\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n{body}").as_bytes()).await.unwrap();
+            }
+            (requests, listener)
+        });
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let request = client.get(format!("http://{address}/p1/subjects/400602/comments"))
+            .query(&[("limit", "10"), ("offset", "20")]);
+        let result = super::fetch_comments(request, 400602, 20, 10).await;
+        let (requests, listener) = server.await.unwrap();
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(100), listener.accept()).await.is_err(), "unexpected additional retry");
+        (result, requests)
+    }
+
+    #[tokio::test]
+    async fn comments_recover_transient_reads_without_hiding_persistent_or_invalid_responses() {
+        const PAGE: &str = r#"{"data":[{"user":{"id":42,"nickname":"Reader"},"comment":"test","rate":8}],"total":123}"#;
+        for response in [(0, ""), (502, "gateway unavailable"), (503, "unavailable"), (999, "{\"data\":")] {
+            let (result, requests) = comments_http_fixture(vec![response, (200, PAGE)]).await;
+            let page = result.unwrap();
+            assert_eq!(page.items[0].id, "400602:42");
+            assert_eq!((page.offset, page.limit, page.total), (20, 10, 123));
+            assert_eq!(requests, vec!["GET /p1/subjects/400602/comments?limit=10&offset=20 HTTP/1.1"; 2]);
+        }
+        for response in [(429, "rate limit"), (403, "forbidden"), (200, "not JSON"), (200, r#"{"error":"failed"}"#)] {
+            let (result, requests) = comments_http_fixture(vec![response]).await;
+            assert!(result.is_err(), "response {response:?} must remain an error");
+            assert_eq!(requests.len(), 1);
+        }
+        let (result, requests) = comments_http_fixture(vec![(503, "unavailable"); 2]).await;
+        assert!(result.unwrap_err().to_string().contains("503"));
+        assert_eq!(requests.len(), 2);
+        let (result, requests) = comments_http_fixture(vec![(200, r#"{"data":[],"total":0}"#)]).await;
+        let page = result.unwrap();
+        assert!(page.items.is_empty());
+        assert_eq!(page.total, 0);
+        assert_eq!(requests.len(), 1);
+    }
     #[tokio::test]
     async fn public_get_retries_a_dropped_connection_but_not_rate_limit_responses() {
         use tokio::io::{AsyncReadExt,AsyncWriteExt};

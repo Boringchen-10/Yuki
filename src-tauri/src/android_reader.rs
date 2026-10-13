@@ -246,6 +246,13 @@ async fn route(session: &Session, method: &str, path: &str, body: &[u8]) -> AppR
         }
         ["close"] if method == "POST" => { session.closed.notify_one(); json!({}) }
         ["chapter", entry] if method == "GET" => session.manifest(entry).await?,
+        ["chapter", entry, "comments", offset] if method == "GET" => {
+            if session.kind != "comic" { return Err(invalid("本话评论仅支持漫画来源")); }
+            let offset = offset.parse::<u32>().map_err(|_| invalid("评论页码无效"))?;
+            serde_json::to_value(crate::comic_explore::chapter_comments_for(
+                &session.state.pool, &session.book, entry, &session.group, offset, 30,
+            ).await?)?
+        }
         ["chapter", entry, "page", index] if method == "GET" => {
             let chapter = session.chapter(entry).await?;
             let index = index.parse::<usize>().map_err(|_| invalid("图片页码无效"))?;
@@ -352,6 +359,94 @@ mod tests {
         let session = Session { state,kind:kind.into(),book:"book".into(),group:"default".into(),initial:"one".into(),base:"http://127.0.0.1:1234/test/".into(),
             chapters:Mutex::new(HashMap::from([("one".into(),Arc::new(Chapter {title:"第一章".into(),archive:None,pages:vec!["one".into(),"two".into()],sections:vec![json!({"title":"正文","text":"<正文>\n第二段"})],inline_images:HashMap::new()}))])),loading:Mutex::new(()),closed:Arc::new(Notify::new()) };
         (session, root)
+    }
+
+    const COMMENT_CHAPTER: &str = "52615840-10a4-11e9-b68d-00163e0ca5bd";
+
+    async fn comment_proxy(session: &Session) -> tokio::net::TcpListener {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let config = crate::reading_network::ReadingNetwork {proxy_mode:"manual".into(),proxy_url:format!("http://{}",listener.local_addr().unwrap()),..Default::default()};
+        sqlx::query("INSERT INTO app_settings(key,value,updated_at) VALUES('reading.network',?,'now')")
+            .bind(serde_json::to_string(&config).unwrap()).execute(&session.state.pool).await.unwrap();
+        listener
+    }
+
+    async fn comment_directory(session: &Session, book: &str, group: &str) {
+        let host = crate::reading_network::ReadingNetwork::default().detail_hosts()[0].clone();
+        let params = vec![("limit".to_string(),"100".to_string()),("offset".to_string(),"0".to_string())];
+        for (key, value) in [
+            (format!("v1:{host}/api/v3/comic2/{book}:[]"), json!({"comic":{"path_word":book},"groups":{"default":{"name":"默认"},"volume":{"name":"单行本"}}})),
+            (format!("v1:{host}/api/v3/comic/{book}/group/{group}/chapters:{}",serde_json::to_string(&params).unwrap()),
+                json!({"entries":[{"id":COMMENT_CHAPTER,"title":"合成章节","order":0,"count":61}],"total":1,"offset":0,"group":group,"groups":[],"stale":false})),
+        ] {
+            sqlx::query("INSERT INTO metadata_cache(provider,cache_key,response_json,fetched_at,expires_at) VALUES('copy-reading',?,?,?,?) ON CONFLICT(provider,cache_key) DO UPDATE SET response_json=excluded.response_json,expires_at=excluded.expires_at")
+                .bind(key).bind(value.to_string()).bind(chrono::Utc::now().to_rfc3339()).bind((chrono::Utc::now()+chrono::Duration::hours(1)).to_rfc3339())
+                .execute(&session.state.pool).await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn chapter_comments_route_rejects_novels_and_invalid_identifiers_without_source_requests() {
+        for kind in ["comic", "novel"] {
+            let (session, _root) = fixture(kind).await;
+            let proxy = comment_proxy(&session).await;
+            let paths = if kind == "novel" { vec![format!("chapter/{COMMENT_CHAPTER}/comments/0")] }
+                else { ["chapter/one/comments/0".into(), "chapter/not-a-uuid/comments/0".into(),
+                    format!("chapter/{COMMENT_CHAPTER}/comments/-1"), format!("chapter/{COMMENT_CHAPTER}/comments/NaN"),
+                    format!("chapter/{COMMENT_CHAPTER}/comments/4294967296"), format!("chapter/{COMMENT_CHAPTER}/comments/1000001")].to_vec() };
+            for path in paths {
+                let result = tokio::time::timeout(Duration::from_secs(1),route(&session,"GET",&path,b"")).await
+                    .expect("invalid comments routes must fail before connecting to a source");
+                assert!(matches!(result,Err(AppError::Validation(_))),"{path}: {result:?}");
+            }
+            assert!(tokio::time::timeout(Duration::from_millis(50),proxy.accept()).await.is_err());
+            assert_eq!(session.chapters.lock().await.len(),1);
+        }
+    }
+
+    #[tokio::test]
+    async fn chapter_comments_route_is_confined_to_session_book_and_group() {
+        let (session,_root) = fixture("comic").await;
+        let proxy = comment_proxy(&session).await;
+        comment_directory(&session,"book","default").await;
+        comment_directory(&session,"other-book","default").await;
+        comment_directory(&session,"book","volume").await;
+        let path = format!("v1:{}/api/v3/comic/book/group/default/chapters:",crate::reading_network::ReadingNetwork::default().detail_hosts()[0]);
+        let (key,data):(String,String) = sqlx::query_as("SELECT cache_key,response_json FROM metadata_cache WHERE provider='copy-reading' AND instr(cache_key,?)=1")
+            .bind(path).fetch_one(&session.state.pool).await.unwrap();
+        let mut page:Value = serde_json::from_str(&data).unwrap();
+        page["entries"][0]["id"] = json!("c2d8f146-17b6-11e9-bfa4-00163e0ca5bd");
+        sqlx::query("UPDATE metadata_cache SET response_json=? WHERE provider='copy-reading' AND cache_key=?")
+            .bind(page.to_string()).bind(key).execute(&session.state.pool).await.unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(1),route(&session,"GET",&format!("chapter/{COMMENT_CHAPTER}/comments/0"),b"")).await
+            .expect("another book or group cannot supply chapter membership");
+        assert!(matches!(result,Err(AppError::Validation(_))));
+        assert!(tokio::time::timeout(Duration::from_millis(50),proxy.accept()).await.is_err());
+        assert_eq!(session.chapters.lock().await.len(),1);
+    }
+
+    #[tokio::test]
+    async fn chapter_comments_route_reads_only_comment_transport_without_loading_images_or_progress() {
+        let (session,_root) = fixture("comic").await;
+        let proxy = comment_proxy(&session).await;
+        comment_directory(&session,"book","default").await;
+        let server = tokio::spawn(async move {
+            let (mut socket,_) = proxy.accept().await.unwrap();
+            let mut request = [0;4096]; let length = socket.read(&mut request).await.unwrap();
+            let text = String::from_utf8_lossy(&request[..length]);
+            assert!(text.starts_with("CONNECT api.copy202601.com:443 "),"{text}");
+            socket.write_all(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
+        });
+        let result = tokio::time::timeout(Duration::from_secs(2),route(&session,"GET",&format!("chapter/{COMMENT_CHAPTER}/comments/30"),b"")).await
+            .expect("controlled comment transport failure must complete");
+        assert!(matches!(result,Err(AppError::Network(_))));
+        server.await.unwrap();
+        assert_eq!(session.chapters.lock().await.len(),1);
+        assert!(!session.chapters.lock().await.contains_key(COMMENT_CHAPTER));
+        for table in ["android_reading_progress","android_reading_bookmarks"] {
+            let count:i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}")).fetch_one(&session.state.pool).await.unwrap();
+            assert_eq!(count,0);
+        }
     }
     #[tokio::test]
     async fn comic_progress_roundtrips_and_rejects_invalid_page_or_offset() {

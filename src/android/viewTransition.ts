@@ -1,3 +1,5 @@
+import { flushSync } from "react-dom";
+
 type Transition = { finished: Promise<void>; skipTransition(): void };
 let active: Transition | null = null;
 let generation = 0;
@@ -20,4 +22,15 @@ export function startAndroidTransition(callback: () => void | Promise<void>) {
     void transition.finished.then(release,release);
     return { finished: transition.finished, isCurrent: () => current === generation };
   } catch { return null; }
+}
+
+/** Detail tabs animate only the content below the stationary hero and tab bar. */
+export function startDetailTabTransition(kind: "forward" | "back", node: HTMLElement | null, commit: () => void) {
+  node?.getAnimations().forEach(animation => animation.cancel());
+  flushSync(commit);
+  if (!node || matchMedia("(prefers-reduced-motion: reduce)").matches) return null;
+  return node.animate([
+    { opacity: 0, transform: `translateX(${kind === "forward" ? 12 : -12}px)` },
+    { opacity: 1, transform: "none" },
+  ], { duration: 240, easing: "cubic-bezier(.22,1,.36,1)" });
 }

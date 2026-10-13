@@ -1,5 +1,19 @@
 # Codex 与 DeepSeek Harness 项目交接记录
 
+## 安卓每话评论 / Bangumi 恢复 / 局部详情动画 v0.11.0（2026-10-13）
+
+- 基线 `3dcb85a`，`.tmp/android-first` / `codex/android-first`。用户明确每话数据指评论 / 热度等来源数据；随后纠正详情概览 / 剧集等标签只允许正文左右滑动，封面 / 标题 / 标签栏固定。保留完整OpenDesign工作树；其他维护者未提交代码不混入提交。AndroidApp / ExplorePanel的自身增量记录 `docs/android/READING_COMMUNITY_SOURCE_HANDOFF.patch`，当前已应用，`git apply --unidiff-zero --ignore-whitespace --reverse --check`可核对。viewTransition.ts仅提交HEAD上独立局部动画函数与必要flushSync导入，原有OpenDesign面板转场仍为WIP。电脑临时夹具 `.tmp/comments-ui-20261013/` 不纳产品提交，证据已复制D盘。
+- Kira固定 `fc3f242fee2e3b68de94bc35296fc73db60031c3` 真实每话接口COPY roasts，chapter_id / limit / offset / _update=true；与整本comments分开。专有6字段DTO和真实total，来源没有每话热度 / 浏览量 / 点赞；没有把页数或作品总章数冒充热度。共用既有目录归属校验 / 网络配置，非法UUID、作品 / 分组不符明确拒绝，评论不加载正文图、不写进度 / 书签。补齐空目录且total非零的无进展循环保护。Tauri命令与阅读私有会话路由共用同一Rust函数。
+- 原生Reader原“本话评论”按钮接通Material面板，跟随当前可见章节；30条分页 / 显式更多，追加错误保留列表并重试同页，本文可选取。最近3话会话缓存，关闭后不保留超过200条的页；退出取消UI任务，代次检查防止晚到响应覆盖新面板。整本评论入口保持独立。无新增运行依赖、数据迁移或来源账号。
+- Bangumi评论固定官网next.bgm.tv的P1，不误走v0镜像；共用公开代理与官网限流。最多2次、单次6秒、含排队总计16秒，恢复瞬断 / 5xx / 超时 / 截断；429 / 4xx / 完整非法响应不额外重试，不伪装空评论。首次临时测试漏掉reqwest将截断包装为decode的情况，核对依赖源码后补齐，最终通过。两处详情用专用controller / Hook，源offset+limit推进、pending去重、代次隔离、追加失败停止Observer，刷新失败保留旧Feed。原生PlayerPage同步修正游标和同页重试。
+- 标签只动画稳定正文wrapper，按顺序±12px / 240ms短滑入；减少动态直接更新，真正开 / 返回作品的原转场保留。电脑Edge用两个真实组件 / 全隔离数据 **10场景**通过，360 / 412共 **4布局**无横溢出，**6动画**检查hero与tabs边界不变、运行动画0、只有内容animate、小标签document.startViewTransition调用0，无pageerror。证据 `D:/DevTools/Android/Build/qa/reading-community-20261013/comments-ui/`，7个前端源hash与构建锁定一致。
+- 最终完整Rust **366通过 / 18忽略 / 0失败**（384项），前端 **111通过**与TypeScript通过；原生既有策略 **10项**通过，Android Rust / Release构建通过。日志总目录 `D:/DevTools/Android/Build/qa/reading-community-20261013/`。只在独立organizeqa测试，未向日常包写夹具或复制DB / 凭据 / Cookie。
+- 实机合成漫画评论 **9用例**通过，`D:/DevTools/Android/Build/qa/chapter-comments-1791869025318/`：30/30/15分页、503保留旧内容并重试offset30、75条缓存重开、关闭保持阅读位置、下一话独立空列表、旧请求关窗后晚到不能覆盖新面板、进度只到合成会话。独立instrumentation **1项**退出0；测试variant不裁剪Kotlin运行时，生产 / 最终日常包仍优化。先前JS allowlist及同UID shell启动都被既有限制拒绝，未放宽guard / 导出 / 系统权限，改独立测试组件通过targetContext合法启动；HTTP事件为0的旧失败未算通过。第一轮固定坐标 / 假定切话必重新请求manifest的晚到用例未切话；改真实UI节点并手动释放受控旧响应后9项通过，未改生产来迎合脚本。测试组件已卸载，独立QA恢复优化版，端口 / 自有XML清理，无录屏或重启。
+- 同手机匿名只读真实来源：Bangumi 373247首屏20条 / total3476 / 约1.2秒；漫画样本第01话30条 / total334 / 约5.7秒（含冷目录核对）。证据 `live-device-readonly.json`，不持久化公开评论正文进Git。仅一加PLK110 / Android16 / SM8850 / arm64短测，其他芯片、长时网络与来源长期稳定性未验证。
+- 最终签名 `D:/DevTools/Android/Build/previews/reading-community-20261013/Genzo_0.11.0_reader-community_arm64-v8a.apk`，**50,284,467字节**，SHA256 **c8e05e96e5eeb5ac5f4fb3cc394488bff02a067062fb6561daf6607bc1c4ce0b**。0.11.0 / code11000 / com.genzo.android / arm64 / min26 / target36 / 非debuggable / 原证书，v2/v3与16KiB ZIP通过；403份生产源匹配当前构建副本、3原生库匹配Gradle stripped、8官方shader与许可匹配，包内无用户DB、图书、测试媒体 / 测试组件。内嵌 `index-B4lwRHqB.js` / `index-CDhOjwTu.css`。
+- 普通签名包与日常readerqa均覆盖更新。最终更新前后 **34作品 / 17来源 / 21播放记录**、个人字段、来源 / 规则ID及版本 / 启停、位置 / 时长 / 完成和四项播放偏好逐项一致，无清库或隐式扫描。用户过夜使用后记录已由20变21，重新读取基线，未套用旧数量。日常APK归档 `qa/reading-community-20261013/reader-final.apk`，共享前端资源同步、9228 / 9351指新日常PID，最后恢复日常播放设置，未自动播放真实媒体。不创建公开Release / 标签 / 推送，公开版仍v0.5.2。
+
+
 ## 安卓 Anime4K 性能 v0.10.1 本机预览（2026-10-12）
 
 - 基线 `8f8167a`，同一 `.tmp/android-first` / `codex/android-first`，保留完整当前 OpenDesign。用户报告8e5手机超分会严重卡顿，随后明确是WebDAV卡、规则源流畅，要求播放器具体参照Kazumi。设备只读报告 `ro.soc.model=SM8850`；没有获取用户原视频分辨率 / 编码，不能把合成样本当成其原文件复现。
