@@ -1,5 +1,15 @@
 # Codex 与 DeepSeek Harness 项目交接记录
 
+## 详情玻璃背景与封面转场 v0.14.3（2026-10-14）
+
+- 基线 `9f8a5a5`，继续 `.tmp/android-first` / `codex/android-first` 的完整当前 OpenDesign。用户新要求为动漫背景 / 底栏渐变与玻璃质感、漫画小说无背景、放缓点击封面的转场。修订 PROJECT_CONTEXT / DESIGN_DIRECTION 的书籍背景安排；主目录桌面修改与安卓原 WIP 保留。
+- 真实 React 对照复现发现和媒体库转场结束均向上跳 9px：共享截图与头部 gz-rise 同时运行。现在共享封面 560ms / 平缓缓动，取消叠加的详情入场移动；清理后也不重启。动漫背景改为封面 + 28px 磨砂玻璃 / 高光染色 / 遮罩渐隐，底栏用 24px 渐变衔接；漫画 / 小说不再渲染装饰背景。截图检查曾发现伪元素被 transform 图片覆盖，已修正 z-index 并复跑。没有新依赖、迁移或媒体操作。
+- AndroidApp / ExplorePanel 自身两行增量保存 `docs/android/DETAIL_GLASS_SOURCE_HANDOFF.patch`，**当前已应用**，`git apply --reverse --check` 核对；不重复应用、不整文件提交其他维护者 WIP。详情 clean 组件 / CSS、验证脚本、版本和配套文档按本轮范围提交。
+- TypeScript、前端 27 文件 / 115 项通过；新增真实 React 转场 / 背景 / 快速返回 / 减少动态检查，以及既有 5 种封面比例、9 组详情回归通过，6 窗口尺寸无溢出 / 重叠，无 pageerror。Android 优化 Rust / QA / Release 构建通过，421 份生产源与 D 构建副本匹配；本轮纯 UI 未重跑 Rust / Kotlin 单测。详见 `docs/android/DETAIL_GLASS_MOTION.md`。
+- PLK110 / Android16 实机：封面 ready / finished / 清理后 y 均179.0313、高222.942 CSS px，头部无叠加动画，玻璃滤镜生效、背景top=-20；既有漫画与小说均无装饰背景，截图已查看。首次升级 CDP 在 WebView 就绪前挂断，重试通过；不是生产缺陷。测试结束重载恢复纯包内资源与未插桩转场，留在既有动漫详情，不自动播放，9228 / 9351 指向新日常 PID。
+- 最终 `D:/DevTools/Android/Build/previews/detail-glass-motion-20261014/Genzo_0.14.3_detail-glass-motion_arm64-v8a.apk`，49,399,731字节，SHA256 `af4daa4746d66f0102df91128872127bd380c0c4d971ad8f29a9663196a6d9c6`；0.14.3 / code14003 / com.genzo.android / arm64 / min26 / target36 / 非debuggable / 原证书，v2 / v3 与16KiB ZIP验证通过，3原生库、内嵌index-CEgcxyFv.js / index-mGG9iYmE.css，无用户 DB / 书籍 / 测试媒体。
+- 普通签名包与日常 readerqa 均 install-r 更新，已核对安装哈希。新取升级前后36作品 / 17来源 / 29观看记录 / 16规则 / 7书籍与个人字段 / 创建时间 / 阅读位置和条目 / 书架 / 播放偏好哈希一致，无隐式扫描。快照只保存哈希，未复制 DB / 凭据，浏览书籍正常新增浏览时间；证据 `D:/DevTools/Android/Build/qa/detail-glass-motion-20261014/`。不创建公开 Release / 标签 / 推送，公开版仍v0.5.2。
+
 ## 详情原比例封面 / 状态栏背景 v0.14.2（2026-10-14）
 
 - 基线 `9e00434`，同一 `.tmp/android-first` / `codex/android-first`，保留完整当前 OpenDesign。用户要求取消封面白边、按获取图片比例显示、放大到右侧信息 / 追番状态高度，以及状态栏使用同一封面虚化背景；中途“继续”保持此目标。AndroidApp / ExplorePanel / MainActivity 自身增量见 `docs/android/DETAIL_COVER_SOURCE_HANDOFF.patch`，**当前已应用**，用 `git apply --unidiff-zero --reverse --check`核对，不重复应用、不整文件纳入其他维护者WIP。

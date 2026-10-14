@@ -24,14 +24,13 @@ export function AnimeDetailHeader({ title, originalTitle, poster, backdrop, date
   </section>;
 }
 
-export function BookDetailHeader({ title, originalTitle, poster, backdrop, kind, year, status, authors, tags, count, rating, files, onTag, action }: {
-  title: string; originalTitle?: string | null; poster: ReactNode; backdrop?: ReactNode; kind: "comic" | "novel";
+export function BookDetailHeader({ title, originalTitle, poster, kind, year, status, authors, tags, count, rating, files, onTag, action }: {
+  title: string; originalTitle?: string | null; poster: ReactNode; kind: "comic" | "novel";
   year?: number | null; status?: string; authors?: string[]; tags: string[]; count: number | string;
   rating?: number | null; files?: number; onTag: (tag: string) => void; action?: ReactNode;
 }) {
   const size=useDetailPosterSize();
   return <section className="gz-book-head gz-shared-book-hero" ref={size.body}>
-    {backdrop && <span className="gz-subject-backdrop" aria-hidden="true">{backdrop}</span>}
     <div className="gz-detail-poster" ref={size.poster}>{poster}</div><div className="gz-book-info" ref={size.info}>
       <h2>{title}</h2>{originalTitle && originalTitle !== title && <p className="gz-meta">{originalTitle}</p>}
       <div className="gz-book-chips"><span className="gz-book-chip">{kind === "comic" ? "漫画" : "轻小说"}</span>{year && <span className="gz-book-chip">{year} 年</span>}{status && <span className="gz-book-chip">{status}</span>}</div>

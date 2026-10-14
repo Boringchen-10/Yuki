@@ -15,10 +15,17 @@
 .android-app .gz-shared-rating small { font-size: 11px; font-weight: 400; color: var(--muted); }
 .android-app .gz-shared-rating .gz-shared-rank { margin-left: 4px; color: var(--text); }
 .android-app .gz-shared-anime-hero .gz-status-pill { padding: 9px 16px; max-width: 100%; }
-.android-app :is(.gz-shared-anime-hero, .gz-shared-book-hero) .gz-subject-backdrop > * { width: 100%; height: 100%; filter: blur(13px) saturate(1.55) brightness(.7); transform: scale(1.35); }
-.android-app :is(.gz-shared-anime-hero, .gz-shared-book-hero) .gz-subject-backdrop img { width: 100%; height: 100%; object-fit: cover; }
-.android-app :is(.gz-anime-hero.gz-shared-anime-hero, .gz-book-head.gz-shared-book-hero) .gz-subject-backdrop { top: calc(-80px - var(--safe-top, 0px)); }
-.android-app :is(.gz-anime-hero.gz-shared-anime-hero, .gz-book-head.gz-shared-book-hero) .gz-subject-backdrop::after { background: linear-gradient(180deg, color-mix(in srgb, var(--bg) 55%, transparent) 0%, color-mix(in srgb, var(--bg) 28%, transparent) 36%, transparent 58%), linear-gradient(0deg, color-mix(in srgb, var(--bg) 96%, transparent) 0%, color-mix(in srgb, var(--bg) 45%, transparent) 28%, transparent 64%); }
+.android-app .gz-anime-hero.gz-shared-anime-hero .gz-subject-backdrop { top: calc(-80px - var(--safe-top, 0px)); bottom: -56px; -webkit-mask-image: linear-gradient(#000 0%, #000 72%, transparent 100%); mask-image: linear-gradient(#000 0%, #000 72%, transparent 100%); }
+.android-app .gz-anime-hero.gz-shared-anime-hero .gz-subject-backdrop > * { width: 100%; height: 100%; aspect-ratio: auto; border-radius: 0; box-shadow: none; filter: none; transform: scale(1.08); }
+.android-app .gz-anime-hero.gz-shared-anime-hero .gz-subject-backdrop img { width: 100%; height: 100%; object-fit: cover; }
+.android-app .gz-anime-hero.gz-shared-anime-hero .gz-subject-backdrop::before { content: ""; position: absolute; z-index: 1; inset: 0; -webkit-backdrop-filter: blur(28px) saturate(1.35) contrast(.96); backdrop-filter: blur(28px) saturate(1.35) contrast(.96); background: linear-gradient(135deg, rgba(255,255,255,.16), rgba(255,255,255,.03) 48%, transparent 72%), color-mix(in srgb, var(--bg) 42%, transparent); }
+.android-app .gz-anime-hero.gz-shared-anime-hero .gz-subject-backdrop::after { z-index: 2; background: linear-gradient(180deg, color-mix(in srgb, var(--bg) 62%, transparent) 0%, color-mix(in srgb, var(--bg) 16%, transparent) 36%, transparent 58%, color-mix(in srgb, var(--bg) 64%, transparent) 80%, var(--bg) 100%); }
+.android-app > .gz-tabbar { position: relative; z-index: 3; border-top: 0; background: linear-gradient(180deg, var(--bg), var(--surface-strong) 72%); }
+.android-app > .gz-tabbar::before { content: ""; position: absolute; inset: -24px 0 100%; pointer-events: none; background: linear-gradient(180deg, transparent, var(--bg)); }
+html[data-platform="android"][data-trans="morph"]::view-transition-group(*) { animation-duration: 560ms; animation-timing-function: cubic-bezier(.32,0,.2,1); }
+html[data-platform="android"][data-trans="morph"]::view-transition-old(root), html[data-platform="android"][data-trans="morph"]::view-transition-new(root) { animation-duration: 320ms; animation-timing-function: ease-in-out; }
+/* A moving hero changes the shared cover's captured destination and causes a landing jump. */
+html[data-platform="android"] .android-app :is(.gz-detail-head, .gz-book-head, .gz-detail-tabs, .gz-book-tabs, .gz-description, .gz-book-actions) { animation: none; }
 .android-app main.gz-scroll { padding-top: calc(12px + var(--safe-top, 0px)); }
 .android-app .gz-shared-book-hero .gz-status-pill { min-height: 44px; padding: 7px 12px; font-size: 12px; }
 .android-app .gz-shared-book-hero .gz-book-info h2 { padding-right: 0; line-height: 1.4; }
