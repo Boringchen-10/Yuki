@@ -25,7 +25,7 @@ pub struct Source {
     pub method: String,
     pub episode_offset: i64,
 }
-#[derive(Default, Serialize)]
+#[derive(Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Artwork {
     pub anchor: String,
@@ -37,7 +37,7 @@ pub struct Artwork {
     pub correspondence: Vec<Correspondence>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Correspondence {
     pub(crate) episode_key: String,
@@ -415,6 +415,10 @@ async fn search_sources(
     fresh: bool,
 ) -> AppResult<SearchResult> {
     let names = titles(pool, work).await?;
+    search_named_sources(pool, names, query, fresh).await
+}
+
+async fn search_named_sources(pool: &SqlitePool, names: Vec<String>, query: Option<String>, fresh: bool) -> AppResult<SearchResult> {
     let automatic = query.is_none();
     let queries = match query {
         Some(q) if !q.trim().is_empty() && q.len() <= 300 => vec![q.trim().to_owned()],
@@ -589,12 +593,31 @@ pub async fn refresh(pool: &SqlitePool, work: &str, fresh: bool) -> AppResult<Ar
                 .and_then(|s| s.parse::<i64>().ok())
         })
         .filter(|n| *n > 0);
+    let verified = automatic_sources(pool, &episodes, &result.anchor, linked, titles(pool, work).await?, fresh, &mut result.warnings).await?;
+    if verified.len() == 1 {
+        save_source(pool, work, &verified[0]).await?;
+        let warnings = result.warnings;
+        result = cached(pool, work).await?;
+        result.warnings = warnings;
+        if result.images.is_empty() {
+            result.warnings.push("已核实分集对应，但 TMDB 暂无可用剧照，使用文件缩略图".into());
+        }
+    } else {
+        result.warnings.push("未找到唯一且可核实的 TMDB 分集对应，请搜索来源并预览对应范围".into());
+    }
+    Ok(result)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn automatic_sources(pool: &SqlitePool, episodes: &[AnimeEpisodeMetadata], anchor: &str,
+    linked: Option<i64>, names: Vec<String>, fresh: bool, warnings: &mut Vec<String>,
+) -> AppResult<Vec<Source>> {
     let series = if let Some(id) = linked {
         vec![id]
     } else {
-        match search_sources(pool, work, None, fresh).await {
+        match search_named_sources(pool, names.clone(), None, fresh).await {
             Ok(r) => {
-                result.warnings.extend(r.warnings);
+                warnings.extend(r.warnings);
                 r.candidates
                     .into_iter()
                     .filter(|c| c.confidence >= 0.90)
@@ -603,10 +626,8 @@ pub async fn refresh(pool: &SqlitePool, work: &str, fresh: bool) -> AppResult<Ar
                     .collect()
             }
             Err(_) => {
-                result
-                    .warnings
-                    .push("TMDB 搜索暂不可用，可稍后重试或手动选择来源".into());
-                return Ok(result);
+                warnings.push("TMDB 搜索暂不可用，可稍后重试或手动选择来源".into());
+                return Ok(vec![]);
             }
         }
     };
@@ -619,16 +640,16 @@ pub async fn refresh(pool: &SqlitePool, work: &str, fresh: bool) -> AppResult<Ar
         pool,
         &series,
         &episodes,
-        &result.anchor,
+        anchor,
         first_date,
         fresh,
-        &mut result.warnings,
+        warnings,
     )
     .await?;
     if verified.is_empty() && linked.is_some() {
-        match search_sources(pool, work, None, fresh).await {
+        match search_named_sources(pool, names, None, fresh).await {
             Ok(r) => {
-                result.warnings.extend(r.warnings);
+                warnings.extend(r.warnings);
                 let fallback: Vec<_> = r
                     .candidates
                     .into_iter()
@@ -640,34 +661,84 @@ pub async fn refresh(pool: &SqlitePool, work: &str, fresh: bool) -> AppResult<Ar
                     pool,
                     &fallback,
                     &episodes,
-                    &result.anchor,
+                    anchor,
                     first_date,
                     fresh,
-                    &mut result.warnings,
+                    warnings,
                 )
                 .await?;
             }
-            Err(_) => result
-                .warnings
-                .push("已关联来源无法对应，TMDB 搜索暂不可用，可手动选择来源".into()),
+            Err(_) => warnings.push("已关联来源无法对应，TMDB 搜索暂不可用，可手动选择来源".into()),
         }
     }
+    Ok(verified)
+}
+
+pub(crate) async fn subject_artwork(pool: &SqlitePool, external_id: &str, fresh: bool) -> AppResult<Artwork> {
+    if external_id.parse::<u64>().ok().filter(|id| *id > 0).is_none() {
+        return Err(AppError::Validation("Bangumi 条目 ID 无效".into()));
+    }
+    let local: Option<String> = sqlx::query_scalar("SELECT work_id FROM work_external_ids WHERE provider='bangumi' AND external_id=?")
+        .bind(external_id).fetch_optional(pool).await?;
+    if let Some(work) = local { return refresh(pool, &work, fresh).await; }
+    if !fresh {
+        if let Some(artwork)=cached_subject_artwork(pool,external_id,true).await? {return Ok(artwork);}
+    }
+    let fallback=cached_subject_artwork(pool,external_id,false).await?;
+    let mut result = Artwork { anchor: format!("bangumi:{external_id}"), ..Artwork::default() };
+    if !crate::credentials::tmdb_token(pool).await?.is_some_and(|token| !token.trim().is_empty()) {
+        result.warnings.push("请配置 TMDB Read Access Token 后更新剧照".into());
+        if let Some(mut previous)=fallback {previous.warnings.extend(result.warnings);return Ok(previous);}
+        return Ok(result);
+    }
+    let metadata = crate::explore::subject_metadata(pool, external_id).await?;
+    let structure = crate::anime_details::bangumi_subject_structure(pool, external_id, Some("episodes"), false).await?;
+    result.warnings.extend(structure.warnings);
+    let episodes = structure.episodes.into_iter().map(|entry| entry.episode).collect::<Vec<_>>();
+    let mut seen=HashSet::new();
+    let names: Vec<_> = metadata.original_title.into_iter().chain(std::iter::once(metadata.title)).chain(metadata.aliases)
+        .map(|name| base_title(&name)).filter(|name| !name.is_empty() && seen.insert(name.clone())).take(4).collect();
+    let linked = crate::explore::linked_ids_for_bangumi(external_id)?.tmdb
+        .and_then(|id| id.strip_prefix("tv/").and_then(|tail| tail.split('/').next()).and_then(|id| id.parse::<i64>().ok())).filter(|id| *id > 0);
+    let verified = automatic_sources(pool, &episodes, &result.anchor, linked, names, fresh, &mut result.warnings).await?;
     if verified.len() == 1 {
-        save_source(pool, work, &verified[0]).await?;
-        let warnings = result.warnings;
-        result = cached(pool, work).await?;
-        result.warnings = warnings;
-        if result.images.is_empty() {
-            result
-                .warnings
-                .push("已核实分集对应，但 TMDB 暂无可用剧照，使用文件缩略图".into());
-        }
+        let source = verified.into_iter().next().expect("one verified source");
+        let data = season_cache(pool, &path(&source)).await?;
+        result.images = mapped(&episodes, &data, &source);
+        result.correspondence = correspondence(&episodes, &data, &source);
+        result.source_title = data["name"].as_str().map(str::to_owned);
+        result.source = Some(source);
+        let now=Utc::now();
+        sqlx::query("INSERT INTO metadata_cache(provider,cache_key,response_json,fetched_at,expires_at) VALUES('genzo-episode-artwork',?,?,?,?) ON CONFLICT(provider,cache_key) DO UPDATE SET response_json=excluded.response_json,fetched_at=excluded.fetched_at,expires_at=excluded.expires_at")
+            .bind(crate::bangumi_network::current().cache_key(external_id)).bind(serde_json::to_string(&result)?).bind(now.to_rfc3339()).bind((now+chrono::Duration::hours(1)).to_rfc3339()).execute(pool).await?;
     } else {
-        result
-            .warnings
-            .push("未找到唯一且可核实的 TMDB 分集对应，请搜索来源并预览对应范围".into());
+        result.warnings.push("未找到唯一且可核实的 TMDB 分集对应".into());
+        if let Some(mut previous)=fallback {previous.warnings.extend(result.warnings);return Ok(previous);}
     }
     Ok(result)
+}
+
+async fn cached_subject_artwork(pool:&SqlitePool,external_id:&str,fresh_only:bool)->AppResult<Option<Artwork>> {
+    let row:Option<(String,String)>=sqlx::query_as("SELECT response_json,expires_at FROM metadata_cache WHERE provider='genzo-episode-artwork' AND cache_key=?")
+        .bind(crate::bangumi_network::current().cache_key(external_id)).fetch_optional(pool).await?;
+    Ok(row.filter(|(_,expiry)|!fresh_only||expiry>&Utc::now().to_rfc3339()).and_then(|(json,_)|serde_json::from_str::<Artwork>(&json).ok()).filter(|value|value.anchor==format!("bangumi:{external_id}")))
+}
+
+#[tauri::command]
+pub async fn get_bangumi_episode_artwork(external_id: String, fresh: bool, app: AppHandle, state: State<'_, AppState>) -> AppResult<Artwork> {
+    with_cache(subject_artwork(&state.pool, &external_id, fresh).await?, &format!("bangumi:{external_id}"), &state, &app)
+}
+
+#[tauri::command]
+pub async fn cache_bangumi_episode_artwork(external_id:String,episode_key:String,app:AppHandle,state:State<'_,AppState>)->AppResult<Option<String>> {
+    if external_id.parse::<u64>().ok().filter(|id|*id>0).is_none(){return Err(AppError::Validation("Bangumi 条目 ID 无效".into()));}
+    let local:Option<String>=sqlx::query_scalar("SELECT work_id FROM work_external_ids WHERE provider='bangumi' AND external_id=?").bind(&external_id).fetch_optional(&state.pool).await?;
+    let path=if let Some(work)=local {cache_for_player(&state,&work,&episode_key).await?}
+        else if let Some(value)=cached_subject_artwork(&state.pool,&external_id,false).await? {
+            if let Some(url)=value.images.get(&episode_key){cache_image(&state,&format!("bangumi:{external_id}"),url).await?}else{None}
+        }else{None};
+    if let Some(path)=&path {db::allow_cover_file(&app,Path::new(path))?;}
+    Ok(path)
 }
 async fn verify_series(
     pool: &SqlitePool,
@@ -917,9 +988,13 @@ pub(crate) async fn cache_for_player(state: &AppState, work_id: &str, episode_ke
     let Some(url) = r.images.get(episode_key) else {
         return Ok(None);
     };
+    cache_image(state,work_id,url).await
+}
+
+async fn cache_image(state:&AppState,identity:&str,url:&str)->AppResult<Option<String>> {
     let destination = crate::metadata_aggregator::artwork_cache_path(
         &state.cover_cache_path,
-        &work_id,
+        identity,
         "episode",
         url,
     );
@@ -993,6 +1068,46 @@ mod tests {
             INSERT INTO media_episode_links(media_file_id,work_id,provider,episode_external_id,match_method,confidence,updated_at) VALUES('art-f','w','bangumi','ep1','manual',1,'t');
             INSERT INTO playback_progress(media_file_id,position_ms,duration_ms,updated_at) VALUES('art-f',12345,200000,'t');").execute(&pool).await.unwrap();
         pool
+    }
+
+    #[tokio::test]
+    async fn discovery_artwork_uses_verified_dates_without_creating_a_library_work() {
+        let pool=fixture().await;
+        let subject="987654322";
+        let metadata=crate::bangumi::subject_to_metadata(&json!({"id":987654322,"name":"测试未入库","date":"2024-01-01","type":2})).unwrap();
+        let detail_key=crate::bangumi_network::current().cache_key(&format!("detail:{subject}"));
+        let episode_key=crate::bangumi::BangumiProvider::new().unwrap().structure_cache_key(subject,"episodes");
+        for (key,value) in [(detail_key,json!([metadata])),(episode_key,json!([ep("u1",1,"2024-01-01",0),ep("u2",2,"2024-01-08",0)]))] {
+            sqlx::query("INSERT INTO metadata_cache(provider,cache_key,response_json,fetched_at,expires_at) VALUES('bangumi',?,?,'t','2099')").bind(key).bind(value.to_string()).execute(&pool).await.unwrap();
+        }
+        sqlx::query("INSERT INTO app_settings(key,value,updated_at) VALUES('metadata.tmdb_read_token','fixture-only','t')").execute(&pool).await.unwrap();
+        let search_key=format!("film-tv:zh-CN:search/tv:{}",serde_json::to_string(&vec![("query","测试未入库")]).unwrap());
+        sqlx::query("INSERT INTO metadata_cache(provider,cache_key,response_json,fetched_at,expires_at) VALUES('tmdb',?,?,'t','2099')")
+            .bind(search_key).bind(json!({"results":[{"id":42,"name":"测试未入库"}]}).to_string()).execute(&pool).await.unwrap();
+        put_cache(&pool,"tv/42",&json!({"seasons":[{"season_number":1,"air_date":"2023-04-01"}]}),"2099").await;
+        put_cache(&pool,"tv/42/season/1",&combined(),"2099").await;
+        let result=subject_artwork(&pool,subject,false).await.unwrap();
+        assert_eq!(result.source.as_ref().unwrap().episode_offset,12);
+        assert!(result.images["bangumi:u1"].ends_with("/s13.jpg"));
+        assert!(result.images["bangumi:u2"].ends_with("/s14.jpg"));
+        assert_eq!(sqlx::query_scalar::<_,i64>("SELECT COUNT(*) FROM works").fetch_one(&pool).await.unwrap(),1);
+        assert_eq!(sqlx::query_scalar::<_,i64>("SELECT COUNT(*) FROM episode_artwork_sources").fetch_one(&pool).await.unwrap(),0);
+        assert_eq!(sqlx::query_scalar::<_,i64>("SELECT COUNT(*) FROM media_episode_links WHERE match_method='manual'").fetch_one(&pool).await.unwrap(),1);
+        assert_eq!(sqlx::query_scalar::<_,i64>("SELECT position_ms FROM playback_progress WHERE media_file_id='art-f'").fetch_one(&pool).await.unwrap(),12345);
+        assert!(cached_subject_artwork(&pool,"987654323",false).await.unwrap().is_none());
+        sqlx::query("DELETE FROM app_settings WHERE key='metadata.tmdb_read_token'").execute(&pool).await.unwrap();
+        let offline=subject_artwork(&pool,subject,true).await.unwrap();assert_eq!(offline.images,result.images);assert!(!offline.warnings.is_empty());
+    }
+
+    #[tokio::test]
+    async fn discovery_artwork_handles_missing_credentials_and_keeps_manual_local_source() {
+        let pool=fixture().await;
+        let missing=subject_artwork(&pool,"987654322",false).await.unwrap();assert!(missing.images.is_empty());assert!(!missing.warnings.is_empty());
+        assert!(subject_artwork(&pool,"../invalid",false).await.is_err());
+        save_source(&pool,"w",&binding(1,"manual")).await.unwrap();
+        put_cache(&pool,"tv/42/season/1",&data(1,"2024-01-01"),"2099").await;
+        let local=subject_artwork(&pool,"987654321",false).await.unwrap();
+        assert_eq!(local.source.unwrap().method,"manual");assert!(local.images["bangumi:ep1"].ends_with("/frame.jpg"));
     }
     fn combined() -> Value {
         json!({"id":100,"episodes":[

@@ -1,0 +1,271 @@
+--- a/src/android/AndroidApp.tsx
++++ b/src/android/AndroidApp.tsx
+@@ -12 +12 @@
+-import type { AnimeCharacter, AnimeWorkStructure, MediaFile, ThemeMode, UnassignedMediaGroup, WorkDetail, WorkInput, WorkListItem, WorkStatus } from "../types";
++import type { AnimeWorkStructure, MediaFile, ThemeMode, UnassignedMediaGroup, WorkDetail, WorkInput, WorkListItem, WorkStatus } from "../types";
+@@ -22,0 +23 @@
++import { AnimeDetailHeader, BookDetailHeader } from "./DetailHeaders";
+@@ -64 +64,0 @@
+-const metadataStates: Record<string, string> = { unmatched: "待整理", candidate_pending: "待确认", matched: "已匹配", manually_created: "手动整理", error: "识别失败" };
+@@ -87 +86,0 @@
+-const stars = (value: number | null) => { const filled = value == null ? 0 : Math.max(0, Math.min(5, Math.round(value / 2))); return "★".repeat(filled) + "☆".repeat(5 - filled); };
+@@ -225 +224 @@
+-const Poster = memo(function Poster({ work }: { work: WorkListItem | WorkDetail }) {
++const Poster = memo(function Poster({ work, decorative = false }: { work: WorkListItem | WorkDetail; decorative?: boolean }) {
+@@ -229,2 +228,2 @@
+-  return <div className={`gz-poster${work.type === "novel" ? " is-novel" : ""}${!url || failed ? " missing" : ""}`} data-cover-id={work.id}>
+-    {url && !failed ? <img src={url} alt={work.title} loading="lazy" decoding="async" draggable={false} onError={() => setFailed(true)} /> : <><Film aria-hidden="true" /><span>暂无封面</span></>}
++  return <div className={`gz-poster${work.type === "novel" ? " is-novel" : ""}${!url || failed ? " missing" : ""}`} data-cover-id={decorative ? undefined : work.id}>
++    {url && !failed ? <img src={url} alt={decorative ? "" : work.title} loading="lazy" decoding="async" draggable={false} onError={() => setFailed(true)} /> : <><Film aria-hidden="true" /><span>暂无封面</span></>}
+@@ -384,2 +383,2 @@
+-  const [characterFallback, setCharacterFallback] = useState<AnimeCharacter[] | null>(null);
+-  const [characterFallbackState, setCharacterFallbackState] = useState<"idle" | "loading" | "ready">("idle");
++  const [detailSectionState, setDetailSectionState] = useState<"idle" | "loading" | "ready" | "error">("idle");
++  const [detailSectionAttempt,setDetailSectionAttempt]=useState(0);
+@@ -686,2 +685,2 @@
+-    setCharacterFallback(null);
+-    setCharacterFallbackState("idle");
++    setDetailSectionState("idle");
++    setDetailSectionAttempt(0);
+@@ -720,2 +719,3 @@
+-    if (detailTab !== "characters" || !bangumiId) return;
+-    if (structure?.characters.length) { setCharacterFallbackState("ready"); return; }
++    if (!["characters","related","staff"].includes(detailTab) || !/^\d+$/.test(bangumiId) || !workId || structure?.workId!==workId || structureState!=="ready") return;
++    const field=detailTab==="related"?"seasons":detailTab as "characters"|"staff";
++    if(structure[field].length){setDetailSectionState("ready");return;}
+@@ -723,4 +723,7 @@
+-    setCharacterFallbackState("loading");
+-    void api.getBangumiSubjectStructure(bangumiId, "characters", true).then(result => {
+-      if (active) { setCharacterFallback(result.characters.length ? result.characters : null); setCharacterFallbackState("ready"); }
+-    }).catch(() => { if (active) { setCharacterFallback(null); setCharacterFallbackState("ready"); } });
++    setDetailSectionState("loading");
++    const key=`bangumi:structure:${bangumiId}:${detailTab}`;
++    void androidSession.load(key,()=>api.getBangumiSubjectStructure(bangumiId, detailTab, detailSectionAttempt>0),detailSectionAttempt>0).then(result => {
++      if (!active)return;
++      setStructure(previous=>{if(!previous||previous.workId!==workId||previous.bangumiId!==bangumiId)return previous;const merged={...previous,[field]:result[field]};androidSession.set(`local:structure:${workId}`,merged);return merged;});
++      setDetailSectionState("ready");
++    }).catch(() => { if (active) setDetailSectionState("error"); });
+@@ -728,2 +731 @@
+-  }, [detailTab, bangumiId, structure]);
+-  const detailCharacters = structure?.characters.length ? structure.characters : characterFallback ?? [];
++  }, [detailTab, bangumiId, workId, structureState,detailSectionAttempt]);
+@@ -1160,19 +1162 @@
+-        <section className="gz-book-head">
+-          <Poster work={detail} />
+-          <div className="gz-book-info">
+-            <h2>{detail.title}</h2>
+-            {detail.originalTitle && <p className="gz-meta">{detail.originalTitle}</p>}
+-            <div className="gz-book-chips">
+-              <span className="gz-book-chip">{detail.type === "comic" ? "漫画" : "轻小说"}</span>
+-              {detail.metadataYear && <span className="gz-book-chip">{detail.metadataYear} 年</span>}
+-              {readingDetail?.item.status && <span className="gz-book-chip">{readingDetail.item.status}</span>}
+-            </div>
+-            {readingDetail && readingDetail.item.authors.length > 0 && <div className="gz-book-pills">{readingDetail.item.authors.map(author => <span className="gz-book-pill" key={author}><User size={12} />{author}</span>)}</div>}
+-            {detail.tags.length > 0 && <div className="gz-book-pills">{detail.tags.map(tag => <button className="gz-book-pill" key={tag} onClick={() => openTag(tag, detail.type)}><i aria-hidden="true" />{tag}</button>)}</div>}
+-            <div className="gz-book-stats">
+-              {detail.networkScore != null && <span className="gz-book-stat"><Star size={13} />{detail.networkScore.toFixed(1)} 分</span>}
+-              <span className="gz-book-stat"><BookOpen size={13} />{readingSource ? sourceTotal ?? "—" : bookEntries.length} 话</span>
+-              {managedDetail && <span className="gz-book-stat"><Library size={13} />{detail.mediaFiles.length} 个文件</span>}
+-            </div>
+-          </div>
+-        </section>
++        <BookDetailHeader title={detail.title} originalTitle={detail.originalTitle} poster={<Poster work={detail} />} kind={detail.type === "comic" ? "comic" : "novel"} year={detail.metadataYear} status={readingDetail?.item.status} authors={readingDetail?.item.authors} tags={detail.tags} count={readingSource ? sourceTotal ?? "—" : bookEntries.length} rating={detail.networkScore} files={managedDetail ? detail.mediaFiles.length : undefined} onTag={tag => openTag(tag, detail.type)} />
+@@ -1198,8 +1182 @@
+-        <section className="gz-detail-head gz-anime-hero">
+-          {detail.coverPath && <span className="gz-subject-backdrop" aria-hidden="true"><Poster work={detail} /></span>}
+-          <div className="gz-subject-head">
+-            <div className="gz-subject-heading">
+-              <h2 className="gz-subject-title">{detail.title}</h2>
+-              {detail.originalTitle && <p className="gz-subject-original">{detail.originalTitle}</p>}
+-            </div>
+-            <div className="gz-subject-actions">
++        <AnimeDetailHeader title={detail.title} originalTitle={detail.originalTitle} poster={<Poster work={detail} />} backdrop={detail.coverPath ? <Poster work={detail} decorative /> : undefined} date={animeAirDate ?? (detail.metadataYear ? `${detail.metadataYear} 年` : null)} rating={detail.networkScore} votes={detail.networkRatingCount} episodes={structure?.episodes.length} actions={<>
+@@ -1212,8 +1189 @@
+-            </div>
+-          </div>
+-          <div className="gz-subject-body">
+-            <Poster work={detail} />
+-            <div className="gz-subject-stats">
+-              <div className="gz-subject-stat"><span>放送开始:</span><strong>{animeAirDate ?? (detail.metadataYear ? `${detail.metadataYear} 年` : "未提供")}</strong></div>
+-              {detail.networkScore != null && <div className="gz-subject-stat"><span>{detail.networkRatingCount ? `${detail.networkRatingCount} 人评分:` : "评分:"}</span><strong className="gz-subject-score">{detail.networkScore.toFixed(1)}<em>{stars(detail.networkScore)}</em></strong></div>}
+-              <div className="gz-subject-stat"><span>资料状态:</span><strong>{metadataStates[detail.metadataStatus]}</strong></div>
++          </>}>
+@@ -1221,4 +1191,2 @@
+-            </div>
+-          </div>
+-        </section>
+-        <div className="gz-detail-tabs" role="tablist" aria-label="作品详情分类">{detailTabs.map(tab => <button type="button" role="tab" key={tab.id} aria-selected={detailTab === tab.id} className={detailTab === tab.id ? "active" : ""} onClick={() => { if (tab.id === detailTab) return; const from = detailTabs.findIndex(item => item.id === detailTab); const to = detailTabs.findIndex(item => item.id === tab.id); startDetailTabTransition(to < from ? "back" : "forward", detailContentRef.current, () => setDetailTab(tab.id)); }}>{tab.label}</button>)}</div>
++        </AnimeDetailHeader>
++        <div className="gz-detail-tabs" role="tablist" aria-label="作品详情分类">{detailTabs.map(tab => <button type="button" role="tab" key={tab.id} aria-selected={detailTab === tab.id} className={detailTab === tab.id ? "active" : ""} onClick={() => { if (tab.id === detailTab) return; const from = detailTabs.findIndex(item => item.id === detailTab); const to = detailTabs.findIndex(item => item.id === tab.id); startDetailTabTransition(to < from ? "back" : "forward", detailContentRef.current, () => {setDetailTab(tab.id);setDetailSectionState("idle");setDetailSectionAttempt(0);}); }}>{tab.label}</button>)}</div>
+@@ -1229 +1197 @@
+-            {detail.description.trim().length > 90 && <button className="gz-link" onClick={() => setDescExpanded(value => !value)}>{descExpanded ? "收起" : "加载更多"}</button>}
++            {detail.description.trim().length > 90 && <button className="gz-link" onClick={() => setDescExpanded(value => !value)}>{descExpanded ? "收起简介" : "展开简介"}</button>}
+@@ -1245,3 +1213,3 @@
+-        {detailTab === "characters" && <Section title="角色" action={structure ? <span className="gz-meta">{detailCharacters.length} 位</span> : undefined}>{structureState === "loading" || (characterFallbackState === "loading" && !detailCharacters.length) ? <RowsSkeleton count={4} label="正在读取角色资料…" /> : !structure || structureState === "error" ? <p className="gz-panel gz-meta">暂无角色资料。匹配 Bangumi 资料后可显示。</p> : detailCharacters.length ? <AnimeCharacters characters={detailCharacters} /> : <p className="gz-panel gz-meta">没有角色资料。</p>}</Section>}
+-        {detailTab === "related" && <Section title="关联" action={structure ? <span className="gz-meta">{structure.seasons.length} 部</span> : undefined}>{structureState === "loading" ? <RowsSkeleton count={4} label="正在读取关联作品…" /> : !structure || structureState === "error" ? <p className="gz-panel gz-meta">暂无关联资料。</p> : structure.seasons.length ? <AnimeRelated seasons={structure.seasons} onOpen={season => { if (season.localWorkId) { navigate(`detail/${encodeURIComponent(season.localWorkId)}`); return; } navigate("explore"); requestExploreSubject(season.externalId); }} /> : <p className="gz-panel gz-meta">没有关联作品。</p>}</Section>}
+-        {detailTab === "staff" && <Section title="制作人员" action={structure ? <span className="gz-meta">{structure.staff.length} 位</span> : undefined}>{structureState === "loading" ? <RowsSkeleton count={5} label="正在读取制作人员…" /> : !structure || structureState === "error" ? <p className="gz-panel gz-meta">暂无制作人员资料。</p> : structure.staff.length ? <AnimeStaff staff={structure.staff} /> : <p className="gz-panel gz-meta">没有制作人员资料。</p>}</Section>}
++        {detailTab === "characters" && <Section title="角色" action={structure ? <span className="gz-meta">{(structure?.characters.length??0)} 位</span> : undefined}>{structureState === "loading" || (detailSectionState === "loading" && !(structure?.characters.length??0)) ? <RowsSkeleton count={4} label="正在读取角色资料…" /> : detailSectionState === "error" ? <div className="gz-error" role="alert"><span>角色资料读取失败。</span><button className="gz-btn" onClick={()=>setDetailSectionAttempt(value=>value+1)}>重试</button></div> : !structure || structureState === "error" ? <p className="gz-panel gz-meta">暂无角色资料。匹配 Bangumi 资料后可显示。</p> : (structure?.characters.length??0) ? <AnimeCharacters characters={structure.characters} /> : <p className="gz-panel gz-meta">没有角色资料。</p>}</Section>}
++        {detailTab === "related" && <Section title="关联" action={structure ? <span className="gz-meta">{structure.seasons.length} 部</span> : undefined}>{structureState === "loading" || detailSectionState === "loading" ? <RowsSkeleton count={4} label="正在读取关联作品…" /> : detailSectionState === "error" ? <div className="gz-error" role="alert"><span>关联资料读取失败。</span><button className="gz-btn" onClick={()=>setDetailSectionAttempt(value=>value+1)}>重试</button></div> : !structure || structureState === "error" ? <p className="gz-panel gz-meta">暂无关联资料。</p> : structure.seasons.length ? <AnimeRelated seasons={structure.seasons} onOpen={season => { if (season.localWorkId) { navigate(`detail/${encodeURIComponent(season.localWorkId)}`); return; } navigate("explore"); requestExploreSubject(season.externalId); }} /> : <p className="gz-panel gz-meta">没有关联作品。</p>}</Section>}
++        {detailTab === "staff" && <Section title="制作人员" action={structure ? <span className="gz-meta">{structure.staff.length} 位</span> : undefined}>{structureState === "loading" || detailSectionState === "loading" ? <RowsSkeleton count={5} label="正在读取制作人员…" /> : detailSectionState === "error" ? <div className="gz-error" role="alert"><span>制作人员资料读取失败。</span><button className="gz-btn" onClick={()=>setDetailSectionAttempt(value=>value+1)}>重试</button></div> : !structure || structureState === "error" ? <p className="gz-panel gz-meta">暂无制作人员资料。</p> : structure.staff.length ? <AnimeStaff staff={structure.staff} /> : <p className="gz-panel gz-meta">没有制作人员资料。</p>}</Section>}
+@@ -1290 +1258 @@
+-      {(route === "explore" || visitedPanels.includes("explore")) && <div className="gz-kept-page" hidden={route !== "explore"}><ExplorePanel active={route === "explore"} onToast={setToast} onLibraryChanged={() => void refresh(true).catch(reason => setError(String(reason)))} registerBack={registerSubviewBack} /></div>}
++      {(route === "explore" || visitedPanels.includes("explore")) && <div className="gz-kept-page" hidden={route !== "explore"}><ExplorePanel onOpenWork={id => navigate(`detail/${encodeURIComponent(id)}`)} active={route === "explore"} onToast={setToast} onLibraryChanged={() => void refresh(true).catch(reason => setError(String(reason)))} registerBack={registerSubviewBack} /></div>}
+--- a/src/android/ExplorePanel.tsx
++++ b/src/android/ExplorePanel.tsx
+@@ -18,0 +19,3 @@
++import { AnimeDetailHeader, BookDetailHeader } from "./DetailHeaders";
++import EpisodeSources from "./EpisodeSources";
++import { useEpisodeArtwork } from "./useEpisodeArtwork";
+@@ -53,4 +55,0 @@
+-const stars = (value: number | null) => {
+-  const filled = value == null ? 0 : Math.max(0, Math.min(5, Math.round(value / 2)));
+-  return "★".repeat(filled) + "☆".repeat(5 - filled);
+-};
+@@ -133 +132,2 @@
+-export default function ExplorePanel({ onToast, onLibraryChanged, registerBack, active = true }: { onToast: (message: string) => void; onLibraryChanged?: () => void; registerBack?: (handler: (() => boolean) | null) => void; active?: boolean }) {
++export default function ExplorePanel({ onToast, onLibraryChanged, onOpenWork, registerBack, active = true }: { onToast: (message: string) => void; onLibraryChanged?: () => void; onOpenWork?: (id: string) => void; registerBack?: (handler: (() => boolean) | null) => void; active?: boolean }) {
++  const activeRef=useRef(active);activeRef.current=active;
+@@ -212 +212,3 @@
+-  const comments = useBangumiComments(subject?.externalId ?? null, active);
++  const comments = useBangumiComments(subject?.externalId ?? null, active && subjectTab === "comments");
++  const artworkSignature = active && subjectTab === "episodes" && structure?.bangumiId === subject?.externalId ? structure?.episodes.map(episode => `${episode.provider}:${episode.externalId}`).join(",") ?? "" : "";
++  const subjectArtwork = useEpisodeArtwork(subject?.localWorkId ?? undefined, artworkSignature, subject?.externalId);
+@@ -526 +528,6 @@
+-    setStructure(cached ?? null); setStructureState(cached ? "ready" : "loading");
++    const apply = (value:AnimeWorkStructure) => setStructure(previous=>{
++      if(workId || !previous || previous.bangumiId!==value.bangumiId)return value;
++      return {...previous,warnings:value.warnings,...(subjectTab==="episodes"?{episodes:value.episodes}:subjectTab==="related"?{seasons:value.seasons}:subjectTab==="characters"?{characters:value.characters}:{staff:value.staff})};
++    });
++    if(cached)apply(cached);else setStructure(previous=>previous?.bangumiId===subject.externalId?previous:null);
++    setStructureState(cached ? "ready" : "loading");
+@@ -528,2 +535,2 @@
+-      .then(value => { if (!cancelled) { setStructure(value); setStructureState("ready"); } })
+-      .catch(() => { if (!cancelled) { setStructure(null); setStructureState("error"); } });
++      .then(value => { if (!cancelled) { apply(value); setStructureState("ready"); } })
++      .catch(() => { if (!cancelled) setStructureState("error"); });
+@@ -540,0 +548 @@
++    if (item.localWorkId && onOpenWork) { onOpenWork(item.localWorkId); return; }
+@@ -544 +552 @@
+-    await new Promise<void>(resolve => runExploreMorph(item.externalId, "forward", () => { setSubject(androidSession.peek<ExploreSubject>(subjectKey) ?? item); setSubjectTab(item.localWorkId ? "episodes" : "overview"); setDescExpanded(false); setSearchOpen(false); setTagsOpen(false); resolve(); }));
++    await new Promise<void>(resolve => runExploreMorph(item.externalId, "forward", () => { setSubject(androidSession.peek<ExploreSubject>(subjectKey) ?? item); setSubjectTab("episodes"); setDescExpanded(false); setSearchOpen(false); setTagsOpen(false); resolve(); }));
+@@ -546 +554 @@
+-    try { const value = await androidSession.load(subjectKey, () => api.getExploreSubject(item.externalId)); if (request !== subjectRequest.current) return; setSubject(value); } catch { /* keep list data */ }
++    try { const value = await androidSession.load(subjectKey, () => api.getExploreSubject(item.externalId)); if (request !== subjectRequest.current || !activeRef.current) return; if(value.localWorkId && onOpenWork){setSubject(null);onOpenWork(value.localWorkId);return;}setSubject(value); } catch { /* keep list data */ }
+@@ -552,0 +561 @@
++    if(item.localWorkId && !useBookShelfState.getState().entries[item.localWorkId]?.hidden && onOpenWork){onOpenWork(item.localWorkId);return;}
+@@ -565 +574,2 @@
+-      if (request !== bookDetailRequest.current) return;
++      if (request !== bookDetailRequest.current || !activeRef.current) return;
++      if(detail.item.localWorkId && !useBookShelfState.getState().entries[detail.item.localWorkId]?.hidden && onOpenWork){setComicDetail(null);onOpenWork(detail.item.localWorkId);return;}
+@@ -648,0 +659 @@
++      if(updated.localWorkId && onOpenWork && activeRef.current){setSubject(null);onOpenWork(updated.localWorkId);}
+@@ -782,9 +793 @@
+-    <section className="gz-subject-hero">
+-      <h1 className="gz-subject-title">{subject.title}</h1>
+-      {subject.originalTitle && <p className="gz-subject-original">{subject.originalTitle}</p>}
+-      <div className="gz-subject-body">
+-        <span className="gz-subject-cover" data-explore-cover-id={subject.externalId}><AnimeCover id={subject.externalId} url={cover(subject)} /></span>
+-        <div className="gz-subject-stats">
+-          <div className="gz-subject-stat"><span>放送开始:</span><strong>{subject.airDate ?? "未提供"}</strong></div>
+-          <div className="gz-subject-stat"><span>{subject.ratingCount > 0 ? `${subject.ratingCount} 人评分:` : "评分:"}</span><strong className="gz-subject-score">{score(subject.score)}<em>{stars(subject.score)}</em></strong></div>
+-          <div className="gz-subject-stat"><span>Bangumi Ranked:</span><strong>{subject.rank != null ? `#${subject.rank}` : "未上榜"}</strong></div>
++    <AnimeDetailHeader title={subject.title} originalTitle={subject.originalTitle} poster={<span className="gz-poster" data-explore-cover-id={subject.externalId}><AnimeCover id={subject.externalId} url={cover(subject)} /></span>} backdrop={cover(subject) ? <AnimeCover id={subject.externalId} url={cover(subject)} /> : undefined} date={subject.airDate} rating={subject.score} votes={subject.ratingCount} rank={subject.rank} episodes={structure?.bangumiId === subject.externalId ? structure.episodes.length : null}>
+@@ -794,3 +797 @@
+-        </div>
+-      </div>
+-    </section>
++    </AnimeDetailHeader>
+@@ -801,4 +801,0 @@
+-    {subjectTab !== "comments" && !!structure?.warnings.length && <div className="gz-section">
+-      {structure.warnings.map((warning,index)=><p className="gz-meta" key={`${warning}-${index}`}>{warning}</p>)}
+-      {!subject.localWorkId && <button className="gz-btn" onClick={()=>setStructureAttempt(value=>value+1)}>重试更新资料</button>}
+-    </div>}
+@@ -808,2 +805,3 @@
+-            <div className="gz-section-head"><h2>剧集</h2><span className="gz-meta">{structure.episodes.length} 集</span></div>
+-            <div className="gz-episodes">{structure.episodes.map(episode => { const file = episode.localFiles[0]; const label = episode.episodeNumber != null ? `第 ${episode.episodeNumber} 集` : `#${episode.sortNumber}`; return <button className="gz-episode" key={episode.externalId} disabled={!file || file.missing} onClick={() => file && !file.missing && void playEpisode(file.id)}><div className="gz-episode-cover"><Play /><span>{label}</span></div><strong>{episode.title || label}</strong><span className="gz-meta">{file ? (file.missing ? "文件缺失" : file.fileName) : "未关联本地文件"}</span></button>; })}</div>
++            <div className="gz-section-head"><h2>剧集</h2><span className="gz-meta">{structure.episodes.length} 集</span><button type="button" className="gz-iconbtn" aria-label="更新分集剧照" disabled={subjectArtwork.refreshing} onClick={()=>void subjectArtwork.refresh()}><RefreshCw size={16}/></button></div>
++            <EpisodeSources subjectId={subject.externalId} structure={structure} files={structure.episodes.flatMap(episode=>episode.localFiles)} sources={[]} progress={[]} artwork={subjectArtwork.artwork} busy={false} onPlay={id=>void playEpisode(id)}/>
++            {subjectArtwork.warning && <p className="gz-meta">剧照暂未更新，可稍后重试。</p>}
+@@ -816 +814 @@
+-        {subject.description.trim().length > 90 && <button className="gz-link" onClick={() => setDescExpanded(value => !value)}>{descExpanded ? "收起" : "加载更多"}</button>}
++        {subject.description.trim().length > 90 && <button className="gz-link" onClick={() => setDescExpanded(value => !value)}>{descExpanded ? "收起简介" : "展开简介"}</button>}
+@@ -871,12 +869 @@
+-    <section className="gz-subject-hero is-comic">
+-      <span className="gz-subject-backdrop" aria-hidden="true"><ComicCover item={comicDetail.item} detail /></span>
+-      <h1 className="gz-subject-title">{comicDetail.item.title}</h1>
+-      <div className="gz-subject-body">
+-        <span className="gz-subject-cover" data-explore-cover-id={comicDetail.item.pathWord}><ComicCover item={comicDetail.item} detail /></span>
+-        <div className="gz-subject-stats">
+-          <div className="gz-book-pills">{comicDetail.item.authors.map(author => <span className="gz-book-pill" key={author}><Users size={12} />{author}</span>)}{comicDetail.item.status && <span className="gz-book-pill">{comicDetail.item.status}</span>}{comicDetail.item.tags.map(tag => <button type="button" className="gz-book-pill" key={tag} onClick={()=>exploreTag(comicDetailKind,tag)}>{tag}</button>)}</div>
+-          {comicDetail.chapterCount != null && <div className="gz-subject-stat"><span>章节:</span><strong>{comicDetail.chapterCount}</strong></div>}
+-          <button type="button" className={`gz-status-pill${comicDetail.item.localWorkId&&!shelfEntries[comicDetail.item.localWorkId]?.hidden ? " is-saved" : ""}`} disabled={saving || !!comicDetail.item.localWorkId&&!shelfEntries[comicDetail.item.localWorkId]?.hidden} onClick={() => void saveBook(comicDetail.item, comicDetailKind)}>{comicDetail.item.localWorkId&&!shelfEntries[comicDetail.item.localWorkId]?.hidden ? <Check size={16} /> : <BookOpen size={16} />}<span>{comicDetail.item.localWorkId&&!shelfEntries[comicDetail.item.localWorkId]?.hidden ? "已在书架" : "加入书架"}</span></button>
+-        </div>
+-      </div>
+-    </section>
++    <BookDetailHeader title={comicDetail.item.title} poster={<span className="gz-poster" data-explore-cover-id={comicDetail.item.pathWord}><ComicCover item={comicDetail.item} detail /></span>} kind={comicDetailKind} status={comicDetail.item.status} authors={comicDetail.item.authors} tags={comicDetail.item.tags} count={comicDetail.chapterCount ?? "—"} onTag={tag=>exploreTag(comicDetailKind,tag)} action={<button type="button" className={`gz-status-pill${comicDetail.item.localWorkId&&!shelfEntries[comicDetail.item.localWorkId]?.hidden ? " is-saved" : ""}`} disabled={saving || !!comicDetail.item.localWorkId&&!shelfEntries[comicDetail.item.localWorkId]?.hidden} onClick={() => void saveBook(comicDetail.item, comicDetailKind)}>{comicDetail.item.localWorkId&&!shelfEntries[comicDetail.item.localWorkId]?.hidden ? <Check size={16} /> : <BookOpen size={16} />}<span>{comicDetail.item.localWorkId&&!shelfEntries[comicDetail.item.localWorkId]?.hidden ? "已在书架" : "加入书架"}</span></button>}/>
+--- a/src/android/EpisodeSources.tsx
++++ b/src/android/EpisodeSources.tsx
+@@ -20,2 +20,2 @@
+-export default function EpisodeSources({ workId, structure, files, sources, progress, artwork, warning, busy, onPlay, onOpenPlaySource, onUnlinkEpisode, onDetachWork, onRecognizeOther }: {
+-  workId?: string;
++export default function EpisodeSources({ workId, subjectId, structure, files, sources, progress, artwork, warning, busy, onPlay, onOpenPlaySource, onUnlinkEpisode, onDetachWork, onRecognizeOther }: {
++  workId?: string; subjectId?: string;
+@@ -50 +50 @@
+-    <div className="gz-chips" role="group" aria-label="剧集播放来源">{([["all", "全部来源"], ["local", "本地"], ["webdav", "WebDAV"], ["rule", "规则来源"]] as const).map(([id, label]) => <button className={`gz-chip${scope === id ? " active" : ""}`} aria-pressed={scope === id} key={id} onClick={() => { if (id === "rule") { onOpenPlaySource?.(); return; } setScope(id); if (id === "all" && !hasLocalOrWebdav) onOpenPlaySource?.(); }}>{label}</button>)}</div>
++    {(workId || videos.length > 0) && <div className="gz-chips" role="group" aria-label="剧集播放来源">{([["all", "全部来源"], ["local", "本地"], ["webdav", "WebDAV"], ["rule", "规则来源"]] as const).map(([id, label]) => <button className={`gz-chip${scope === id ? " active" : ""}`} aria-pressed={scope === id} key={id} onClick={() => { if (id === "rule") { onOpenPlaySource?.(); return; } setScope(id); if (id === "all" && !hasLocalOrWebdav) onOpenPlaySource?.(); }}>{label}</button>)}</div>}
+@@ -52 +52 @@
+-      <button className="gz-episode-cover" disabled={busy} aria-label={`播放 ${row.label} ${row.title}`} onClick={() => { if (file && available(file)) onPlay(file.id); else onOpenPlaySource?.(); }}><EpisodeStill workId={workId} episodeKey={row.key} url={artwork?.images[row.key]} cached={artwork?.cachedImages[row.key]} /><span>{row.label}</span>{saved && <progress max={100} value={playbackPercent(saved)} />}</button>
++      <button className="gz-episode-cover" disabled={busy || ((!file || !available(file)) && !onOpenPlaySource)} aria-label={`播放 ${row.label} ${row.title}`} onClick={() => { if (file && available(file)) onPlay(file.id); else onOpenPlaySource?.(); }}><EpisodeStill workId={workId} subjectId={subjectId} episodeKey={row.key} url={artwork?.images[row.key]} cached={artwork?.cachedImages[row.key]} /><span>{row.label}</span>{saved && <progress max={100} value={playbackPercent(saved)} />}</button>
+@@ -56 +56 @@
+-        <button type="button" className="gz-episode-more" aria-label={`${row.label} 设置`} aria-haspopup="dialog" disabled={busy} onClick={() => setOpenKey(row.key)}><MoreHorizontal size={18} /></button>
++        {(onUnlinkEpisode || onDetachWork || onRecognizeOther || row.files.length > 1) && <button type="button" className="gz-episode-more" aria-label={`${row.label} 设置`} aria-haspopup="dialog" disabled={busy} onClick={() => setOpenKey(row.key)}><MoreHorizontal size={18} /></button>}
+--- a/src/android/useEpisodeArtwork.ts
++++ b/src/android/useEpisodeArtwork.ts
+@@ -1 +1 @@
+-import { useCallback, useEffect, useState } from "react";
++import { useCallback, useEffect, useRef, useState } from "react";
+@@ -6,2 +6,2 @@
+-export function useEpisodeArtwork(workId: string | undefined, signature: string) {
+-  const [artwork, setArtwork] = useState<EpisodeArtwork | null>(null);
++export function useEpisodeArtwork(workId: string | undefined, signature: string, subjectId?: string) {
++  const [snapshot, setSnapshot] = useState<{key:string;value:EpisodeArtwork} | null>(null);
+@@ -9,0 +10,3 @@
++  const generation = useRef(0);
++  const key = `episode-artwork:${workId ?? `bangumi:${subjectId}`}:${signature}`;
++  const read = useCallback((fresh = false) => workId ? episodeArtworkApi.refresh(workId, fresh) : episodeArtworkApi.subject(subjectId!, fresh), [workId, subjectId]);
+@@ -11,8 +14,9 @@
+-    let active = true; setArtwork(null); setWarning("");
+-    if (!workId || !signature) return;
+-    void episodeArtworkApi.get(workId).then(cached => { if (active) setArtwork(cached); }).catch(() => {});
+-    void androidSession.load(`episode-artwork:${workId}:${signature}`, () => episodeArtworkApi.refresh(workId)).then(value => {
+-      if (active) { setArtwork(value); setWarning(value.warnings.join("；")); }
+-    }).catch(() => { if (active) setWarning("剧照暂时无法更新，可稍后重试。"); });
+-    return () => { active = false; };
+-  }, [workId, signature]);
++    const request = ++generation.current; let refreshed = false;
++    setSnapshot(null); setWarning(""); setRefreshing(false);
++    if ((!workId && !subjectId) || !signature) return;
++    if (workId) void episodeArtworkApi.get(workId).then(cached => { if (request === generation.current && !refreshed) setSnapshot({key,value:cached}); }).catch(() => {});
++    void androidSession.load(key, () => read()).then(value => {
++      if (request === generation.current) { refreshed = true; setSnapshot({key,value}); setWarning(value.warnings.join("；")); }
++    }).catch(() => { if (request === generation.current) setWarning("剧照暂时无法更新，可稍后重试。"); });
++    return () => { generation.current++; };
++  }, [workId, subjectId, signature, key, read]);
+@@ -20 +24,2 @@
+-    if (!workId) return;
++    if ((!workId && !subjectId) || !signature) return;
++    const request = ++generation.current;
+@@ -23,6 +28,7 @@
+-      const value = await episodeArtworkApi.refresh(workId, true);
+-      setArtwork(value); setWarning(value.warnings.join("；"));
+-      androidSession.set(`episode-artwork:${workId}:${signature}`, value);
+-    } catch (reason) { setWarning(String(reason)); } finally { setRefreshing(false); }
+-  }, [workId, signature]);
+-  return { artwork, warning, refreshing, refresh };
++      const value = await read(true);
++      if (request !== generation.current) return;
++      setSnapshot({key,value}); setWarning(value.warnings.join("；")); androidSession.set(key, value);
++    } catch { if (request === generation.current) setWarning("剧照暂时无法更新，可稍后重试。"); }
++    finally { if (request === generation.current) setRefreshing(false); }
++  }, [workId, subjectId, signature, key, read]);
++  return { artwork: snapshot?.key===key ? snapshot.value : null, warning, refreshing, refresh };

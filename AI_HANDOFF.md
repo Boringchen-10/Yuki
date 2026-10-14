@@ -1,5 +1,17 @@
 # Codex 与 DeepSeek Harness 项目交接记录
 
+## 统一作品详情 / 发现剧照 v0.14.1（2026-10-14）
+
+- 基线 `f5f2a71`，同一 `.tmp/android-first` / `codex/android-first`，完整当前 OpenDesign 参与构建。用户要求发现详情与媒体库相同、显示分集封面、去掉截图中三条“尚未缓存动画扩展结构”提示，并授权优化详情前端。AndroidApp / ExplorePanel / EpisodeSources / useEpisodeArtwork 自身增量记录 `docs/android/DETAIL_UNIFICATION_SOURCE_HANDOFF.patch`，**当前已应用**；`git apply --unidiff-zero --reverse --check`核对，不重复应用、不把其余原 WIP 整文件纳入提交。
+- 新共享 AnimeDetailHeader / BookDetailHeader，发现已入库作品直接打开既有库 / 书架详情；返回保留发现上下文，移出书架书籍仍保留来源重新加入入口。未入库使用相同头部、正文标签与 EpisodeSources，保留真实本地 / WebDAV / 规则控制，缺文件不显示无效管理项。优化标题、评分 / 日期 / 集数、完整封面、触摸高度、宽屏列数与背景层级，装饰封面不参加转场目标；没有推翻 OpenDesign 主题。
+- 删除发现对 structure.warnings 的内部诊断逐条输出，保留区块加载 / 网络错误与重试。已入库角色 / 关联 / 制作人员按当前标签补取并合并对应字段，保留官方目录 / 本地链接；未入库跨标签合并资料，头部集数不变。仅正文短左右过渡，隐藏页不启动剧照、评论仅在打开吐槽时加载。来源晚到详情不能在离开后跳回作品。
+- 新 Bangumi 只读剧照入口，复用原自动 TMDB 搜索 / 唯一季度 / 日期 / 集号偏移验证；已有作品与人工来源优先。未入库只写 metadata_cache、沿用受限图片缓存，不创建作品 / 官方集库 / 媒体链接 / 进度。图像请求只接受服务端已验证映射，复用可信域名 / 字节限制 / 并发2上限，失败保留旧图。前端目标键 / 请求序号防旧作品、晚到磁盘缓存和手动刷新覆盖。无新依赖或迁移；详见 `docs/android/DETAIL_UNIFICATION.md`。
+- TypeScript、前端 **115项**、最终完整 Rust **382通过 / 18忽略 / 0失败**通过；原剧照15项及新增2项覆盖未入库无作品写入、Bgm1→TMDB13偏移、凭据缺失 / 缓存保留、人工来源优先。真实 React详情 **9场景 / 6宽度**（360 / 412 / 915 / 1024 / 1366 / 1920）通过，无 pageerror，书架此前9场景回归通过。Android / Release / 优化日常包构建、既有 Kotlin **12项**通过。
+- 一加 PLK110 / Android16 / SM8850独立 organizeqa真实公开条目622288、14项目录，**5组短测**通过：共享头部 / 卡片、无内部提示、实体标签点击头部静止、系统返回、只浏览不新增 / 改库作品。QA没有匹配的本地 Bangumi作品用于实机同页比对，已入库路由 / 文件操作由真实 React夹具与日常包验证。实机发现 scrollbar-width 没有生效，增加 WebKit滚动条隐藏与纵向裁切，最终包再测确认；初次脚本的CDP自动滚动和入场动画导致边界断言不等，改按真实WebView范围（上边141像素）实体点击、等动画结束并容许0.1CSS像素，未为断言改生产转场。
+- 日常包保留现有凭据做真实剧照采样：条目235130通过发现搜索进入既有媒体库详情，**12张**已核实剧照，原生缓存读取成功、首图 **1920×1080**实际解码并来自本机文件，实体标签切换头部稳定，前后作品个人字段 / 进度一致。首次未入库400602的 TMDB来源 / 搜索请求未成功，返回空图和警告；未放宽匹配或伪造图片，不能据此声称所有新作品联网剧照成功。QA未复制用户Token或DB，日常包不写测试作品 / 媒体，不录屏、不重启。证据 `D:/DevTools/Android/Build/qa/detail-unification-20261014/`。
+- 最终签名 `D:/DevTools/Android/Build/previews/detail-unification-20261014/Genzo_0.14.1_details_arm64-v8a.apk`，**50,448,307字节**，SHA256 **502fec9c685142ccd49c3f44d0b226b77e65b3440d1538a7b939a67b2813f4bc**。0.14.1 / code14001 / com.genzo.android / arm64 / min26 / target36 / 非debuggable / 原证书cee90e5f…cdb，v2/v3与16KiB ZIP通过。421份完整当前生产源与构建副本匹配、3原生库 / 8官方shader / 许可匹配，内嵌index-DWvZzRe2.js / index-BNF-AQTV.css，无用户DB、图书、测试媒体。
+- 普通签名包与原 readerqa均install-r更新，设备APK哈希与制品一致，日常归档 qa/detail-unification-20261014/reader-final.apk。新取升级前后 **36作品 / 17来源 / 29观看记录 / 16规则 / 7书籍记录**及个人字段、创建时间 / 书籍续读 / 本地章节、来源 / 规则版本启停、观看位置 / 时长 / 完成、播放偏好、书架状态一致，无清库或隐式扫描。9228 / 9351指向新日常PID，9352关闭，当前停235130详情剧集页，不自动播放用户媒体；D构建dist已同步。按既有详情修复递增私有补丁版本，不创建公开Release / 标签 / 推送，公开版仍v0.5.2。
+
 ## 书架操作与来源标签探索 v0.14.0（2026-10-14）
 
 - 基线 `72655b3`，同一 `.tmp/android-first` / `codex/android-first`，保留完整当前 OpenDesign。用户确认漫画 / 小说即时收藏，四项菜单为收藏、加入时间最近在前、真实浏览时间、名称 A–Z；详情右上三点先提供移除书架，明确保留收藏、评分、阅读位置和下载。最新确认三类标签均进入发现探索。本轮 AndroidApp / ExplorePanel 自身增量记录 `docs/android/BOOK_SHELF_SOURCE_HANDOFF.patch`，**当前已应用**；使用 `git apply --unidiff-zero --reverse --check` 核对，不重复应用，不把整份原 WIP 纳入提交。其余维护者文件保持原状。

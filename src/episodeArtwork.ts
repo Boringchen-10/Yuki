@@ -13,6 +13,8 @@ export interface ArtworkSeasons { title: string; seasons: { seasonNumber: number
 export interface EpisodeArtworkProvider {
   get(workId: string): Promise<EpisodeArtwork>;
   refresh(workId: string, fresh?: boolean): Promise<EpisodeArtwork>;
+  subject(externalId: string, fresh?: boolean): Promise<EpisodeArtwork>;
+  cacheSubject(externalId: string, episodeKey: string): Promise<string | null>;
   search(workId: string, query?: string): Promise<{ candidates: ArtworkCandidate[]; warnings: string[] }>;
   seasons(seriesId: number): Promise<ArtworkSeasons>;
   preview(workId: string, seriesId: number, seasonNumber: number, episodeOffset?: number): Promise<EpisodeArtwork>;

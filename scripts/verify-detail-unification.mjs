@@ -1,0 +1,44 @@
+import assert from "node:assert/strict";
+import {build} from "vite";
+import {chromium} from "playwright-core";
+import {mkdirSync,readFileSync,writeFileSync} from "node:fs";
+const output="D:/DevTools/Android/Build/qa/detail-unification-20261014/browser";
+mkdirSync(output,{recursive:true});
+await build({configFile:false,logLevel:"error",define:{"process.env.NODE_ENV":'"production"',__GENZO_ANDROID__:"true"},esbuild:{jsx:"automatic"},build:{outDir:output+"/fixture",lib:{entry:"scripts/fixtures/detail-unification.tsx",name:"DetailFixture",formats:["iife"],fileName:()=>"fixture.js",cssFileName:"fixture"}}});
+const browser=await chromium.launch({executablePath:"C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",headless:true});
+const page=await browser.newPage({viewport:{width:412,height:915},reducedMotion:"reduce"}),errors=[],cases=[];
+page.on("pageerror",error=>errors.push(String(error)));
+try{
+ await page.setContent('<html data-platform="android"><body style="margin:0"><div id="root"></div></body></html>');
+ await page.addStyleTag({content:readFileSync(output+"/fixture/fixture.css","utf8")});await page.addScriptTag({content:readFileSync(output+"/fixture/fixture.js","utf8")});
+ await page.locator('.gz-cover').first().click();await page.locator('.gz-shared-anime-hero').waitFor();
+ assert.equal(await page.locator('.gz-subject-topbar').evaluate(node=>getComputedStyle(node).zIndex),"3");
+ await page.locator('.gz-episode-still:visible').waitFor();assert.equal(await page.getByText("尚未缓存动画扩展结构，请点击刷新元数据",{exact:true}).count(),0);
+ assert.equal(await page.locator('.gz-episodes > .gz-episode').count(),2);assert.equal(await page.locator('.gz-episode-still:visible').count(),1);
+ assert.equal(await page.locator('.gz-episode-cover').first().isDisabled(),true);assert.equal(await page.locator('.gz-episode-cover').first().evaluate(node=>getComputedStyle(node).opacity),"1");
+ assert.equal((await page.evaluate(()=>window.__calls.filter(call=>call.kind==="comments"))).length,0);cases.push("uncollected detail has real episode stills, neutral missing image and no internal warnings");
+ const bounds=await page.locator('.gz-shared-anime-hero').boundingBox();await page.getByRole('tab',{name:'概览',exact:true}).click();await page.getByText('展开简介',{exact:true}).waitFor();
+ assert.deepEqual(await page.locator('.gz-shared-anime-hero').boundingBox(),bounds);assert.ok((await page.locator('.gz-shared-anime-hero').innerText()).includes('2 集'));
+ await page.getByRole('tab',{name:'角色',exact:true}).click();await page.getByText('角色样本',{exact:true}).waitFor();assert.deepEqual(await page.locator('.gz-shared-anime-hero').boundingBox(),bounds);
+ await page.getByRole('tab',{name:'剧集',exact:true}).click();await page.locator('.gz-episode-still:visible').waitFor();cases.push("detail tabs retain the header and episode count");
+ await page.screenshot({path:output+'/discovery.png'});
+ await page.getByRole('button',{name:'返回发现',exact:true}).click();await page.getByText('已入库动画',{exact:true}).click();await page.waitForFunction(()=>location.hash==='#/detail/local');await page.locator('.gz-shared-anime-hero').waitFor();await page.locator('.gz-episode-still:visible').waitFor();
+ assert.ok((await page.locator('.gz-shared-anime-hero').innerText()).includes('在看'));assert.equal(await page.locator('.gz-episode-more').count(),2);cases.push("saved discovery work opens the existing library detail and file actions");
+ await page.getByRole('tab',{name:'角色',exact:true}).click();await page.getByText('角色样本',{exact:true}).waitFor();assert.ok((await page.locator('.gz-shared-anime-hero').innerText()).includes('2 集'));
+ await page.evaluate(()=>window.__failStaff=true);await page.getByRole('tab',{name:'制作人员',exact:true}).click();await page.getByText('制作人员资料读取失败。',{exact:true}).waitFor();
+ await page.evaluate(()=>window.__failStaff=false);await page.getByRole('button',{name:'重试',exact:true}).click();await page.getByText('制作人员样本',{exact:true}).waitFor();
+ await page.getByRole('tab',{name:'剧集',exact:true}).click();await page.locator('.gz-episode-still:visible').waitFor();cases.push("saved detail loads missing sections on demand and retries failures");
+ await page.screenshot({path:output+'/library.png'});await page.evaluate(()=>window.__genzoBack());await page.waitForFunction(()=>location.hash==='#/explore');
+ await page.getByRole('tab',{name:'漫画',exact:true}).click();await page.getByText('未入库漫画',{exact:true}).click();await page.locator('.gz-shared-book-hero').waitFor();
+ assert.ok((await page.locator('.gz-shared-book-hero').innerText()).includes('作者'));cases.push("comic discovery uses the shared bookshelf header");
+ await page.getByRole('button',{name:'返回发现',exact:true}).click();await page.getByText('已入库漫画',{exact:true}).click();await page.waitForFunction(()=>location.hash==='#/detail/book');await page.locator('.gz-shared-book-hero').waitFor();cases.push("saved comic opens its existing bookshelf record");
+ await page.evaluate(()=>window.__genzoBack());await page.waitForFunction(()=>location.hash==='#/explore');await page.getByRole('tab',{name:'轻小说',exact:true}).click();await page.getByText('未入库轻小说',{exact:true}).click();await page.locator('.gz-shared-book-hero').waitFor();cases.push("novel discovery uses the shared bookshelf header");
+ await page.getByRole('button',{name:'返回发现',exact:true}).click();await page.getByRole('tab',{name:'动漫',exact:true}).click();
+ await page.evaluate(()=>{window.__delaySubject='333';window.__openSubject('333');});await page.waitForFunction(()=>!!window.__finishSubject);
+ await page.evaluate(()=>window.__openSubject('111'));await page.locator('.gz-episode-still:visible').waitFor();await page.evaluate(()=>window.__finishSubject());await page.waitForTimeout(50);
+ assert.equal(await page.locator('.gz-episode-still:visible').first().getAttribute('src'),await page.evaluate(()=>window.__still));cases.push("late artwork from another subject cannot replace current stills");
+ await page.evaluate(()=>{window.__delayCached=true;window.__invalidate();window.__goto('detail/local');});await page.waitForFunction(()=>!!window.__finishCached);await page.locator('.gz-episode-still:visible').waitFor();await page.evaluate(()=>window.__finishCached());await page.waitForTimeout(50);
+ assert.equal(await page.locator('.gz-episode-still:visible').first().getAttribute('src'),await page.evaluate(()=>window.__still));cases.push("late disk cache cannot overwrite refreshed stills");
+ const layouts=[];for(const width of [360,412,915,1024,1366,1920]){await page.setViewportSize({width,height:915});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth),width);layouts.push(width);}
+ assert.deepEqual(errors,[]);const result={cases,layouts,errors};writeFileSync(output+'/result.json',JSON.stringify(result,null,2));console.log(JSON.stringify(result));
+}finally{await browser.close();}

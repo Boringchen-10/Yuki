@@ -174,6 +174,8 @@ pub fn run() {
             bookshelf::list_book_import_groups,
             bookshelf::create_book_work,
             episode_artwork::get_episode_artwork,
+            episode_artwork::get_bangumi_episode_artwork,
+            episode_artwork::cache_bangumi_episode_artwork,
             episode_artwork::search_episode_artwork_sources,
             episode_artwork::list_episode_artwork_seasons,
             episode_artwork::refresh_episode_artwork,

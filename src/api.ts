@@ -79,6 +79,8 @@ function artworkAssets(value: import("./episodeArtwork").EpisodeArtwork): import
 export const episodeArtworkApi: import("./episodeArtwork").EpisodeArtworkProvider = {
   get: async (workId) => artworkAssets(await call("get_episode_artwork", { workId })),
   refresh: async (workId, fresh = false) => artworkAssets(await call("refresh_episode_artwork", { workId, fresh })),
+  subject: async (externalId, fresh = false) => artworkAssets(await call("get_bangumi_episode_artwork", { externalId, fresh })),
+  cacheSubject: async (externalId, episodeKey) => localAssetUrl(await call("cache_bangumi_episode_artwork", { externalId, episodeKey })) ?? null,
   search: (workId, query) => call("search_episode_artwork_sources", { workId, query: query ?? null }),
   seasons: (seriesId) => call("list_episode_artwork_seasons", { seriesId }),
   preview: (workId, seriesId, seasonNumber, episodeOffset) => call("preview_episode_artwork_source", { workId, seriesId, seasonNumber, episodeOffset: episodeOffset ?? null }),

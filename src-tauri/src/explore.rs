@@ -412,6 +412,10 @@ pub async fn subject(pool: &SqlitePool, external_id: &str) -> AppResult<ExploreS
     ))
 }
 
+pub(crate) async fn subject_metadata(pool: &SqlitePool, external_id: &str) -> AppResult<WorkMetadata> {
+    Ok(load_subject_metadata(pool, external_id, false).await?.value)
+}
+
 pub async fn anime_popular(pool: &SqlitePool, page: u32, refresh: bool) -> AppResult<crate::models::AnimePopularPage> {
     anime_popular_with(pool, page, refresh, async {
         BangumiProvider::new()?.popular(page).await
