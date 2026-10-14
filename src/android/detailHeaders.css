@@ -1,7 +1,9 @@
 .android-app .gz-detail-head.gz-anime-hero.gz-shared-anime-hero { margin: 0 0 18px; }
-.android-app .gz-subject:has(.gz-shared-anime-hero) > .gz-subject-topbar { position: relative; z-index: 3; }
-.android-app .gz-detail-head.gz-anime-hero.gz-shared-anime-hero > .gz-subject-body { grid-template-columns: minmax(110px, 36%) minmax(0, 1fr); gap: 18px; align-items: start; margin-top: 16px; }
-.android-app .gz-shared-anime-hero .gz-detail-poster, .android-app .gz-shared-book-hero .gz-detail-poster { aspect-ratio: 2 / 3; overflow: hidden; border-radius: var(--radius); background: var(--bg-raised); }
+.android-app .gz-subject:has(.gz-shared-anime-hero, .gz-shared-book-hero) > .gz-subject-topbar, .android-app .gz-book-detail-top { position: relative; z-index: 3; }
+.android-app .gz-detail-head.gz-anime-hero.gz-shared-anime-hero > .gz-subject-body { grid-template-columns: var(--detail-poster-width, 46%) minmax(0, 1fr); gap: 18px; align-items: start; margin-top: 16px; }
+.android-app .gz-book-head.gz-shared-book-hero { grid-template-columns: var(--detail-poster-width, 42%) minmax(0, 1fr); isolation: isolate; }
+.android-app .gz-shared-anime-hero .gz-detail-poster, .android-app .gz-shared-book-hero .gz-detail-poster { overflow: hidden; border-radius: var(--radius); background: transparent; }
+.android-app :is(.gz-shared-anime-hero, .gz-shared-book-hero) .gz-detail-poster[data-image-ready="false"] { background: var(--bg-raised); }
 .android-app :is(.gz-shared-anime-hero, .gz-shared-book-hero) .gz-detail-poster > *,
 .android-app :is(.gz-shared-anime-hero, .gz-shared-book-hero) .gz-detail-poster .comic-explore-cover { width: 100%; height: 100%; aspect-ratio: auto; margin: 0; border: 0; }
 .android-app :is(.gz-shared-anime-hero, .gz-shared-book-hero) .gz-detail-poster img { width: 100%; height: 100%; object-fit: contain; }
@@ -13,8 +15,11 @@
 .android-app .gz-shared-rating small { font-size: 11px; font-weight: 400; color: var(--muted); }
 .android-app .gz-shared-rating .gz-shared-rank { margin-left: 4px; color: var(--text); }
 .android-app .gz-shared-anime-hero .gz-status-pill { padding: 9px 16px; max-width: 100%; }
-.android-app .gz-shared-anime-hero .gz-subject-backdrop > * { width: 100%; height: 100%; filter: blur(13px) saturate(1.55) brightness(.7); transform: scale(1.35); }
-.android-app .gz-shared-anime-hero .gz-subject-backdrop img { width: 100%; height: 100%; object-fit: cover; }
+.android-app :is(.gz-shared-anime-hero, .gz-shared-book-hero) .gz-subject-backdrop > * { width: 100%; height: 100%; filter: blur(13px) saturate(1.55) brightness(.7); transform: scale(1.35); }
+.android-app :is(.gz-shared-anime-hero, .gz-shared-book-hero) .gz-subject-backdrop img { width: 100%; height: 100%; object-fit: cover; }
+.android-app :is(.gz-anime-hero.gz-shared-anime-hero, .gz-book-head.gz-shared-book-hero) .gz-subject-backdrop { top: calc(-80px - var(--safe-top, 0px)); }
+.android-app :is(.gz-anime-hero.gz-shared-anime-hero, .gz-book-head.gz-shared-book-hero) .gz-subject-backdrop::after { background: linear-gradient(180deg, color-mix(in srgb, var(--bg) 55%, transparent) 0%, color-mix(in srgb, var(--bg) 28%, transparent) 36%, transparent 58%), linear-gradient(0deg, color-mix(in srgb, var(--bg) 96%, transparent) 0%, color-mix(in srgb, var(--bg) 45%, transparent) 28%, transparent 64%); }
+.android-app main.gz-scroll { padding-top: calc(12px + var(--safe-top, 0px)); }
 .android-app .gz-shared-book-hero .gz-status-pill { min-height: 44px; padding: 7px 12px; font-size: 12px; }
 .android-app .gz-shared-book-hero .gz-book-info h2 { padding-right: 0; line-height: 1.4; }
 .android-app .gz-shared-book-hero button.gz-book-pill { min-height: 44px; }
@@ -27,6 +32,5 @@
 .android-app .gz-detail-content .gz-episode > strong { line-height: 1.45; }
 .android-app .gz-detail-content .gz-episode-cover:disabled { opacity: 1; cursor: default; }
 @media (min-width: 700px) {
-  .android-app .gz-detail-head.gz-anime-hero.gz-shared-anime-hero > .gz-subject-body { grid-template-columns: 170px minmax(0, 1fr); }
   .android-app .gz-detail-content .gz-episodes { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
 }

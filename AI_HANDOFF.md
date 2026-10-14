@@ -1,5 +1,16 @@
 # Codex 与 DeepSeek Harness 项目交接记录
 
+## 详情原比例封面 / 状态栏背景 v0.14.2（2026-10-14）
+
+- 基线 `9e00434`，同一 `.tmp/android-first` / `codex/android-first`，保留完整当前 OpenDesign。用户要求取消封面白边、按获取图片比例显示、放大到右侧信息 / 追番状态高度，以及状态栏使用同一封面虚化背景；中途“继续”保持此目标。AndroidApp / ExplorePanel / MainActivity 自身增量见 `docs/android/DETAIL_COVER_SOURCE_HANDOFF.patch`，**当前已应用**，用 `git apply --unidiff-zero --reverse --check`核对，不重复应用、不整文件纳入其他维护者WIP。
+- 旧详情固定2:3框+contain造成非2:3图留白且高度低于信息区。新增useDetailPosterSize读当前图片实际natural尺寸，以右侧实际高度计算封面宽 / 高；ResizeObserver、图片加载 / src替换监听随布局更新，rAF合并测量，卸载清理。窄屏 / 极宽图受可用宽度约束，不裁切、拉伸或修改图片文件。共享动漫 / 书籍详情沿用同样逻辑。
+- MainActivity原content顶部padding141物理像素造成纯色状态栏带；现在top=0，CSS与原生同步--safe-top / bottom，main内容保留实际安全内距。封面虚化背景延伸至屏幕顶，主题遮罩保持状态图标可读；书籍同样添加装饰背景且不参与封面转场。左右切口、IME、系统返回与底部手势处理保留，无新依赖 / 迁移。
+- TypeScript通过，真实React **5种比例 / 6宽度**（360 / 412 / 915 / 1024 / 1366 / 1920）通过：框和图片尺寸一致、常规竖图高度匹配、极宽图保持比例且无溢出、安全区内容与背景分离；既有详情 **9场景**回归通过、无pageerror。Android / Release / 优化日常包构建，既有 Kotlin **12项**通过。本轮未改Rust业务逻辑，不把上一轮382项结果冒充本轮新跑。说明见 `docs/android/DETAIL_COVER_LAYOUT.md`。
+- 一加PLK110 / Android16 / SM8850独立organizeqa：真实622288封面480×678，显示 **157.835×222.938 CSS像素**，信息高度 **222.946**，图片与框一致；WebView实际[0,0,1272,2772]，safeTop **40.286**、返回入口top **52.286**、背景top **-24**，普通首页安全内距52.286，实机截图确认状态栏玻璃背景。首轮因手机Dozing / 锁屏导致CDP和UI层级不可见，用户解锁后继续；OnePlus在UI dump成功写完后返回137，测试只在明确输出已写入、文件实际有效时读取，随后删除本轮临时XML，没有更改生产迎合测试。
+- 原日常包实机同样确认：既有235130封面原比例 **0.67334**，显示 **150.116×222.942**，信息高度 **222.946**，背景top **-20**。现有数据与主题保留，停在该作品剧集页，不自动播放用户媒体。没有向日常包写合成作品 / 媒体、复制DB或凭据、录屏或重启。证据 `D:/DevTools/Android/Build/qa/detail-cover-20261014/`；9352关闭，9228 / 9351已重新指向当前日常PID，D构建dist已同步。
+- 最终签名 `D:/DevTools/Android/Build/previews/detail-cover-20261014/Genzo_0.14.2_detail-cover_arm64-v8a.apk`，**50,448,307字节**，SHA256 **4a7a6a76d4587536029deeef93f5d2f702902ce6857000f4cf6d3d53fb3b2b2a**。0.14.2 / code14002 / com.genzo.android / arm64 / min26 / target36 / 非debuggable / 原证书，v2/v3与16KiB ZIP通过。422份完整当前生产源与构建副本匹配、3原生库 / 8官方shader / 许可一致；index-CQTyTgAq.js / index-BFIZWJGB.css，无用户DB / 图书 / 测试媒体。
+- 普通签名包与readerqa均install-r更新、设备APK哈希匹配；日常归档qa/detail-cover-20261014/reader-final.apk。新取升级前后 **36作品 / 17来源 / 29观看记录 / 16规则 / 7书籍记录**及个人字段、创建时间、书籍续读 / 本地章节、来源 / 规则版本启停、观看位置 / 时长 / 完成、播放偏好、书架状态一致，无清库 / 隐式扫描。不创建公开Release / 标签 / 推送，公开版仍v0.5.2。
+
 ## 统一作品详情 / 发现剧照 v0.14.1（2026-10-14）
 
 - 基线 `f5f2a71`，同一 `.tmp/android-first` / `codex/android-first`，完整当前 OpenDesign 参与构建。用户要求发现详情与媒体库相同、显示分集封面、去掉截图中三条“尚未缓存动画扩展结构”提示，并授权优化详情前端。AndroidApp / ExplorePanel / EpisodeSources / useEpisodeArtwork 自身增量记录 `docs/android/DETAIL_UNIFICATION_SOURCE_HANDOFF.patch`，**当前已应用**；`git apply --unidiff-zero --reverse --check`核对，不重复应用、不把其余原 WIP 整文件纳入提交。

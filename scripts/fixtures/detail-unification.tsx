@@ -32,7 +32,7 @@ episodeArtworkApi.refresh=async()=>qa.__delayRefresh?new Promise(resolve=>{qa.__
 episodeArtworkApi.subject=async id=>{qa.__calls.push({kind:"artwork",id});if(qa.__delaySubject===id)return new Promise(resolve=>{qa.__finishSubject=()=>resolve(artwork(id,oldStill));});return artwork(id);};
 episodeArtworkApi.cache=async()=>null;episodeArtworkApi.cacheSubject=async()=>null;
 androidApi.sources=async()=>[{id:"source",kind:"saf",enabled:true,label:"本地目录"} as any];androidApi.tasks=async()=>[];androidApi.imports=async()=>[];
-androidApi.appearance=async()=>{};androidApi.safeArea=async()=>({top:0,bottom:0,left:0,right:0});androidApi.progress=async()=>({items:[],sessions:[]});
+androidApi.appearance=async()=>{};androidApi.safeArea=async()=>({top:qa.__safeTop??0,bottom:0,left:0,right:0});androidApi.progress=async()=>({items:[],sessions:[]});
 rulesApi.workSources=async()=>[];bookContentApi.source=async()=>null;
 const book=(kind:string,id:string|null=null):any=>({pathWord:kind,title:id?"已入库漫画":`未入库${kind==="comic"?"漫画":"轻小说"}`,coverUrl:poster,authors:["作者"],tags:["冒险"],summary:"共享书籍简介",status:"连载中",localWorkId:id,favorite:false});
 comicExploreApi.home=async()=>({sections:[{section:"recommended",items:[{item:book("comic"),rank:1},{item:book("saved","book"),rank:2}],supportsPaging:false}],stale:false} as any);
@@ -42,5 +42,6 @@ for(const [kind,source] of [["comic",comicExploreApi],["novel",novelExploreApi]]
 }
 qa.__goto=(route:string)=>{location.hash=`#/${route}`;};qa.__openSubject=requestExploreSubject;
 qa.__invalidate=()=>androidSession.invalidate("");qa.__still=still;qa.__oldStill=oldStill;
+qa.__poster=(width:number,height:number)=>{local.coverPath=image("#41788a",width,height);androidSession.invalidate("work:local");};
 history.replaceState({genzoDepth:0},"","#/explore");
 createRoot(document.getElementById("root")!).render(<AndroidApp/>);

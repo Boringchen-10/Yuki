@@ -1,0 +1,34 @@
+--- a/src/android/AndroidApp.tsx
++++ b/src/android/AndroidApp.tsx
+@@ -637 +637 @@
+-    const apply = () => void androidApi.safeArea().then(area => { document.documentElement.style.setProperty("--safe-bottom", `${area.bottom}px`); }).catch(() => {});
++    const apply = () => void androidApi.safeArea().then(area => { document.documentElement.style.setProperty("--safe-top", `${area.top}px`);document.documentElement.style.setProperty("--safe-bottom", `${area.bottom}px`); }).catch(() => {});
+@@ -1162 +1162 @@
+-        <BookDetailHeader title={detail.title} originalTitle={detail.originalTitle} poster={<Poster work={detail} />} kind={detail.type === "comic" ? "comic" : "novel"} year={detail.metadataYear} status={readingDetail?.item.status} authors={readingDetail?.item.authors} tags={detail.tags} count={readingSource ? sourceTotal ?? "—" : bookEntries.length} rating={detail.networkScore} files={managedDetail ? detail.mediaFiles.length : undefined} onTag={tag => openTag(tag, detail.type)} />
++        <BookDetailHeader title={detail.title} originalTitle={detail.originalTitle} poster={<Poster work={detail} />} backdrop={detail.coverPath ? <Poster work={detail} decorative /> : undefined} kind={detail.type === "comic" ? "comic" : "novel"} year={detail.metadataYear} status={readingDetail?.item.status} authors={readingDetail?.item.authors} tags={detail.tags} count={readingSource ? sourceTotal ?? "—" : bookEntries.length} rating={detail.networkScore} files={managedDetail ? detail.mediaFiles.length : undefined} onTag={tag => openTag(tag, detail.type)} />
+--- a/src/android/ExplorePanel.tsx
++++ b/src/android/ExplorePanel.tsx
+@@ -869 +869 @@
+-    <BookDetailHeader title={comicDetail.item.title} poster={<span className="gz-poster" data-explore-cover-id={comicDetail.item.pathWord}><ComicCover item={comicDetail.item} detail /></span>} kind={comicDetailKind} status={comicDetail.item.status} authors={comicDetail.item.authors} tags={comicDetail.item.tags} count={comicDetail.chapterCount ?? "—"} onTag={tag=>exploreTag(comicDetailKind,tag)} action={<button type="button" className={`gz-status-pill${comicDetail.item.localWorkId&&!shelfEntries[comicDetail.item.localWorkId]?.hidden ? " is-saved" : ""}`} disabled={saving || !!comicDetail.item.localWorkId&&!shelfEntries[comicDetail.item.localWorkId]?.hidden} onClick={() => void saveBook(comicDetail.item, comicDetailKind)}>{comicDetail.item.localWorkId&&!shelfEntries[comicDetail.item.localWorkId]?.hidden ? <Check size={16} /> : <BookOpen size={16} />}<span>{comicDetail.item.localWorkId&&!shelfEntries[comicDetail.item.localWorkId]?.hidden ? "已在书架" : "加入书架"}</span></button>}/>
++    <BookDetailHeader title={comicDetail.item.title} poster={<span className="gz-poster" data-explore-cover-id={comicDetail.item.pathWord}><ComicCover item={comicDetail.item} detail /></span>} backdrop={<ComicCover item={comicDetail.item} detail />} kind={comicDetailKind} status={comicDetail.item.status} authors={comicDetail.item.authors} tags={comicDetail.item.tags} count={comicDetail.chapterCount ?? "—"} onTag={tag=>exploreTag(comicDetailKind,tag)} action={<button type="button" className={`gz-status-pill${comicDetail.item.localWorkId&&!shelfEntries[comicDetail.item.localWorkId]?.hidden ? " is-saved" : ""}`} disabled={saving || !!comicDetail.item.localWorkId&&!shelfEntries[comicDetail.item.localWorkId]?.hidden} onClick={() => void saveBook(comicDetail.item, comicDetailKind)}>{comicDetail.item.localWorkId&&!shelfEntries[comicDetail.item.localWorkId]?.hidden ? <Check size={16} /> : <BookOpen size={16} />}<span>{comicDetail.item.localWorkId&&!shelfEntries[comicDetail.item.localWorkId]?.hidden ? "已在书架" : "加入书架"}</span></button>}/>
+--- a/src-tauri/gen/android/app/src/main/java/com/genzo/android/MainActivity.kt
++++ b/src-tauri/gen/android/app/src/main/java/com/genzo/android/MainActivity.kt
+@@ -29,3 +29,2 @@
+-        // Keep content clear of the status bar and IME, but let the web view paint all the way to the
+-        // bottom edge so the tab bar can sit flush against the system navigation area.
+-        view.setPadding(bars.left, bars.top, bars.right, keyboard.bottom)
++        // Web backgrounds extend under the status bar; CSS keeps interactive content inside its inset.
++        view.setPadding(bars.left, 0, bars.right, keyboard.bottom)
+@@ -33 +32 @@
+-        publishSafeBottom(insets)
++        publishSafeInsets(insets)
+@@ -39 +38 @@
+-  private fun publishSafeBottom(insets: WindowInsetsCompat) {
++  private fun publishSafeInsets(insets: WindowInsetsCompat) {
+@@ -43 +42,2 @@
+-    view.post { view.evaluateJavascript("document.documentElement.style.setProperty('--safe-bottom','${bottom}px')", null) }
++    val top = bars.top / resources.displayMetrics.density
++    view.post { view.evaluateJavascript("document.documentElement.style.setProperty('--safe-top','${top}px');document.documentElement.style.setProperty('--safe-bottom','${bottom}px')", null) }
+@@ -49 +49 @@
+-    lastInsets?.let { publishSafeBottom(it) }
++    lastInsets?.let { publishSafeInsets(it) }
