@@ -105,6 +105,22 @@ impl BangumiProvider {
             .collect())
     }
 
+    fn tag_request(&self, tag: &str, offset: u32, limit: u32) -> reqwest::RequestBuilder {
+        self.client.post(format!("{}/search/subjects", self.api_root))
+            .query(&[("limit", limit.to_string()), ("offset", offset.to_string())])
+            .json(&json!({"keyword":"", "sort":"heat", "filter":{"type":[2],"tag":[tag]}}))
+    }
+
+    pub async fn tag_search(&self, tag: &str, offset: u32, limit: u32) -> AppResult<(Vec<WorkMetadata>, u64, u32)> {
+        self.wait().await;
+        let response = self.tag_request(tag, offset, limit).send().await.map_err(network_error)?;
+        if !response.status().is_success() {
+            return Err(AppError::Network(format!("Bangumi 标签探索失败（HTTP {}）", response.status().as_u16())));
+        }
+        let body: Value = response.json().await.map_err(|error| AppError::Network(format!("Bangumi 标签结果无法解析：{error}")))?;
+        parse_tag_subjects(body, offset)
+    }
+
     pub async fn popular(&self, page: u32) -> AppResult<PopularSubjects> {
         // Do not queue interactive website reads behind v0 background detail hydration.
         WEBSITE_RATE_LIMITER.get_or_init(|| ProviderRateLimiter::new(Duration::from_secs(2)))
@@ -563,6 +579,17 @@ pub struct PopularSubjects {
     pub total_pages: u64,
 }
 
+fn parse_tag_subjects(body: Value, offset: u32) -> AppResult<(Vec<WorkMetadata>, u64, u32)> {
+    let data = body.get("data").and_then(Value::as_array).ok_or_else(|| AppError::Network("Bangumi 标签结果缺少列表".into()))?;
+    let total = body.get("total").and_then(Value::as_u64).ok_or_else(|| AppError::Network("Bangumi 标签结果缺少总数".into()))?;
+    let limit = body.get("limit").and_then(Value::as_u64).filter(|limit| (1..=100).contains(limit))
+        .ok_or_else(|| AppError::Network("Bangumi 标签结果缺少有效分页数量".into()))? as u32;
+    if body.get("offset").and_then(Value::as_u64) != Some(u64::from(offset)) {
+        return Err(AppError::Network("Bangumi 标签结果分页位置不符".into()));
+    }
+    Ok((data.iter().filter_map(subject_to_metadata).collect(), total, limit))
+}
+
 fn parse_popular_subjects(body: Value) -> AppResult<PopularSubjects> {
     let invalid = || AppError::Network("Bangumi 热度列表没有返回有效动画资料".into());
     let rows = body["data"].as_array().ok_or_else(invalid)?;
@@ -831,6 +858,20 @@ mod tests {
         assert!(super::parse_comments(serde_json::json!({"error":"failed"}),400602,0,20).is_err());
     }
     use super::*;
+
+    #[test]
+    fn tag_discovery_uses_source_filter_and_keeps_total_and_offset() {
+        let provider=BangumiProvider {client:Client::new(),api_root:"https://example.invalid/v0".into(),background:false};
+        let request=provider.tag_request("异世界",24,24).build().unwrap();
+        assert_eq!(request.url().as_str(),"https://example.invalid/v0/search/subjects?limit=24&offset=24");
+        let body:Value=serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
+        assert_eq!(body,json!({"keyword":"","sort":"heat","filter":{"type":[2],"tag":["异世界"]}}));
+        // The live API caps requested 24 to 20: the next cursor must use its response limit.
+        let (items,total,limit)=parse_tag_subjects(json!({"total":123,"offset":24,"limit":20,"data":[{"id":123,"name":"Test","type":2}]}),24).unwrap();
+        assert_eq!(total,123);assert_eq!(items[0].external_id,"123");assert_eq!(limit,20);
+        assert!(parse_tag_subjects(json!({"total":0,"offset":0,"limit":20,"data":[]}),0).unwrap().0.is_empty());
+        for body in [json!({"error":"offline"}),json!({"total":0,"data":null}),json!({"data":[]}),json!({"data":[],"total":0,"limit":0,"offset":0}),json!({"data":[],"total":0,"limit":20,"offset":0})] {assert!(parse_tag_subjects(body,24).is_err());}
+    }
 
     #[test]
     fn website_trends_preserves_order_and_normalizes_p1_metadata() {

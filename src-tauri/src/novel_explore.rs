@@ -83,14 +83,11 @@ pub async fn get_novel_explore_detail(path_word: String, refresh: bool, state: S
 
 #[tauri::command]
 pub async fn save_novel_explore_work(path_word: String, favorite: bool, state: State<'_, AppState>) -> AppResult<String> {
+    if !catalog::valid_id(&path_word) {return Err(AppError::Validation("小说来源 ID 无效".into()));}
+    let existing:Option<String>=sqlx::query_scalar("SELECT work_id FROM work_external_ids WHERE provider=? AND external_id=?").bind(PROVIDER).bind(&path_word).fetch_optional(&state.pool).await?;
+    if let Some(id)=existing {return Ok(id);}
     let result = in_pool(&state.pool, &path_word, false).await?;
-    let mut cover = result.item.cover_url.clone();
-    if let Some(url) = &result.item.cover_url {
-        let target = crate::metadata_aggregator::artwork_cache_path(&state.cover_cache_path, &format!("{PROVIDER}:{path_word}"), "cover", url);
-        if let Ok(Some(path)) = crate::comic_cover_cache::promote(&state.cover_cache_path, &path_word, url).await { cover = Some(path); }
-        else if crate::metadata_aggregator::cache_cover(url, &target).await.is_ok() { cover = Some(target.to_string_lossy().into_owned()); }
-    }
-    catalog::persist_source_work(&state.pool, &result, favorite, cover, PROVIDER, "novel").await
+    catalog::save_source_work_fast(&state,&result,favorite,PROVIDER,"novel").await
 }
 
 #[tauri::command]

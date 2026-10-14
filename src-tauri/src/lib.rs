@@ -16,6 +16,7 @@ mod bangumi_network;
 mod book_metadata;
 mod book_scrape;
 mod bookshelf;
+mod book_shelf;
 mod comic_explore;
 mod comic_home;
 mod novel_explore;
@@ -203,6 +204,9 @@ pub fn run() {
             commands::create_work,
             commands::create_work_from_media,
             commands::update_work,
+            book_shelf::set_work_favorite,
+            book_shelf::get_book_shelf_state,
+            book_shelf::update_book_shelf_state,
             commands::delete_work,
             commands::list_unassigned_media,
             commands::list_unassigned_media_groups,
@@ -257,6 +261,7 @@ pub fn run() {
             commands::set_work_field_lock,
             commands::get_explore_overview,
             commands::search_explore_subjects,
+            commands::search_anime_tag,
             commands::get_explore_subject,
             commands::save_explore_subject,
             commands::get_discovery_list,

@@ -1,0 +1,179 @@
+--- a/src/android/AndroidApp.tsx
++++ b/src/android/AndroidApp.tsx
+@@ -20,0 +21,4 @@
++import ImmediateBookFavorite from "./ImmediateBookFavorite";
++import BookDetailMenu from "./BookDetailMenu";
++import {bookOrders,sortBooks,useBookShelfState} from "./bookShelfState";
++import {requestExploreTag} from "./exploreTagNavigation";
+@@ -353,0 +358,4 @@
++  const shelfEntries=useBookShelfState(state=>state.entries);
++  const bookOrder=useBookShelfState(state=>state.order);
++  const favoriteBooksOnly=useBookShelfState(state=>state.favoriteOnly);
++  useEffect(()=>{void useBookShelfState.getState().load().catch(reason=>setError(String(reason)));},[]);
+@@ -560,0 +569 @@
++    if (document.querySelector("[data-book-shelf-menu]")) { window.dispatchEvent(new Event("genzo-book-shelf-close")); return true; }
+@@ -688,0 +698 @@
++        void useBookShelfState.getState().event(work.id,"browse").catch(()=>{});
+@@ -760,5 +770,4 @@
+-  async function favorite(work: WorkListItem | WorkDetail) {
+-    const current = await api.getWork(work.id);
+-    const updated = await api.updateWork(work.id, { ...inputFor(current), favorite: !current.favorite });
+-    if (workId === work.id) setDetail(updated);
+-    await refresh(true); androidSession.set(`work:${work.id}`, updated); setToast(updated.favorite ? "已加入收藏" : "已取消收藏");
++  function previewBookFavorite(id:string,next:boolean) {
++    setDetail(previous=>previous?.id===id?{...previous,favorite:next}:previous);
++    setAllWorks(previous=>previous.map(work=>work.id===id?{...work,favorite:next}:work));
++    const cached=androidSession.peek<WorkDetail>(`work:${id}`);if(cached)androidSession.set(`work:${id}`,{...cached,favorite:next});
+@@ -829 +838 @@
+-  const comicCount = useMemo(() => allWorks.filter(work => work.type === "comic").length, [allWorks]);
++  const comicCount = useMemo(() => allWorks.filter(work => work.type === "comic" && !shelfEntries[work.id]?.hidden).length, [allWorks,shelfEntries]);
+@@ -833,2 +842,2 @@
+-  const shelfWorks = useMemo(() => allWorks.filter(work => work.type === shelfType).filter(work => inScope(work) && (!bookQuery || [work.title, work.originalTitle ?? "", ...work.tags].some(text => text.toLowerCase().includes(bookQuery.toLowerCase()))) && (!shelfQuery || [work.title, work.originalTitle ?? "", ...work.tags].some(text => text.toLowerCase().includes(shelfQuery.toLowerCase())))).sort(byCollection), [allWorks, shelfType, inScope, bookQuery, shelfQuery, byCollection]);
+-  const shelfHasItems = useMemo(() => allWorks.some(work => work.type === shelfType), [allWorks, shelfType]);
++  const shelfWorks = useMemo(() => sortBooks(allWorks.filter(work => work.type === shelfType && !shelfEntries[work.id]?.hidden && (!favoriteBooksOnly||work.favorite)).filter(work => inScope(work) && (!bookQuery || [work.title, work.originalTitle ?? "", ...work.tags].some(text => text.toLowerCase().includes(bookQuery.toLowerCase()))) && (!shelfQuery || [work.title, work.originalTitle ?? "", ...work.tags].some(text => text.toLowerCase().includes(shelfQuery.toLowerCase())))),bookOrder,shelfEntries), [allWorks, shelfType, inScope, bookQuery, shelfQuery, bookOrder,shelfEntries,favoriteBooksOnly]);
++  const shelfHasItems = useMemo(() => allWorks.some(work => work.type === shelfType && !shelfEntries[work.id]?.hidden), [allWorks, shelfType,shelfEntries]);
+@@ -837,2 +846 @@
+-    if (type === "comic" || type === "novel") { setBookQuery(tag); setShelfType(type); navigate("bookshelf"); return; }
+-    setQuery(tag); setFilter("all"); setLimit(48); setMediaSearchOpen(true); navigate("library");
++    requestExploreTag({kind:type==="comic"||type==="novel"?type:"anime",tag});navigate("explore");
+@@ -1013 +1021 @@
+-      {!top && <button className="gz-iconbtn gz-back" aria-label="返回" onClick={() => back()}><ArrowLeft /></button>}
++      {!top && (workId&&detail&&(detail.type==="comic"||detail.type==="novel")?<div className="gz-book-detail-top"><button className="gz-iconbtn gz-back" aria-label="返回" onClick={()=>back()}><ArrowLeft/></button><BookDetailMenu workId={detail.id} onRemoved={()=>{navigate("bookshelf");setToast("已移出书架，原有数据已保留");}} onError={reason=>setError(String(reason))}/></div>:<button className="gz-iconbtn gz-back" aria-label="返回" onClick={() => back()}><ArrowLeft /></button>)}
+@@ -1175 +1183 @@
+-          <button className={`gz-book-action ${detail.favorite ? "active" : ""}`} disabled={busy} onClick={() => void run(() => favorite(detail))}><Heart size={18} fill={detail.favorite ? "currentColor" : "none"} />收藏</button>
++          <ImmediateBookFavorite key={detail.id} value={detail.favorite} preview={next=>previewBookFavorite(detail.id,next)} persist={async next=>{await api.setFavorite(detail.id,next);setToast(next?"已加入收藏":"已取消收藏");}} onError={reason=>setError(String(reason))}/>
+@@ -1249 +1257 @@
+-          <button className="gz-chip" aria-haspopup="dialog" onClick={() => setSortSheet(true)}><Filter size={15} />有更新</button>
++          <button className="gz-chip" aria-haspopup="dialog" onClick={() => setSortSheet(true)}><Filter size={15} />{favoriteBooksOnly?"收藏 · ":""}{bookOrders.find(option=>option.id===bookOrder)?.label}</button>
+@@ -1257 +1265 @@
+-          <p className="gz-meta">共 {shelfWorks.length} 部 · {shelfSortOptions.find(option => option.id === shelfSort)?.label}</p>
++          <p className="gz-meta">共 {shelfWorks.length} 部 · {favoriteBooksOnly?"已收藏 · ":""}{bookOrders.find(option=>option.id===bookOrder)?.label}</p>
+@@ -1267 +1275 @@
+-          <h2>{bookQuery || shelfQuery || collectionScope !== "all" ? "没有匹配的作品" : "书架空空如也"}</h2>
++          <h2>{bookQuery || shelfQuery || favoriteBooksOnly || collectionScope !== "all" ? "没有匹配的作品" : "书架空空如也"}</h2>
+@@ -1269 +1277 @@
+-          {bookQuery ? <button className="gz-btn" onClick={() => setBookQuery("")}>清除标签筛选</button> : shelfQuery ? <button className="gz-btn" onClick={() => { setShelfQuery(""); setCollectionScope("all"); }}>清除搜索</button> : shelfHasItems ? <button className="gz-btn" onClick={() => setCollectionScope("all")}>查看全部</button> : <button className="gz-btn" disabled={busy} onClick={() => void run(refresh)}>刷新</button>}
++          {bookQuery ? <button className="gz-btn" onClick={() => setBookQuery("")}>清除标签筛选</button> : shelfQuery ? <button className="gz-btn" onClick={() => { setShelfQuery(""); setCollectionScope("all"); }}>清除搜索</button> : shelfHasItems ? <button className="gz-btn" onClick={() => {setCollectionScope("all");useBookShelfState.getState().view(bookOrder,false);}}>查看全部</button> : <button className="gz-btn" disabled={busy} onClick={() => void run(refresh)}>刷新</button>}
+@@ -1306 +1314 @@
+-      <h2 id="gz-sort-title" className="gz-sheet-title">排序方式</h2>
++      <h2 id="gz-sort-title" className="gz-sheet-title">{route==="bookshelf"?"筛选与排序":"排序方式"}</h2>
+@@ -1308 +1316,2 @@
+-        {shelfSortOptions.map(option => <button type="button" key={option.id} className={`gz-sort-row${shelfSort === option.id ? " active" : ""}`} aria-pressed={shelfSort === option.id} onClick={() => { setShelfSort(option.id); setSortSheet(false); }}>
++        {route==="bookshelf"&&<button type="button" className={`gz-sort-row${favoriteBooksOnly?" active":""}`} aria-pressed={favoriteBooksOnly} onClick={()=>{useBookShelfState.getState().view(bookOrder,!favoriteBooksOnly);setSortSheet(false);}}><span className="gz-sort-main"><strong>收藏</strong><span className="gz-meta">只看已收藏的作品</span></span>{favoriteBooksOnly&&<Check className="gz-sort-check" size={18}/>}</button>}
++        {(route==="bookshelf"?bookOrders:shelfSortOptions).map(option => <button type="button" key={option.id} className={`gz-sort-row${(route==="bookshelf"?bookOrder:shelfSort) === option.id ? " active" : ""}`} aria-pressed={(route==="bookshelf"?bookOrder:shelfSort) === option.id} onClick={() => { if(route==="bookshelf")useBookShelfState.getState().view(option.id as typeof bookOrder,favoriteBooksOnly);else setShelfSort(option.id as typeof shelfSort);setSortSheet(false); }}>
+@@ -1310 +1319 @@
+-          {shelfSort === option.id && <Check className="gz-sort-check" size={18} />}
++          {(route==="bookshelf"?bookOrder:shelfSort) === option.id && <Check className="gz-sort-check" size={18} />}
+--- a/src/android/ExplorePanel.tsx
++++ b/src/android/ExplorePanel.tsx
+@@ -13,0 +14,5 @@
++import ImmediateBookFavorite from "./ImmediateBookFavorite";
++import BookDetailMenu from "./BookDetailMenu";
++import {useBookShelfState} from "./bookShelfState";
++import {peekExploreTag,takeExploreTag,EXPLORE_TAG_EVENT,type ExploreTagTarget} from "./exploreTagNavigation";
++import TagDiscovery from "./TagDiscovery";
+@@ -129 +134,9 @@
+-  const [tab, setTab] = useState<ExploreTab>("anime");
++  const [tab, setTab] = useState<ExploreTab>(()=>peekExploreTag()?.kind??"anime");
++  const [tagTarget,setTagTarget]=useState<ExploreTagTarget|null>(()=>peekExploreTag());
++  const shelfEntries=useBookShelfState(state=>state.entries);
++  const favoritePreview=useRef(new Map<string,{favorite:boolean;localWorkId?:string|null}>());
++  useEffect(()=>{void useBookShelfState.getState().load().catch(reason=>onToast(String(reason)));},[]);
++  useEffect(()=>{
++    const receive=()=>{if(!active)return;const target=takeExploreTag();if(!target)return;bookDetailRequest.current++;subjectRequest.current++;setComicDetail(null);setSubject(null);setBookSelecting(false);setView("feed");setTab(target.kind);setTagTarget(target);};
++    window.addEventListener(EXPLORE_TAG_EVENT,receive);receive();return()=>window.removeEventListener(EXPLORE_TAG_EVENT,receive);
++  },[active]);
+@@ -148 +160,0 @@
+-  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+@@ -188,0 +201,2 @@
++  const currentBook = useRef("");
++  currentBook.current = comicDetail ? `${comicDetailKind}:${comicDetail.item.pathWord}` : "";
+@@ -259,0 +274 @@
++    if(tagTarget){setTagTarget(null);return true;}
+@@ -418 +433 @@
+-  useEffect(() => { void loadAnime(); }, [loadAnime]);
++  useEffect(() => { if(!tagTarget)void loadAnime(); }, [loadAnime,!!tagTarget]);
+@@ -458 +473 @@
+-    if (tab !== "comic") return;
++    if (tab !== "comic" || tagTarget) return;
+@@ -461,4 +476,4 @@
+-  }, [tab]);
+-
+-  useEffect(() => {
+-    if (tab !== "novel") return;
++  }, [tab, !!tagTarget]);
++
++  useEffect(() => {
++    if (tab !== "novel" || tagTarget) return;
+@@ -469 +484 @@
+-  }, [tab]);
++  }, [tab, !!tagTarget]);
+@@ -493 +508 @@
+-    if (!node || !active || subject || comicDetail || view !== "feed" || searchTerm !== null || tab !== "anime" || selectedTags.length || !rankingHasMore || rankingLoadingMore || rankingMoreError || animeError) return;
++    if (!node || !active || subject || comicDetail || view !== "feed" || searchTerm !== null || tab !== "anime" || !rankingHasMore || rankingLoadingMore || rankingMoreError || animeError) return;
+@@ -499 +514 @@
+-  }, [active, subject, comicDetail, view, searchTerm, loadMoreRanking, rankingHasMore, rankingLoadingMore, rankingMoreError, animeError, tab, trending.length, selectedTags.length]);
++  }, [active, subject, comicDetail, view, searchTerm, loadMoreRanking, rankingHasMore, rankingLoadingMore, rankingMoreError, animeError, tab, trending.length]);
+@@ -551 +566,3 @@
+-      setComicDetail(detail); setBookDetailState("ready");
++      const override=favoritePreview.current.get(`${kind}:${item.pathWord}`);
++      setComicDetail(override?{...detail,item:{...detail.item,...override}}:detail); setBookDetailState("ready");
++      if(detail.item.localWorkId)void useBookShelfState.getState().event(detail.item.localWorkId,"browse").catch(()=>{});
+@@ -639,3 +656,6 @@
+-      const workId = kind === "comic" ? await comicExploreApi.save(item.pathWord, true) : await novelExploreApi.save(item.pathWord, true);
+-      setComicDetail(previous => previous && previous.item.pathWord === item.pathWord
+-        ? { ...previous, item: { ...previous.item, localWorkId: workId, favorite: true } }
++      const workId = kind === "comic" ? await comicExploreApi.save(item.pathWord, item.favorite) : await novelExploreApi.save(item.pathWord, item.favorite);
++      await useBookShelfState.getState().event(workId,"restore");
++      const cached=androidSession.peek<ComicDetail>(`reading:detail:${kind}:${item.pathWord}`);
++      if(cached)androidSession.set(`reading:detail:${kind}:${item.pathWord}`,{...cached,item:{...cached.item,localWorkId:workId}});
++      setComicDetail(previous => previous && currentBook.current === `${kind}:${item.pathWord}`
++        ? { ...previous, item: { ...previous.item, localWorkId: workId } }
+@@ -648,0 +669,15 @@
++  function previewFavorite(item:ComicItem,kind:"comic"|"novel",next:boolean){
++    const key=`${kind}:${item.pathWord}`;
++    favoritePreview.current.set(key,{...favoritePreview.current.get(key),favorite:next});
++    setComicDetail(previous=>previous&&currentBook.current===key?{...previous,item:{...previous.item,favorite:next}}:previous);
++  }
++  async function favoriteBook(item:ComicItem,kind:"comic"|"novel",next:boolean){
++    const id=item.localWorkId??await (kind==="comic"?comicExploreApi:novelExploreApi).save(item.pathWord,next);
++    await api.setFavorite(id,next);
++    favoritePreview.current.set(`${kind}:${item.pathWord}`,{localWorkId:id,favorite:next});
++    setComicDetail(previous=>previous&&currentBook.current===`${kind}:${item.pathWord}`?{...previous,item:{...previous.item,localWorkId:id,favorite:next}}:previous);
++    const cached=androidSession.peek<ComicDetail>(`reading:detail:${kind}:${item.pathWord}`);if(cached)androidSession.set(`reading:detail:${kind}:${item.pathWord}`,{...cached,item:{...cached.item,localWorkId:id,favorite:next}});
++    onLibraryChanged?.();onToast(next?"已加入收藏":"已取消收藏");
++  }
++  function exploreTag(kind:ExploreTab,tag:string){bookDetailRequest.current++;subjectRequest.current++;setComicDetail(null);setSubject(null);setBookSelecting(false);setTab(kind);setView("feed");setTagTarget({kind,tag});}
++
+@@ -654,3 +688,0 @@
+-  const toggleTag = (tag: string) => {
+-    setSelectedTags(tags => tags.includes(tag) ? tags.filter(value => value !== tag) : [...tags, tag]);
+-  };
+@@ -697,3 +729 @@
+-  const hotItems = selectedTags.length
+-    ? popularItems.filter(item => selectedTags.some(tag => item.genres.includes(tag)))
+-    : popularItems;
++  const hotItems = popularItems;
+@@ -790 +820 @@
+-        {subject.genres.length ? <div className="gz-tag-grid">{subject.genres.map(genre => <span className="gz-tag" key={genre}>{genre}</span>)}</div> : <p className="gz-meta">暂无标签。</p>}
++        {subject.genres.length ? <div className="gz-tag-grid">{subject.genres.map(genre => <button type="button" className="gz-tag" key={genre} onClick={()=>exploreTag("anime",genre)}>{genre}</button>)}</div> : <p className="gz-meta">暂无标签。</p>}
+@@ -838,0 +869 @@
++      <BookDetailMenu workId={comicDetail.item.localWorkId} onRemoved={()=>{onLibraryChanged?.();onToast("已移出书架，原有数据已保留");}} onError={reason=>onToast(String(reason))}/>
+@@ -846 +877 @@
+-          <div className="gz-book-pills">{comicDetail.item.authors.map(author => <span className="gz-book-pill" key={author}><Users size={12} />{author}</span>)}{comicDetail.item.status && <span className="gz-book-pill">{comicDetail.item.status}</span>}{comicDetail.item.tags.map(tag => <span className="gz-book-pill" key={tag}>{tag}</span>)}</div>
++          <div className="gz-book-pills">{comicDetail.item.authors.map(author => <span className="gz-book-pill" key={author}><Users size={12} />{author}</span>)}{comicDetail.item.status && <span className="gz-book-pill">{comicDetail.item.status}</span>}{comicDetail.item.tags.map(tag => <button type="button" className="gz-book-pill" key={tag} onClick={()=>exploreTag(comicDetailKind,tag)}>{tag}</button>)}</div>
+@@ -848 +879 @@
+-          <button type="button" className={`gz-status-pill${comicDetail.item.localWorkId ? " is-saved" : ""}`} disabled={saving || !!comicDetail.item.localWorkId} onClick={() => void saveBook(comicDetail.item, comicDetailKind)}>{comicDetail.item.localWorkId ? <Check size={16} /> : <BookOpen size={16} />}<span>{comicDetail.item.localWorkId ? "已在书架" : "加入书架"}</span></button>
++          <button type="button" className={`gz-status-pill${comicDetail.item.localWorkId&&!shelfEntries[comicDetail.item.localWorkId]?.hidden ? " is-saved" : ""}`} disabled={saving || !!comicDetail.item.localWorkId&&!shelfEntries[comicDetail.item.localWorkId]?.hidden} onClick={() => void saveBook(comicDetail.item, comicDetailKind)}>{comicDetail.item.localWorkId&&!shelfEntries[comicDetail.item.localWorkId]?.hidden ? <Check size={16} /> : <BookOpen size={16} />}<span>{comicDetail.item.localWorkId&&!shelfEntries[comicDetail.item.localWorkId]?.hidden ? "已在书架" : "加入书架"}</span></button>
+@@ -858 +889 @@
+-    <div className="gz-book-actions"><button className="gz-book-action" onClick={() => setBookSelecting(value => !value)}>{bookSelecting ? <X size={18} /> : <Download size={18} />}{bookSelecting ? "取消" : "下载"}</button><button className="gz-book-action" onClick={() => setComicCommentsOpen(true)}><MessageCircle size={18} />评论</button><button className="gz-book-action" disabled={saving} onClick={() => void saveBook(comicDetail.item, comicDetailKind)}><Heart size={18} />收藏</button></div>
++    <div className="gz-book-actions"><button className="gz-book-action" onClick={() => setBookSelecting(value => !value)}>{bookSelecting ? <X size={18} /> : <Download size={18} />}{bookSelecting ? "取消" : "下载"}</button><button className="gz-book-action" onClick={() => setComicCommentsOpen(true)}><MessageCircle size={18} />评论</button><ImmediateBookFavorite key={`${comicDetailKind}:${comicDetail.item.pathWord}`} value={comicDetail.item.favorite} preview={next=>previewFavorite(comicDetail.item,comicDetailKind,next)} persist={next=>favoriteBook(comicDetail.item,comicDetailKind,next)} onError={reason=>onToast(String(reason))}/></div>
+@@ -881,0 +913 @@
++  if(tagTarget)return <TagDiscovery target={tagTarget} active={active} onBack={()=>setTagTarget(null)} renderAnime={animeCard} renderBook={(item,kind)=>comicCard(item,kind)}/>;
+@@ -921,2 +953 @@
+-            {tagChips.map(tag => <button key={tag} className={`gz-chip ${selectedTags.includes(tag) ? "active" : ""}`} role="checkbox" aria-checked={selectedTags.includes(tag)} onClick={() => toggleTag(tag)}>{tag}</button>)}
+-            {selectedTags.length > 0 && <button className="gz-link" onClick={() => setSelectedTags([])}>清除</button>}
++            {tagChips.map(tag => <button key={tag} className="gz-chip" onClick={() => exploreTag("anime",tag)}>{tag}</button>)}
+@@ -926 +957 @@
+-          </> : hotItems.length ? <><div className="gz-explore-grid">{hotItems.map(animeCard)}</div>{!rankingMoreError && rankingHasMore && selectedTags.length === 0 && <div className="gz-sentinel" ref={hotSentinelRef} aria-hidden="true" />}{rankingLoadingMore && <LoadingIndicator label="正在加载更多热门番组…" compact />}{rankingMoreError && <div className="gz-error" role="alert"><span>更多热门番组读取失败，保留已有内容。</span><button className="gz-iconbtn" aria-label="重试更多热门番组" onClick={() => void loadMoreRanking()}><RefreshCw size={16} /></button></div>}</> : <p className="gz-panel gz-meta">没有符合所选标签的热门番组。</p>}
++          </> : hotItems.length ? <><div className="gz-explore-grid">{hotItems.map(animeCard)}</div>{!rankingMoreError && rankingHasMore && <div className="gz-sentinel" ref={hotSentinelRef} aria-hidden="true" />}{rankingLoadingMore && <LoadingIndicator label="正在加载更多热门番组…" compact />}{rankingMoreError && <div className="gz-error" role="alert"><span>更多热门番组读取失败，保留已有内容。</span><button className="gz-iconbtn" aria-label="重试更多热门番组" onClick={() => void loadMoreRanking()}><RefreshCw size={16} /></button></div>}</> : <p className="gz-panel gz-meta">没有符合所选标签的热门番组。</p>}

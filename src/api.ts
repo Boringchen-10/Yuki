@@ -173,6 +173,7 @@ export const api = {
     call<WorkDetail>("create_work_from_media", { mediaFileId, input, selectedMediaIds }),
   updateWork: (id: string, input: WorkInput) => call<WorkDetail>("update_work", { id, input }),
   deleteWork: (id: string) => call<void>("delete_work", { id }),
+  setFavorite: (id: string, favorite: boolean) => call<void>("set_work_favorite", { id, favorite }),
   listUnassignedMedia: (destination?: ResourceDestination) => call<MediaFile[]>("list_unassigned_media", { destination: destination ?? null }),
   listUnassignedGroups: () => call<UnassignedMediaGroup[]>("list_unassigned_media_groups"),
   listRecognitionGroupMembers: (mediaFileId: string, groupScope: RecognitionGroupScope = "season") =>
@@ -228,6 +229,10 @@ export const api = {
     withExploreOverviewAssets(await call<ExploreOverview>("get_explore_overview", { year, month })),
   searchExplore: async (query: string) =>
     (await call<ExploreSubject[]>("search_explore_subjects", { query })).map(withExploreAssets),
+  searchAnimeTag: async (tag: string, offset = 0) => {
+    const page = await call<{ items: ExploreSubject[]; total: number; offset: number; limit: number; hasMore: boolean; stale: boolean }>("search_anime_tag", { tag, offset });
+    return { ...page, items: page.items.map(withExploreAssets) };
+  },
   getExploreSubject: async (externalId: string) =>
     withExploreAssets(await call<ExploreSubject>("get_explore_subject", { externalId })),
   saveExploreSubject: (input: ExploreSaveInput) =>

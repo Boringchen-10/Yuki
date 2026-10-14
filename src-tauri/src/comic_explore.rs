@@ -530,6 +530,7 @@ pub async fn get_comic_explore_detail(path_word: String, refresh: bool, state: S
     Ok(detail)
 }
 
+#[cfg(test)]
 async fn persist_work(pool: &SqlitePool, detail: &ComicDetail, favorite: bool, cover: Option<String>) -> AppResult<String> {
     persist_source_work(pool, detail, favorite, cover, PROVIDER, "comic").await
 }
@@ -570,17 +571,26 @@ pub async fn save_comic_explore_work(path_word: String, favorite: bool, state: S
         .bind(PROVIDER).bind(&path_word).fetch_optional(&state.pool).await?;
     if let Some(id) = existing { return Ok(id); }
     let detail = detail_in_pool(&state.pool, &path_word, false).await?;
+    save_source_work_fast(&state,&detail,favorite,PROVIDER,"comic").await
+}
+
+pub(super) async fn save_source_work_fast(state:&AppState,detail:&ComicDetail,favorite:bool,provider:&str,kind:&str)->AppResult<String> {
     let mut cover = detail.item.cover_url.clone();
     if let Some(url) = &detail.item.cover_url {
-        let destination = crate::metadata_aggregator::artwork_cache_path(&state.cover_cache_path,
-            &format!("copymanga:{path_word}"), "cover", url);
-        if let Ok(Some(cached)) = crate::comic_cover_cache::promote(&state.cover_cache_path, &path_word, url).await {
-            cover = Some(cached);
-        } else if crate::metadata_aggregator::cache_cover(url, &destination).await.is_ok() {
-            cover = Some(destination.to_string_lossy().into_owned());
-        }
+        if let Ok(Some(cached))=crate::comic_cover_cache::promote(&state.cover_cache_path,&detail.item.path_word,url).await {cover=Some(cached);}
     }
-    persist_work(&state.pool, &detail, favorite, cover).await
+    let id=persist_source_work(&state.pool,detail,favorite,cover.clone(),provider,kind).await?;
+    if let Some(url)=detail.item.cover_url.as_ref().filter(|url|cover.as_ref()==Some(*url)) {
+        let destination=crate::metadata_aggregator::artwork_cache_path(&state.cover_cache_path,&format!("{provider}:{}",detail.item.path_word),"cover",url);
+        let pool=state.pool.clone();let work=id.clone();let url=url.clone();
+        tauri::async_runtime::spawn(async move {
+            if crate::metadata_aggregator::cache_cover(&url,&destination).await.is_ok() {
+                let _=sqlx::query("UPDATE works SET cover_path=? WHERE id=? AND cover_path=? AND NOT EXISTS(SELECT 1 FROM work_field_locks WHERE work_id=works.id AND field_name='cover_path' AND locked=1)")
+                    .bind(destination.to_string_lossy().as_ref()).bind(work).bind(url).execute(&pool).await;
+            }
+        });
+    }
+    Ok(id)
 }
 
 #[cfg(test)]

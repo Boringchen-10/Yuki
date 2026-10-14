@@ -1,5 +1,16 @@
 # Codex 与 DeepSeek Harness 项目交接记录
 
+## 书架操作与来源标签探索 v0.14.0（2026-10-14）
+
+- 基线 `72655b3`，同一 `.tmp/android-first` / `codex/android-first`，保留完整当前 OpenDesign。用户确认漫画 / 小说即时收藏，四项菜单为收藏、加入时间最近在前、真实浏览时间、名称 A–Z；详情右上三点先提供移除书架，明确保留收藏、评分、阅读位置和下载。最新确认三类标签均进入发现探索。本轮 AndroidApp / ExplorePanel 自身增量记录 `docs/android/BOOK_SHELF_SOURCE_HANDOFF.patch`，**当前已应用**；使用 `git apply --unidiff-zero --reverse --check` 核对，不重复应用，不把整份原 WIP 纳入提交。其余维护者文件保持原状。
+- 旧收藏走全局 run / busy，保存来源还会等待封面；已有作品复用 ID 后没有单独改 favorite。现在即时按钮乐观反馈、独立 pending、失败回退，命令只写 favorite / updated_at。来源已有 ID 直接返回，新作品先持久化、封面复用 / 后台缓存；晚到封面只在原 URL 未改变且未锁定时更新。来源详情按 kind / path 隔离晚到结果，保存后保持同 ID。
+- 新 book_shelf 模块把本机成员 / 浏览 / 重新加入时间保存在现有 app_settings；移出不删除 works / media、不改个人字段或阅读位置，不调用 delete_work。收藏可独立组合三种排序，真实打开详情记浏览，未浏览不虚构历史时间。发现隐藏作品可重新加入原 ID；移出不自动取消收藏。没有新依赖或迁移。
+- 标签从本地 / 来源详情及发现热门入口统一进入对应发现来源；Bangumi 使用 filter.tag，漫画 / 小说解析分类 pathWord。未知分类明确展示关键词回退提示；自动追加失败停下、重试原游标、旧标签响应不串入新结果。实机首次查询发现 Bangumi 对请求24限制返回20，已改为请求20并验证响应 offset / limit，翻页用实际 limit；缓存版本 v2，不复用旧分页缓存。
+- TypeScript、前端 **115 项**、最终完整 Rust **380通过 / 18忽略 / 0失败**通过；Android / Release 与优化日常包构建通过，既有 Kotlin **12 项**通过。真实 React 夹具 **9场景 / 6宽度**（360 / 412 / 915 / 1024 / 1366 / 1920）通过，无 pageerror；涵盖即时收藏、失败回退、保留字段 / 同 ID 恢复、三类来源路由、自动分页、停止 / 重试、晚到隔离、回退提示。隔离数据库测试检查媒体路径与完整阅读 location_json 保持不变。说明见 `docs/android/BOOK_SHELF_DISCOVERY.md`。
+- 一加 PLK110 / Android16 / SM8850 实机 organizeqa **4组短测**通过：漫画 / 小说收藏与菜单移除（实体返回键先收起菜单，保持详情）、个人字段 / 原 ID 恢复、真实动漫标签从详情跳发现、四项菜单。真实漫画 / 小说“愛情”各返回24条，Bangumi“异世界”连续两页各20条、当时 total806，页首不同；均仅代表采样时刻。独立合成作品测试后已清理，未写用户日常包，不复制用户DB / 凭据，不录屏、不重启。证据目录 `D:/DevTools/Android/Build/qa/book-shelf-20261014/`。
+- 最终签名 `D:/DevTools/Android/Build/previews/book-shelf-20261014/Genzo_0.14.0_book-shelf_arm64-v8a.apk`，**50,399,155字节**，SHA256 **927436ae6a2410076f921963a1dda1f9a53a9978797ddc864ec8698ac230f518**。0.14.0 / code14000 / com.genzo.android / arm64 / min26 / target36 / 非debuggable / 原证书 cee90e5f…cdb，v2/v3与16KiB ZIP通过。419份完整当前生产源码与构建副本匹配、3原生库 / 8官方shader / 许可匹配；内嵌 index-79Ijzwo9.js / index-B3jOUfd8.css，无用户DB、图书、测试媒体。签名验证初次受 PowerShell5 将 JAVA_TOOL_OPTIONS 的 stderr 视为错误影响，清除签名脚本该环境变量后完整验证通过，没有降低签名检查。
+- 普通签名包 / 原日常 readerqa 均 install-r 更新，设备 APK 哈希与制品一致。新取升级前后 **36作品 / 17来源 / 29播放记录 / 16规则 / 7书籍记录**及作品个人字段、创建时间、书籍来源 / 续读入口 / 本地章节、来源 / 规则 ID 与版本 / 启停、播放位置 / 时长 / 完成、四项播放偏好逐项一致，无清库或隐式扫描。日常包归档 qa/book-shelf-20261014/reader-final.apk；共享前端使用新 D 构建 dist，9228 / 9351 指向新日常 PID，最终停书架，不自动播放用户媒体。9352 测试转发关闭。按功能 SemVer 提升本机预览，不创建公开 Release / 标签 / 推送，公开版仍 v0.5.2。
+
 ## 播放入口 / 顶部空白 / 官方目录 v0.13.1（2026-10-13）
 
 - 基线 `03c37f5`，同一 `.tmp/android-first` / `codex/android-first`，保留完整当前OpenDesign。用户报告WebDAV在外部转圈、进去再次加载、未识别文件排在前面；后续明确图一是返回 / 作品名栏顶部空白，标题希望含当前集数。AndroidApp本轮自身增量记录 `docs/android/PLAYER_ENTRY_SOURCE_HANDOFF.patch`，**当前已应用**，`git apply --unidiff-zero --reverse --check`核对，不重复应用、不将整份原WIP提交。其他维护者修改保持原状；没有新依赖或迁移。

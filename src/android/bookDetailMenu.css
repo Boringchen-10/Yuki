@@ -1,0 +1,4 @@
+.android-app .gz-book-detail-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.android-app .gz-book-detail-top > .gz-back { margin: 0; }
+.android-app .gz-book-remove { width: 100%; justify-content: flex-start; min-height: 48px; margin: 12px 0; }
+.android-app .gz-subject-topbar > [aria-label="书架设置"] { margin-left: auto; }

@@ -1337,6 +1337,13 @@ pub async fn search_explore_subjects(
 }
 
 #[tauri::command]
+pub async fn search_anime_tag(tag: String, offset: u32, app: AppHandle, state: State<'_, AppState>) -> AppResult<explore::TagPage> {
+    let mut result = explore::tag_search(&state.pool, &tag, offset).await?;
+    explore::prepare_cover_cache(&app, &state, &mut result.items).await;
+    Ok(result)
+}
+
+#[tauri::command]
 pub async fn get_explore_subject(
     external_id: String,
     app: AppHandle,

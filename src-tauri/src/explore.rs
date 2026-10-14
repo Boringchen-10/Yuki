@@ -363,6 +363,44 @@ pub async fn anime_ranking(
         .collect())
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TagPage {
+    pub items: Vec<ExploreSubject>, pub total: u64, pub offset: u32,
+    pub limit: u32, pub has_more: bool, pub stale: bool,
+}
+
+pub async fn tag_search(pool: &SqlitePool, tag: &str, offset: u32) -> AppResult<TagPage> {
+    tag_search_with(pool, tag, offset, async { BangumiProvider::new()?.tag_search(tag.trim(), offset, 20).await }).await
+}
+
+async fn tag_search_with(pool: &SqlitePool, tag: &str, offset: u32,
+    fetch: impl std::future::Future<Output = AppResult<(Vec<WorkMetadata>, u64, u32)>>,
+) -> AppResult<TagPage> {
+    let tag = tag.trim();
+    if tag.is_empty() || tag.chars().count() > 200 || offset > 1_000_000 {
+        return Err(AppError::Validation("标签或分页参数无效".into()));
+    }
+    let key = crate::bangumi_network::current().cache_key(&format!("tag-v2:{tag}:{offset}"));
+    let cached = load_cache::<(Vec<WorkMetadata>, u64, u32)>(pool, BANGUMI_PROVIDER, &key).await?;
+    let result = if cached.as_ref().is_some_and(|value| !value.stale) {
+        cached.expect("fresh tag cache checked")
+    } else {
+        match fetch.await {
+            Ok(value) => {
+                save_cache(pool, BANGUMI_PROVIDER, &key, &value, Duration::hours(1)).await?;
+                Cached { value, fetched_at: Utc::now().to_rfc3339(), stale: false }
+            }
+            Err(error) => { let mut fallback = cached.ok_or(error)?; fallback.stale = true; fallback }
+        }
+    };
+    let local = load_local_states(pool).await?;
+    let (items, total, limit) = result.value;
+    let has_more = !items.is_empty() && u64::from(offset + limit) < total;
+    Ok(TagPage { items: items.into_iter().map(|item| to_explore_subject(item, &local, result.stale)).collect(),
+        total, offset, limit, has_more, stale: result.stale })
+}
+
 pub async fn subject(pool: &SqlitePool, external_id: &str) -> AppResult<ExploreSubject> {
     let metadata = load_subject_metadata(pool, external_id, false).await?;
     let aggregated = crate::metadata_aggregator::aggregate(pool, metadata.value).await?;
@@ -1732,6 +1770,23 @@ mod tests {
         items[0].description.clear();
         merge_cached_details(&pool, &mut items).await.unwrap();
         assert_eq!(items[0].description, "简介");
+    }
+
+    #[tokio::test]
+    async fn tag_discovery_caches_each_page_and_preserves_stale_results() {
+        let pool=db::test_pool().await.unwrap();
+        let first=tag_search_with(&pool,"异世界",0,async {Ok((vec![sample_metadata()],50,20))}).await.unwrap();
+        assert!(first.has_more);assert!(!first.stale);assert_eq!(first.total,50);
+        let fresh=tag_search_with(&pool,"异世界",0,async {panic!("fresh cache must not fetch")}).await.unwrap();
+        assert_eq!(fresh.items[0].external_id,first.items[0].external_id);
+        assert_eq!(first.limit,20);
+        assert!(tag_search_with(&pool,"异世界",20,async {Err(AppError::Network("offline".into()))}).await.is_err());
+        let last=tag_search_with(&pool,"异世界",40,async {Ok((vec![sample_metadata()],50,20))}).await.unwrap();
+        assert!(!last.has_more);
+        sqlx::query("UPDATE metadata_cache SET expires_at='2000-01-01'").execute(&pool).await.unwrap();
+        let stale=tag_search_with(&pool,"异世界",0,async {Err(AppError::Network("offline".into()))}).await.unwrap();
+        assert!(stale.stale&&stale.items[0].stale);
+        for (tag,offset) in [("",0),("异世界",u32::MAX)] {assert!(tag_search_with(&pool,tag,offset,async {panic!("invalid request must not fetch")}).await.is_err());}
     }
 
     fn sample_item() -> BangumiDataItem {
