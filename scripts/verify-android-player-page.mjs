@@ -58,7 +58,11 @@ async function wait(read, accept, label, timeout = 30000) {
   while (Date.now() < end) { value = await read(); if (accept(value)) return value; await delay(200); }
   throw new Error(`${label}: ${JSON.stringify(value)}`);
 }
-function dump() { command("shell", "uiautomator", "dump", "/data/local/tmp/genzo-player-page.xml"); return command("shell", "cat", "/data/local/tmp/genzo-player-page.xml"); }
+function dump() {
+  try { command("shell", "uiautomator", "dump", "/data/local/tmp/genzo-player-page.xml"); }
+  catch (error) { if (!String(error.stdout).includes("UI hierchary dumped to: /data/local/tmp/genzo-player-page.xml")) throw error; }
+  return command("shell", "cat", "/data/local/tmp/genzo-player-page.xml");
+}
 function node(xml, label) {
   return [...xml.matchAll(/<node\b[^>]*>/g)].map(m => m[0]).find(n => n.includes(`text="${label}"`) || n.includes(`content-desc="${label}"`));
 }
@@ -104,7 +108,12 @@ try {
   shot("initial-loading-inside-player"); releaseInitialProbe(); releaseInitialProbe = null;
   result.cases.initialWebdavOpensPlayerBeforeNetworkProbe = true;
   await wait(() => native("playerState"), s => s.sessionId === current.sessionId && s.status === "playing", "native video");
+  await native("playerControl", { action: "portrait", sessionId: current.sessionId });
+  await wait(() => native("playerState"), s => s.displayWidth / s.displayHeight < 1.5, "portrait layout settles");
   await native("playerControl", { action: "pause", sessionId: current.sessionId });
+  const portrait = await native("playerState"), physical = /(?:Physical|Override) size: (\d+)x(\d+)/.exec(command("shell", "wm", "size")).slice(1).map(Number);
+  assert.ok(portrait.displayHeight / Math.max(...physical) > .36 && portrait.displayHeight / Math.max(...physical) <= .5);
+  result.cases.enlargedPortraitViewport = { width: portrait.displayWidth, height: portrait.displayHeight };
   await wait(async () => dump(), xml => !!node(xml, "第01集 当前选集") && !!node(xml, "第02集"), "portrait episodes");
   await delay(600); shot("portrait"); result.cases.officialEpisode13MapsTo1 = true;
   let xml = dump(); const covers = [...xml.matchAll(/<node\b[^>]*content-desc="[^"]*分集封面"[^>]*>/g)].filter(m => /第0[12]集分集封面/.test(m[0])).map(m => /bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/.exec(m[0]).slice(1).map(Number));
@@ -143,6 +152,11 @@ try {
   for (const label of ["倍速", "超分辨率", "音轨", "字幕", "选择外挂字幕", "字幕偏移", "视频详情", "开源说明"]) assert.ok(xml.includes(label), label);
   for (const label of ["远程投屏", "一起看", "弹幕设置", "定时关闭", "截取当前画面"]) assert.ok(!xml.includes(label), label);
   result.cases.onlyImplementedMenuActions = true;
+  tapPrefix(xml, "倍速"); xml = dump();
+  const boundsOf = value => /bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/.exec(value).slice(1).map(Number);
+  const parentBounds = boundsOf(node(xml, "倍速")), childBounds = boundsOf(node(xml, "1.5×"));
+  assert.ok(childBounds[2] <= parentBounds[0] && childBounds[0] >= 0, "submenu opens alongside its parent"); shot("cascading-menu");
+  command("shell", "input", "keyevent", "KEYCODE_BACK"); xml = dump(); assert.ok(node(xml, "倍速") && !node(xml, "1.5×"), "back closes only the submenu");
   tapPrefix(xml, "倍速"); tap(dump(), "1.5×"); await wait(() => native("playerState"), state => state.rate === 1.5, "speed menu applies"); result.cases.actualSpeedMenu = true;
   tap(dump(), "更多播放设置"); tapPrefix(dump(), "超分辨率"); tap(dump(), "流畅档");
   await wait(() => native("playerState"), s => s.status === "paused" && s.superResolution === 1 && s.shaderCount === 6, "shader menu selection");
@@ -152,11 +166,33 @@ try {
   await wait(() => native("playerState"), s => s.status === "playing" && s.shaderPasses.some(pass => pass.includes("Anime4K")), "real shader frame");
   await native("playerControl", { action: "pause" });
   assert.ok(node(dump(), "第01集 当前选集")); result.cases.actualSuperResolutionKeepsEpisodePanel = true;
+  tap(dump(), "更多播放设置"); tapPrefix(dump(), "倍速");
+  command("shell", "input", "tap", String(physical[0] >> 1), String(Math.round(Math.max(...physical) * .9)));
+  assert.ok(!node(dump(), "开源说明"), "outside tap closes the full cascading menu");
   await native("playerControl", { action: "superResolution", value: 0 });
   xml = dump(); tap(xml, "第02集");
   await wait(() => native("playerState"), s => s.mediaFileId === files[1].id && s.status === "playing", "actual episode switch"); result.cases.nextEpisodeUsesStableMediaId = true;
   current = await native("playerState"); await native("playerControl", { action: "pause", sessionId: current.sessionId }); await native("playerControl", { action: "landscape", sessionId: current.sessionId }); await delay(700); shot("landscape");
   assert.ok(!dump().includes('text="选集"'));
+  for (const label of ["下一集", "字幕设置", "选择剧集", "超分辨率", "倍速"]) assert.ok(node(dump(), label), label);
+  assert.ok(node(dump(), "下一集").includes('enabled="false"'), "last official episode does not jump to an unmatched file");
+  const rotating = await native("playerState");
+  assert.equal(rotating.engineInstance, current.engineInstance, "rotation keeps the existing decoder");
+  assert.equal(rotating.status, "paused");
+  tap(dump(), "倍速"); tap(dump(), "1.25×"); await wait(() => native("playerState"), state => state.rate === 1.25, "landscape speed shortcut");
+  assert.equal((await native("playerState")).engineInstance, rotating.engineInstance);
+  tap(dump(), "字幕设置"); assert.ok(node(dump(), "关闭"));
+  command("shell", "input", "keyevent", "KEYCODE_BACK"); command("shell", "input", "keyevent", "KEYCODE_BACK");
+  tap(dump(), "选择剧集"); xml = dump(); assert.ok(node(xml, "关闭选集") && node(xml, "第01集")); shot("landscape-episodes");
+  tap(xml, "第01集");
+  current = await wait(() => native("playerState"), state => [files[0].id, variant.id].includes(state.mediaFileId) && state.status === "playing", "landscape picker uses an actual file of the chosen episode");
+  assert.ok(current.displayWidth > current.displayHeight, "episode picker preserves landscape");
+  await native("playerControl", { action: "pause", sessionId: current.sessionId });
+  assert.ok(node(dump(), "下一集").includes('enabled="true"'));
+  tap(dump(), "下一集");
+  current = await wait(() => native("playerState"), state => state.mediaFileId === files[1].id && state.status === "playing", "landscape next episode");
+  assert.ok(current.displayWidth > current.displayHeight);await native("playerControl", { action: "pause", sessionId: current.sessionId });
+  shot("landscape-controls"); result.cases.landscapeShortcutsAndEpisodeSelection = true;
   tap(dump(), "更多播放设置"); xml = dump();
   const scrollNode = [...xml.matchAll(/<node\b[^>]*>/g)].map(match => match[0]).find(value => value.includes('class="android.widget.ScrollView"'));
   assert.ok(scrollNode, "landscape menu is scrollable"); const scrollBounds = /bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/.exec(scrollNode).slice(1).map(Number);
@@ -204,6 +240,13 @@ try {
   assert.ok(xml.includes("2 集") && !xml.includes("选择本集文件")); tap(xml, "线路2");
   await wait(async () => dump(), xml => xml.includes("播放线路  ·  线路2"), "selected road label");
   result.cases.currentRuleSourceRoadPicker = true;
+  await native("playerControl", { action: "landscape", sessionId: current.sessionId }); await delay(600);
+  tap(dump(), "选择剧集"); tapPrefix(dump(), "播放线路");
+  xml = await wait(async () => dump(), value => !!node(value, "线路1") && !!node(value, "✓  线路2"), "landscape source picker fully expands");
+  tap(xml, "线路1"); await wait(async () => dump(), value => value.includes("播放线路  ·  线路1"), "landscape picker source title updates");
+  shot("landscape-rule-source"); tap(dump(), "关闭选集");
+  await native("playerControl", { action: "portrait", sessionId: current.sessionId }); await delay(600);
+  result.cases.landscapeSourcePickerExpandsAndUpdatesTitle = true;
   tap(dump(), "第02集"); await wait(() => native("playerState"), s => s.sessionId !== current.sessionId && s.status === "playing", "rule page switches episode");
   current = await native("playerState"); await native("playerControl", { action: "pause", sessionId: current.sessionId });
   await wait(async () => dump(), xml => !!node(xml, "第02集 当前选集"), "rule current selection");

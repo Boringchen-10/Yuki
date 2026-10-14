@@ -1,0 +1,14 @@
+diff --git a/src-tauri/gen/android/app/src/main/java/com/genzo/android/GenzoPlugin.kt b/src-tauri/gen/android/app/src/main/java/com/genzo/android/GenzoPlugin.kt
+--- a/src-tauri/gen/android/app/src/main/java/com/genzo/android/GenzoPlugin.kt
++++ b/src-tauri/gen/android/app/src/main/java/com/genzo/android/GenzoPlugin.kt
+@@ -389,8 +389,10 @@ class GenzoPlugin(private val activity: Activity) : Plugin(activity) {
+             }
+             val uri = Uri.parse(args.uri)
+             if (!args.loading && uri.scheme !in listOf("content", "https", "http")) { invoke.reject("Unsupported locator"); return@runOnUiThread }
++            val landscape = PlayerActivity.current?.get()?.takeUnless { it.isFinishing || it.isDestroyed }?.resources?.configuration?.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+             PlayerActivity.current?.get()?.closeForReplacement()
+             activity.startActivity(Intent(activity, PlayerActivity::class.java).putExtra("uri", args.uri)
++                .putExtra("landscape", landscape)
+                 .putExtra("ruleOperation", args.ruleOperation).putExtra("loading", args.loading).putExtra("loadingMessage", args.loadingMessage)
+                 .putExtra("restart", args.restart).putExtra("mediaFileId", args.mediaFileId)
+                 .putExtra("sessionId", args.sessionId).putExtra("resumeMs", args.resumeMs ?: -1L)

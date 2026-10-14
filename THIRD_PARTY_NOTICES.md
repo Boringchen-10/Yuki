@@ -28,7 +28,7 @@ Genzo v0.5.0 使用以下直接依赖。具体传递依赖及锁定版本以 `pn
 | React / React DOM | 用户界面 | MIT |
 | React Router DOM | 页面路由 | MIT |
 | Zustand | 前端状态 | MIT |
-| Lucide React | 界面图标 | ISC |
+| Lucide React | 界面图标；安卓播放器的 Maximize / Minimize / Captions / EllipsisVertical 矢量图标由已安装的 v0.468.0 转换，许可见 `licenses/lucide-ISC.txt` | ISC |
 | Tauri JavaScript API / Dialog Plugin | 桌面桥接与原生对话框 | Apache-2.0 OR MIT |
 | Vite / React Plugin | 开发与前端构建 | MIT |
 | TypeScript | 类型检查 | Apache-2.0 |

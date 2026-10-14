@@ -16,17 +16,17 @@ import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
 import android.view.View
+import android.view.ViewGroup
 import android.view.Gravity
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.FrameLayout
+import android.widget.ImageButton
 import android.widget.ProgressBar
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
-import android.widget.PopupWindow
-import com.google.android.material.bottomsheet.BottomSheetDialog
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import app.tauri.plugin.JSArray
@@ -60,13 +60,19 @@ class PlayerActivity : ComponentActivity() {
     private lateinit var root: LinearLayout
     private lateinit var page: PlayerPage
     private lateinit var chrome: FrameLayout
-    private lateinit var playButton: TextView
+    private lateinit var playButton: ImageButton
     private lateinit var titleView: TextView
-    private lateinit var moreButton: TextView
+    private lateinit var moreButton: ImageButton
+    private lateinit var fullScreenButton: ImageButton
+    private lateinit var nextButton: ImageButton
+    private lateinit var subtitleButton: ImageButton
+    private lateinit var episodesButton: ImageButton
+    private lateinit var speedButton: TextView
+    private lateinit var superButton: TextView
     private lateinit var transport: LinearLayout
     private var transportShown = true
     private var controlsVisible = true
-    private var settingsMenu: PopupWindow? = null
+    private var settingsMenu: PlayerSettingsMenu? = null
     private val hideControls = Runnable { if (status == "playing" && !seek.isPressed && settingsMenu?.isShowing != true) showControls(false) }
     private var superResolutionMode = 0
     private var fallbackReason: String? = null
@@ -120,6 +126,7 @@ class PlayerActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
+                if (settingsMenu?.back() == true) return
                 if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
                 else finish()
             }
@@ -131,6 +138,7 @@ class PlayerActivity : ComponentActivity() {
         if (ruleOperation > 0 && !RuleResolver.allowed(ruleOperation)) { finish(); return }
         if (uri.isEmpty() && !intent.getBooleanExtra("loading", false)) { finish(); return }
         current = WeakReference(this)
+        if (intent.getBooleanExtra("landscape", false)) requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
         loadingMessage = intent.getStringExtra("loadingMessage") ?: loadingMessage
         mediaFileId = intent.getStringExtra("mediaFileId")
         sessionId = intent.getStringExtra("sessionId")
@@ -156,22 +164,23 @@ class PlayerActivity : ComponentActivity() {
         root.addView(viewport, LinearLayout.LayoutParams(-1, dp(220)))
         chrome = FrameLayout(this)
         val top = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setBackgroundColor(0x55000000); setPadding(dp(4), 0, dp(4), 0) }
-        top.addView(icon("‹", "返回") { onBackPressedDispatcher.onBackPressed() }, LinearLayout.LayoutParams(dp(48), dp(48)))
+        top.addView(icon(R.drawable.ic_genzo_arrow_back, "返回") { onBackPressedDispatcher.onBackPressed() }, LinearLayout.LayoutParams(dp(48), dp(48)))
         titleView = TextView(this).apply { text = "视频播放"; textSize = 14f; setTextColor(Color.WHITE); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }
         top.addView(titleView, LinearLayout.LayoutParams(0, -2, 1f))
-        moreButton = icon("⋮", "更多播放设置") { showSettingsMenu() }
+        moreButton = icon(R.drawable.ic_genzo_more, "更多播放设置") { showSettingsMenu() }
         top.addView(moreButton, LinearLayout.LayoutParams(dp(48), dp(48)))
         chrome.addView(top, FrameLayout.LayoutParams(-1, dp(48), Gravity.TOP))
-        val bottom = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setBackgroundColor(0x77000000); setPadding(dp(2), 0, dp(2), 0) }
-        transport = bottom
-        playButton = icon("▶", "暂停/播放") { if (engineActive && problem == null) { if (player.isPlaying) player.pause() else player.play(); showControls(true) } }
-        bottom.addView(playButton, LinearLayout.LayoutParams(dp(44), dp(48)))
+        transport = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(0x77000000); setPadding(dp(8), 0, dp(8), 0) }
+        playButton = icon(android.R.drawable.ic_media_play, "暂停/播放") { if (engineActive && problem == null) { if (player.isPlaying) player.pause() else player.play(); showControls(true) } }
         seek = SeekBar(this).apply { max = 1000; progressTintList = ColorStateList.valueOf(0xff4cc197.toInt()); thumbTintList = progressTintList }
-        bottom.addView(seek, LinearLayout.LayoutParams(0, dp(48), 1f))
         label = TextView(this).apply { setTextColor(Color.WHITE); textSize = 11f; gravity = Gravity.CENTER; minWidth = dp(82) }
-        bottom.addView(label, LinearLayout.LayoutParams(-2, dp(48)))
-        bottom.addView(icon("⛶", "横/竖屏") { requestedOrientation = if (resources.configuration.orientation == 2) ActivityInfo.SCREEN_ORIENTATION_PORTRAIT else ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }, LinearLayout.LayoutParams(dp(44), dp(48)))
-        chrome.addView(bottom, FrameLayout.LayoutParams(-1, dp(48), Gravity.BOTTOM))
+        fullScreenButton = icon(R.drawable.ic_genzo_fullscreen, "横/竖屏") { requestedOrientation = if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) ActivityInfo.SCREEN_ORIENTATION_PORTRAIT else ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
+        nextButton = icon(R.drawable.ic_genzo_skip_next, "下一集") { page.playNext(); showControls(true) }
+        subtitleButton = icon(R.drawable.ic_genzo_captions, "字幕设置") { showSettingsMenu("字幕") }
+        episodesButton = icon(R.drawable.ic_genzo_list, "选择剧集") { handler.removeCallbacks(hideControls); page.showEpisodes { showControls(true) } }
+        speedButton = shortcut("倍速") { showSettingsMenu("倍速") }
+        superButton = shortcut("超分辨率") { showSettingsMenu("超分辨率") }
+        chrome.addView(transport, FrameLayout.LayoutParams(-1, dp(48), Gravity.BOTTOM))
         viewport.addView(chrome, FrameLayout.LayoutParams(-1, -1))
         viewport.setOnClickListener { showControls(!controlsVisible) }
         page = PlayerPage(this, sessionId) { mediaFileId }
@@ -180,13 +189,13 @@ class PlayerActivity : ComponentActivity() {
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val cutout = insets.getInsets(WindowInsetsCompat.Type.displayCutout())
             val navigation = insets.getInsetsIgnoringVisibility(WindowInsetsCompat.Type.navigationBars())
-            chrome.setPadding(cutout.left, 0, cutout.right, 0)
+            chrome.setPadding(cutout.left, 0, cutout.right, if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) navigation.bottom else 0)
             layoutLoading()
             page.setPadding(dp(16), 0, dp(16), navigation.bottom)
             insets
         }
         ViewCompat.requestApplyInsets(root)
-        root.addOnLayoutChangeListener { _, left, _, right, _, oldLeft, _, oldRight, _ -> if (right-left != oldRight-oldLeft) layoutPlayer() }
+        root.addOnLayoutChangeListener { _, left, topEdge, right, bottomEdge, oldLeft, oldTop, oldRight, oldBottom -> if (right-left != oldRight-oldLeft || bottomEdge-topEdge != oldBottom-oldTop) layoutPlayer() }
         layoutPlayer()
         // A rule's loading shell must not wait for GPU/decoder initialization.
         seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -200,10 +209,16 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
-    private fun icon(symbol: String, description: String, action: () -> Unit) = TextView(this).apply {
-        text = symbol; textSize = 24f; gravity = Gravity.CENTER; setTextColor(Color.WHITE); contentDescription = description
+    private fun icon(resource: Int, description: String, action: () -> Unit) = ImageButton(this).apply {
+        setImageResource(resource); imageTintList = ColorStateList.valueOf(Color.WHITE); scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
+        setPadding(dp(11), dp(11), dp(11), dp(11)); contentDescription = description; tooltipText = description
         isFocusable = true; setOnClickListener { action() }
         background = android.graphics.drawable.RippleDrawable(ColorStateList.valueOf(0x44ffffff), null, GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE) })
+    }
+    private fun shortcut(label: String, action: () -> Unit) = TextView(this).apply {
+        text = label; textSize = 14f; setTextColor(Color.WHITE); gravity = Gravity.CENTER; setPadding(dp(12), 0, dp(12), 0)
+        contentDescription = label; isFocusable = true; setOnClickListener { action() }
+        background = getDrawable(R.drawable.genzo_icon_button_bg)
     }
     private fun showControls(visible: Boolean) {
         if (controlsVisible != visible) PlayerMotion.visibility(chrome, visible)
@@ -216,19 +231,50 @@ class PlayerActivity : ComponentActivity() {
         val returning = !landscape && page.visibility != View.VISIBLE
         page.visibility = if (landscape) View.GONE else View.VISIBLE
         if (returning) PlayerMotion.enter(page)
-        viewport.layoutParams = LinearLayout.LayoutParams(-1, if (landscape) 0 else ((root.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels) * 9 / 16), if (landscape) 1f else 0f)
+        val width = root.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
+        val height = root.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels
+        val portraitHeight = maxOf(width * 9 / 16, (height * .4f).toInt()).coerceAtMost(height / 2)
+        viewport.layoutParams = LinearLayout.LayoutParams(-1, if (landscape) 0 else portraitHeight, if (landscape) 1f else 0f)
+        layoutTransport(landscape); layoutLoading()
         showControls(true)
+    }
+    private fun layoutTransport(landscape: Boolean) {
+        listOf(playButton, seek, label, fullScreenButton, nextButton, subtitleButton, episodesButton, speedButton, superButton).forEach { (it.parent as? ViewGroup)?.removeView(it) }
+        transport.removeAllViews()
+        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        if (landscape) {
+            label.gravity = Gravity.CENTER_VERTICAL; label.setPadding(dp(16), 0, 0, 0)
+            transport.addView(label, LinearLayout.LayoutParams(-1, dp(24)))
+            transport.addView(seek, LinearLayout.LayoutParams(-1, dp(32)))
+            row.addView(playButton, LinearLayout.LayoutParams(dp(48), dp(48)))
+            row.addView(nextButton, LinearLayout.LayoutParams(dp(48), dp(48)))
+            row.addView(subtitleButton, LinearLayout.LayoutParams(dp(48), dp(48)))
+            row.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+            row.addView(superButton, LinearLayout.LayoutParams(-2, dp(48)))
+            row.addView(speedButton, LinearLayout.LayoutParams(-2, dp(48)))
+            row.addView(episodesButton, LinearLayout.LayoutParams(dp(48), dp(48)))
+            row.addView(fullScreenButton, LinearLayout.LayoutParams(dp(48), dp(48)))
+        } else {
+            label.gravity = Gravity.CENTER; label.setPadding(0, 0, 0, 0)
+            row.addView(playButton, LinearLayout.LayoutParams(dp(44), dp(48)))
+            row.addView(seek, LinearLayout.LayoutParams(0, dp(48), 1f))
+            row.addView(label, LinearLayout.LayoutParams(-2, dp(48)))
+            row.addView(fullScreenButton, LinearLayout.LayoutParams(dp(44), dp(48)))
+        }
+        fullScreenButton.setImageResource(if (landscape) R.drawable.ic_genzo_exit_fullscreen else R.drawable.ic_genzo_fullscreen)
+        transport.addView(row, LinearLayout.LayoutParams(-1, dp(48)))
+        transport.layoutParams = FrameLayout.LayoutParams(-1, dp(if (landscape) 104 else 48), Gravity.BOTTOM)
     }
     private fun layoutLoading() {
         val params = loadingPanel.layoutParams as FrameLayout.LayoutParams
         val top = chrome.paddingTop + dp(48)
-        val bottom = if (transportShown) dp(48) else 0
+        val bottom = if (transportShown) transport.layoutParams.height + chrome.paddingBottom else chrome.paddingBottom
         if (params.topMargin != top || params.bottomMargin != bottom) {
             params.topMargin = top; params.bottomMargin = bottom; loadingPanel.layoutParams = params
         }
     }
     override fun onConfigurationChanged(config: Configuration) {
-        super.onConfigurationChanged(config); settingsMenu?.dismiss(); layoutPlayer()
+        super.onConfigurationChanged(config); settingsMenu?.dismiss(); page.dismissEpisodes(); layoutPlayer(); ViewCompat.requestApplyInsets(root)
     }
     fun takePageRequest(expected: String): JSObject {
         if (expected != sessionId) return JSObject()
@@ -241,52 +287,50 @@ class PlayerActivity : ComponentActivity() {
         page.accept(args.channel, data, args.requestId)
         if (args.channel == "context" && !data.has("error")) titleView.text = data.optString("playbackTitle", data.optString("title", "视频播放"))
     }
-    private fun showChoice(title: String, items: List<String>, selected: Int = -1, action: (Int) -> Unit) {
-        handler.removeCallbacks(hideControls)
-        val dialog = BottomSheetDialog(this)
-        dialog.setDismissWithAnimation(PlayerMotion.enabled)
-        val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(12), dp(16), dp(24)); setBackgroundColor(0xff18231e.toInt()) }
-        column.addView(TextView(this).apply { text = title; textSize = 17f; setTextColor(Color.WHITE); setPadding(0, dp(8), 0, dp(16)) })
-        items.forEachIndexed { index, item -> column.addView(TextView(this).apply {
-            text = (if (index == selected) "✓  " else "") + item; textSize = 15f; gravity = Gravity.CENTER_VERTICAL; minimumHeight = dp(48)
-            setTextColor(if (index == selected) 0xff4cc197.toInt() else 0xffe6ebe7.toInt())
-            setOnClickListener { dialog.dismiss(); if (engineActive && problem == null) runCatching { action(index) }.onFailure { Toast.makeText(this@PlayerActivity, "当前视频无法应用此设置", Toast.LENGTH_SHORT).show() } }
-        }, LinearLayout.LayoutParams(-1, -2)) }
-        dialog.setContentView(android.widget.ScrollView(this).apply { addView(column) }); dialog.setOnDismissListener { showControls(true) }; dialog.show()
+    private fun applyPlayerSetting(action: () -> Unit) {
+        if (!engineActive || problem != null) return
+        runCatching { action(); report() }.onFailure { Toast.makeText(this, "当前视频无法应用此设置", Toast.LENGTH_SHORT).show() }
     }
-    private fun showSettingsMenu() {
-        showControls(true); handler.removeCallbacks(hideControls)
-        val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(8), dp(8), dp(8), dp(8)) }
-        val scroll = android.widget.ScrollView(this).apply { addView(column) }
-        val menu = PopupWindow(scroll, dp(224), -2, true).apply { elevation = dp(12).toFloat(); setBackgroundDrawable(GradientDrawable().apply { setColor(0xff1c2922.toInt()); cornerRadius = dp(12).toFloat() }); isOutsideTouchable = true; animationStyle = if (PlayerMotion.enabled) R.style.GenzoPlayerMenuAnimation else 0 }
-        settingsMenu = menu
-        fun item(title: String, needsMedia: Boolean = true, action: () -> Unit) {
-            column.addView(TextView(this).apply {
-                text = title; textSize = 14f; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(12), 0, dp(12), 0); minimumHeight = dp(48); setTextColor(Color.WHITE)
-                isEnabled = !needsMedia || (engineActive && problem == null); alpha = if (isEnabled) 1f else .4f
-                background = android.graphics.drawable.RippleDrawable(ColorStateList.valueOf(0x334cc197), null, GradientDrawable().apply { setColor(Color.WHITE); cornerRadius = dp(6).toFloat() })
-                setOnClickListener { menu.dismiss(); action() }
-            }, LinearLayout.LayoutParams(-1, -2))
-        }
-        item("倍速                         ›") {
-            val rates = listOf(.5f, .75f, 1f, 1.25f, 1.5f, 2f)
-            showChoice("倍速", rates.map { "${it}×" }, rates.indexOf(player.rate)) { setPlaybackRate(rates[it]) }
-        }
-        item("超分辨率                  ›") { showChoice("Anime4K 超分辨率", listOf("关闭", "流畅档", "画质档"), superResolutionMode) { switchSuperResolution(it) } }
-        item("音轨                         ›") { tracks(false) }
-        item("字幕                         ›") { tracks(true) }
-        item("选择外挂字幕") { if (subtitleSupported()) launchSubtitlePicker() }
-        item("字幕偏移                  ›") { showChoice("字幕偏移", listOf("提前 500 ms", "重置", "延后 500 ms")) {
-            subtitleDelayMs = if (it == 1) 0 else (subtitleDelayMs + if (it == 0) -500 else 500).coerceIn(-60000, 60000)
-            check(player.setSpuDelay(subtitleDelayMs * 1000))
+    private fun showSettingsMenu(submenu: String? = null) {
+        settingsMenu?.dismiss(); showControls(true); handler.removeCallbacks(hideControls)
+        val ready = engineActive && problem == null
+        val subtitles = ready && attemptRenderer != "mediacodec_embed"
+        fun choices(title: String, labels: List<String>, selected: Int = -1, enabled: Boolean = ready, action: (Int) -> Unit) =
+            PlayerMenuItem(title, enabled, children = labels.mapIndexed { index, label ->
+                PlayerMenuItem(label, selected = index == selected) { applyPlayerSetting { action(index) } }
+            })
+        val rates = listOf(.5f, .75f, 1f, 1.25f, 1.5f, 2f)
+        val items = listOf(
+            choices("倍速", rates.map { "${it}×" }, if (ready) rates.indexOf(player.rate) else -1) { setPlaybackRate(rates[it]) },
+            choices("超分辨率", listOf("关闭", "流畅档", "画质档"), superResolutionMode) { switchSuperResolution(it) },
+            PlayerMenuItem("音轨", ready, children = if (ready) trackChoices(false) else emptyList()),
+            PlayerMenuItem("字幕", subtitles, children = if (subtitles) trackChoices(true) else emptyList()),
+            PlayerMenuItem("选择外挂字幕", subtitles) { if (subtitles && subtitleSupported()) launchSubtitlePicker() },
+            choices("字幕偏移", listOf("提前 500 ms", "重置", "延后 500 ms"), enabled = subtitles) {
+                subtitleDelayMs = if (it == 1) 0 else (subtitleDelayMs + if (it == 0) -500 else 500).coerceIn(-60000, 60000)
+                check(player.setSpuDelay(subtitleDelayMs * 1000))
+            },
+            PlayerMenuItem("视频详情") { showVideoDetails() },
+            PlayerMenuItem("开源说明") { showSuperResolutionLicenses() },
+        )
+        settingsMenu = PlayerSettingsMenu(moreButton, items) { settingsMenu = null; showControls(true) }.also { it.show(submenu) }
+    }
+    private fun trackChoices(subtitle: Boolean): List<PlayerMenuItem> {
+        val items = if (subtitle) player.spuTracks else player.audioTracks
+        val selected = if (subtitle) player.spuTrack else player.audioTrack
+        val native = items.map { item -> PlayerMenuItem(item.name, selected = item.id == selected && (!subtitle || selectedSidecar == null)) {
+            applyPlayerSetting {
+                check(if (subtitle) player.setSpuTrack(item.id) else player.setAudioTrack(item.id))
+                if (subtitle) selectedSidecar = null
+            }
         } }
-        item("视频详情", false) {
-            val video = if (engineActive) "${player.property("video-params/w") ?: "—"} × ${player.property("video-params/h") ?: "—"}\n解码：${player.property("hwdec-current") ?: "—"}\n渲染：${player.property("current-vo") ?: "—"}\n当前处理：${listOf("关闭", "流畅档", "画质档")[player.effectiveMode]}${player.performanceReason?.let { "\n$it" } ?: ""}" else "正在准备视频"
-            AlertDialog.Builder(this).setTitle("视频详情").setMessage("${titleView.text}\n\n$video\n选择档位：${listOf("关闭", "流畅档", "画质档")[superResolutionMode]}").setPositiveButton("关闭", null).show()
+        return if (!subtitle) native else native + sidecars.map { (id, entry) ->
+            PlayerMenuItem(entry.first, selected = selectedSidecar == id) { applyPlayerSetting { check(player.addSubtitle(entry.second.absolutePath)); selectedSidecar = id } }
         }
-        item("开源说明", false) { showSuperResolutionLicenses() }
-        menu.setOnDismissListener { settingsMenu = null; showControls(true) }
-        menu.showAsDropDown(moreButton, -dp(176), 0)
+    }
+    private fun showVideoDetails() {
+        val video = if (engineActive) "${player.property("video-params/w") ?: "—"} × ${player.property("video-params/h") ?: "—"}\n解码：${player.property("hwdec-current") ?: "—"}\n渲染：${player.property("current-vo") ?: "—"}\n当前处理：${listOf("关闭", "流畅档", "画质档")[player.effectiveMode]}${player.performanceReason?.let { "\n$it" } ?: ""}" else "正在准备视频"
+        AlertDialog.Builder(this).setTitle("视频详情").setMessage("${titleView.text}\n\n$video\n选择档位：${listOf("关闭", "流畅档", "画质档")[superResolutionMode]}").setPositiveButton("关闭", null).show()
     }
 
     private fun createEngine(mode: Int, paused: Boolean = false) {
@@ -503,15 +547,6 @@ class PlayerActivity : ComponentActivity() {
         if (ruleOperation > 0 && ruleOperation <= cancelledThrough && !mediaReady) { status = "closed"; report(); finish() }
     }
 
-    private fun tracks(subtitle: Boolean) {
-        if (subtitle && !subtitleSupported()) return
-        val items = (if (subtitle) player.spuTracks else player.audioTracks)
-        AlertDialog.Builder(this).setItems(items.map { "${it.id}: ${it.name}" }.toTypedArray()) { _, index ->
-            val changed = if (subtitle) player.setSpuTrack(items[index].id) else player.setAudioTrack(items[index].id)
-            if (changed && subtitle) selectedSidecar = null
-        }.show()
-    }
-
     @Deprecated("Prototype uses the platform result API")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
@@ -661,8 +696,15 @@ class PlayerActivity : ComponentActivity() {
         detailsButton.visibility = if (problem != null) View.VISIBLE else View.GONE
         seek.isEnabled = mediaReady && engineActive && problem == null && active?.isSeekable == true
         playButton.isEnabled = mediaReady && engineActive && problem == null
-        playButton.text = if (active?.isPlaying == true) "Ⅱ" else "▶"
+        playButton.setImageResource(if (active?.isPlaying == true) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play)
         playButton.contentDescription = if (active?.isPlaying == true) "暂停" else "播放"
+        nextButton.isEnabled = showTransport && page.canPlayNext()
+        episodesButton.isEnabled = page.hasEpisodes()
+        speedButton.isEnabled = showTransport; superButton.isEnabled = showTransport
+        subtitleButton.isEnabled = showTransport && attemptRenderer != "mediacodec_embed"
+        listOf(nextButton, episodesButton, speedButton, superButton, subtitleButton).forEach { it.alpha = if (it.isEnabled) 1f else .4f }
+        speedButton.text = if (active == null || active.rate == 1f) "倍速" else "${active.rate}×"
+        superButton.text = if (superResolutionMode == 0) "超分辨率" else "超分 · ${if (superResolutionMode == 1) "流畅" else "画质"}"
         fun time(ms: Long) = "${ms / 60000}:${((ms / 1000) % 60).toString().padStart(2, '0')}"
         val playbackLabel = "${time(lastPosition)} / ${time(lastDuration)}"
         if (label.text.toString() != playbackLabel) label.text = playbackLabel

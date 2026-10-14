@@ -1,6 +1,8 @@
 package com.genzo.android
 
 import android.content.Context
+import android.app.Dialog
+import android.content.res.Configuration
 import android.content.res.ColorStateList
 import android.graphics.BitmapFactory
 import android.graphics.Color
@@ -11,11 +13,13 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
+import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.google.android.material.bottomsheet.BottomSheetBehavior
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -55,6 +59,9 @@ class PlayerPage(context: Context, private val session: String?, private val med
     private var commentsRequest = 0L
     private var repliesDialog: BottomSheetDialog? = null
     private var sourceDialog: BottomSheetDialog? = null
+    private var episodePicker: Dialog? = null
+    private var pickerAdapter: RowsAdapter? = null
+    private var pickerSource: TextView? = null
     private var playing = false
     private val tabs = LinearLayout(context)
     private val episodesTab = tab("选集") { selectTab("episodes") }
@@ -263,6 +270,7 @@ class PlayerPage(context: Context, private val session: String?, private val med
             column.addView(card, LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
         }
         dialog.setDismissWithAnimation(PlayerMotion.enabled); dialog.setContentView(android.widget.ScrollView(context).apply { addView(column) }); dialog.show()
+        if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) dialog.behavior.state = BottomSheetBehavior.STATE_EXPANDED
     }
     private fun render() {
         val episodes = selectedTab == "episodes"
@@ -275,6 +283,7 @@ class PlayerPage(context: Context, private val session: String?, private val med
         else if (!ruleMode) visibleRows = visibleRows.groupBy { it.optString("episodeKey").takeUnless { key -> key.isBlank() || key == "null" } ?: it.optString("id") }.values.map { group -> group.firstOrNull { it.optBoolean("current") } ?: group.firstOrNull { it.optBoolean("available") } ?: group.first() }
         val currentFile = allRows.firstOrNull { it.optBoolean("current") && it.has("mediaFileId") }
         source.text = if (ruleMode) "播放线路  ·  ${visibleRows.firstOrNull()?.optString("sourceLabel") ?: "暂无线路"}  ﹀" else "播放文件  ·  ${currentFile?.optString("fileName") ?: "当前文件"}  ﹀"
+        pickerSource?.text = source.text
         val unmatched = visibleRows.count { it.optBoolean("unmatched") }
         summary.text = if (episodes) "全部剧集 · ${visibleRows.count { !it.optBoolean("sectionHeader") && !it.optBoolean("unmatched") }} 集${if (unmatched > 0) " · $unmatched 个未匹配文件" else ""}" else "${data.optString("commentEpisodeLabel").takeUnless { it == "null" || it.isBlank() } ?: "当前集"} · Bangumi 分集讨论${if (commentsLoaded) " · $commentsTotal 条" else ""}"
         summary.setTextColor(muted); grid.spanCount = if (episodes) 2 else 1
@@ -282,12 +291,58 @@ class PlayerPage(context: Context, private val session: String?, private val med
         if (episodes && data.has("rows") && visibleRows.isEmpty()) message.text = "暂无可播放剧集，请返回关联本地、WebDAV 或规则来源。"
         message.visibility = if (message.text.isBlank()) GONE else VISIBLE
         adapter.notifyDataSetChanged()
+        pickerAdapter?.notifyDataSetChanged()
         list.post { maybeLoadComments() }
     }
 
+    fun hasEpisodes() = visibleRows.any { !it.optBoolean("sectionHeader") }
+    private fun nextEpisode(): JSONObject? {
+        val current = visibleRows.indexOfFirst { it.optBoolean("current") }
+        if (current < 0 || visibleRows[current].optBoolean("unmatched")) return null
+        return visibleRows.drop(current + 1).firstOrNull { !it.optBoolean("sectionHeader") }?.takeIf { it.optBoolean("available") && !it.optBoolean("unmatched") && !playing }
+    }
+    fun canPlayNext() = nextEpisode() != null
+    fun playNext() { nextEpisode()?.let { playEpisode(it) } }
+    private fun playEpisode(row: JSONObject) {
+        if (!row.optBoolean("available") || playing) return
+        if (!row.optBoolean("current")) {
+            playing = true; request("play", JSONObject().put("target", row.optString("id")))
+            adapter.notifyDataSetChanged(); pickerAdapter?.notifyDataSetChanged()
+        }
+        episodePicker?.dismiss()
+    }
+    fun showEpisodes(onDismiss: () -> Unit) {
+        if (!hasEpisodes()) return
+        dismissEpisodes()
+        val width = minOf(dp(360), (resources.displayMetrics.widthPixels * .5f).toInt())
+        val dialog = Dialog(context)
+        val column = LinearLayout(context).apply { orientation = VERTICAL; setPadding(dp(12), dp(8), dp(12), dp(8)); setBackgroundColor(surface) }
+        val header = LinearLayout(context).apply { gravity = Gravity.CENTER_VERTICAL }
+        header.addView(text("选择剧集", 18f, true), LayoutParams(0, dp(48), 1f))
+        header.addView(ImageButton(context).apply {
+            setImageResource(android.R.drawable.ic_menu_close_clear_cancel); imageTintList = ColorStateList.valueOf(foregroundColor)
+            background = ripple(); contentDescription = "关闭选集"; tooltipText = "关闭选集"; setOnClickListener { dialog.dismiss() }
+        }, LayoutParams(dp(44), dp(44)))
+        column.addView(header)
+        pickerSource = text(source.text.toString(), 13f).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; background = ripple(); setOnClickListener { chooseSource() } }
+        column.addView(pickerSource, LayoutParams(-1, dp(44)))
+        val rows = RecyclerView(context).apply { layoutManager = GridLayoutManager(context, 2).apply {
+            spanSizeLookup = object : GridLayoutManager.SpanSizeLookup() { override fun getSpanSize(position: Int) = if (visibleRows.getOrNull(position)?.optBoolean("sectionHeader") == true) 2 else 1 }
+        }; itemAnimator = null }
+        pickerAdapter = RowsAdapter(true, (width - dp(60)) / 2); rows.adapter = pickerAdapter
+        column.addView(rows, LayoutParams(-1, 0, 1f))
+        episodePicker = dialog
+        dialog.setContentView(column)
+        dialog.setOnDismissListener { rows.adapter = null; if (episodePicker === dialog) { episodePicker = null; pickerAdapter = null; pickerSource = null }; onDismiss() }
+        dialog.window?.apply { setBackgroundDrawableResource(android.R.color.transparent); setDimAmount(.3f); setGravity(Gravity.RIGHT); setLayout(width, -1) }
+        dialog.show(); dialog.window?.setLayout(width, -1)
+        rows.scrollToPosition(visibleRows.indexOfFirst { it.optBoolean("current") }.coerceAtLeast(0))
+    }
+    fun dismissEpisodes() { episodePicker?.dismiss() }
+
     private inner class RowHolder(val column: LinearLayout) : RecyclerView.ViewHolder(column)
-    private inner class RowsAdapter : RecyclerView.Adapter<RowHolder>() {
-        override fun getItemCount() = if (selectedTab == "episodes") visibleRows.size else comments.size
+    private inner class RowsAdapter(private val episodesOnly: Boolean = false, private val coverWidth: Int? = null) : RecyclerView.Adapter<RowHolder>() {
+        override fun getItemCount() = if (episodesOnly || selectedTab == "episodes") visibleRows.size else comments.size
         override fun onCreateViewHolder(parent: ViewGroup, type: Int): RowHolder {
             val column = LinearLayout(context).apply { orientation = VERTICAL; setPadding(dp(8), dp(8), dp(8), dp(10)); background = shape(surface, 12); foreground = ripple() }
             column.layoutParams = RecyclerView.LayoutParams(-1, -2).apply { setMargins(dp(3), dp(3), dp(3), dp(9)) }
@@ -297,7 +352,7 @@ class PlayerPage(context: Context, private val session: String?, private val med
             val column = holder.column; column.removeAllViews(); column.setOnClickListener(null)
             column.setPadding(dp(8), dp(8), dp(8), dp(10))
             column.isEnabled = true; column.alpha = 1f; column.foreground = ripple()
-            if (selectedTab == "comments") {
+            if (!episodesOnly && selectedTab == "comments") {
                 val item = comments[index]; column.background = shape(surface, 20); column.setPadding(dp(14), dp(14), dp(14), dp(14))
                 column.addView(commentViews.identity(item))
                 column.addView(commentViews.body(item.optString("comment")))
@@ -313,7 +368,7 @@ class PlayerPage(context: Context, private val session: String?, private val med
             column.foreground = ripple()
             column.background = GradientDrawable().apply { setColor(surface); cornerRadius = dp(12).toFloat(); if (current) setStroke(dp(2), accent) }
             val cover = ImageView(context).apply { scaleType = ImageView.ScaleType.FIT_CENTER; setBackgroundColor(Color.rgb(34, 45, 39)); contentDescription = "${row.optString("label")}分集封面" }
-            val width = (resources.displayMetrics.widthPixels - dp(60)) / 2
+            val width = coverWidth ?: (resources.displayMetrics.widthPixels - dp(60)) / 2
             column.addView(cover, LayoutParams(-1, width * 9 / 16))
             val key = row.optString("episodeKey"); val path = imagePaths[key]
             if (path != null) {
@@ -340,8 +395,8 @@ class PlayerPage(context: Context, private val session: String?, private val med
             column.addView(text(if (current) "当前选集${if (name.isBlank()) "" else " · $name"}" else if (!row.optBoolean("available")) "暂无可播放文件${if (name.isBlank()) "" else " · $name"}" else name.ifBlank { "点击播放" }, 12f).apply { setTextColor(muted); maxLines = 2; ellipsize = TextUtils.TruncateAt.END })
             column.isEnabled = row.optBoolean("available") && !playing; column.alpha = if (row.optBoolean("available")) 1f else .45f
             column.contentDescription = "${row.optString("label")}${if (current) " 当前选集" else ""}"
-            column.setOnClickListener { if (!current && !playing) { playing = true; request("play", JSONObject().put("target", row.optString("id"))); adapter.notifyDataSetChanged() } }
+            column.setOnClickListener { playEpisode(row) }
         }
     }
-    fun dispose() { repliesDialog?.dismiss(); repliesDialog = null; sourceDialog?.dismiss(); sourceDialog = null; disposed = true; requests.clear(); commentRequests.clear(); commentTargets.clear(); failedCommentImages.clear(); images.shutdownNow(); bitmaps.evictAll(); list.adapter = null; list.animate().cancel() }
+    fun dispose() { dismissEpisodes(); repliesDialog?.dismiss(); repliesDialog = null; sourceDialog?.dismiss(); sourceDialog = null; disposed = true; requests.clear(); commentRequests.clear(); commentTargets.clear(); failedCommentImages.clear(); images.shutdownNow(); bitmaps.evictAll(); list.adapter = null; list.animate().cancel() }
 }

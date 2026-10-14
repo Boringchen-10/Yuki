@@ -1,5 +1,15 @@
 # Codex 与 DeepSeek Harness 项目交接记录
 
+## 竖屏区域与横屏播放控件 v0.15.0（2026-10-14）
+
+- 基线 `c3a0fb5`，继续 `.tmp/android-first` / `codex/android-first` 的完整当前 OpenDesign。用户提供三张参考图，要求加大竖屏播放器、三点菜单采用并排子菜单、横屏扩展已有功能；未实现功能不加入。主目录桌面和安卓其余维护者 WIP 保留。
+- 竖屏区域约高度40%、最多一半，保持视频原比例；PLK110 实测1272×1108 / 屏幕1272×2772。原生主 / 子菜单同一窗口，选择项高亮、按实际边界滚动；Android popup直接调用dismiss的返回路径已处理，逐层返回与点击外部关闭通过。横屏时间 / 全宽进度 / 播放与下一集 / 字幕 / 超分 / 倍速 / 右侧选集 / 全屏控件复用原能力与真实目录；缺文件、未匹配和末集不跳播。切集保持方向，不重建同会话旋转 / 倍速的解码器。横屏来源面板完整展开、来源标题同步。
+- GenzoPlugin 自身两行方向增量保存 `docs/android/PLAYER_CONTROLS_SOURCE_HANDOFF.patch`，**当前已应用**，`git apply --reverse --check`核对；不重复应用、不整文件提交其余WIP。PlayerActivity / PlayerPage原为clean，本轮按模块提交；新PlayerSettingsMenu、4份Lucide ISC矢量 / 许可、相关回归和文档同范围提交。没有新依赖、迁移或Rust业务变更，未复制参考图或第三方媒体素材。
+- TypeScript、前端27文件 / **115项**、最终Kotlin **12项**通过；Android优化Rust / QA / Release构建通过，427份生产源与D构建副本匹配。最终独立organizeqa **24组完整原生回归通过**，目录 `D:/DevTools/Android/Build/qa/player-page-1791978267661/`，涵盖真实合成图像 / 13→1 / 同集版本、菜单 / 控件 / 来源与方向、倍速 / 实际CNN、真实Bangumi分集讨论 / 图片、失败 / 取消和无主规则预览不写观看进度。最终专项 `qa/player-controls-20261014/final-ui-result.json`另验证0.15.0与方向 / 解码器保留。截图已查看；本轮未重跑Rust单元测试，不宣称多机型或长时性能。
+- 验证发现并修复popup返回整层关闭、横屏Material来源面板只显示折叠区与来源标题未同步。QA修正方向前置条件、同集合法变体文件及选中线路前的对勾匹配，没有放宽媒体对应。旧压缩资源缓存冲突；清理缓存命令被自动审批拦截，改用新的生成输出目录完成，不删除用户数据。最终代码已重新构建并在0.15.0独立包回归。
+- 最终签名 `D:/DevTools/Android/Build/previews/player-controls-20261014/Genzo_0.15.0_player-controls_arm64-v8a.apk`，49,420,511字节，SHA256 `c0b7823dade49c589b32ea9d7ce0ebc5ce645b543e2ff9afbeee0a20d89f5f0d`；0.15.0 / code15000 / com.genzo.android / arm64 / min26 / target36 / 非debuggable / 原证书，v2 / v3与16KiB ZIP通过，3原生库、内嵌index-iuzA3pU5.js / index-mGG9iYmE.css、Lucide许可 / 第三方声明资产匹配，无用户DB / 书籍 / 测试媒体。
+- 普通包与日常readerqa均install-r更新，三个包（含独立organizeqa）设备APK哈希与制品一致。新取升级前后 **36作品 / 17来源 / 30观看记录 / 16规则 / 7书籍**及个人字段 / 创建时间 / 阅读位置与条目 / 书架 / 播放偏好哈希一致，无隐式扫描；本轮开始新快照已有30条观看记录，不沿用上一轮29条。只读用户快照保存哈希，未复制用户DB / 凭据或向用户包写测试媒体；原生播放使用独立合成数据，QA测试后清理自身作品 / 来源 / 规则。证据 `D:/DevTools/Android/Build/qa/player-controls-20261014/`，9228 / 9351指向新日常PID、9352关闭，日常停现有页面，不自动播放用户媒体。不公开Release / 标签 / 推送，公开版仍v0.5.2。
+
 ## 详情玻璃背景与封面转场 v0.14.3（2026-10-14）
 
 - 基线 `9f8a5a5`，继续 `.tmp/android-first` / `codex/android-first` 的完整当前 OpenDesign。用户新要求为动漫背景 / 底栏渐变与玻璃质感、漫画小说无背景、放缓点击封面的转场。修订 PROJECT_CONTEXT / DESIGN_DIRECTION 的书籍背景安排；主目录桌面修改与安卓原 WIP 保留。
