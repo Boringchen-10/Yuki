@@ -9,7 +9,7 @@ const python = "C:/Users/Administrator/.cache/codex-runtimes/codex-primary-runti
 const run = Date.now(), output = `D:/DevTools/Android/Build/qa/player-page-${run}`;
 mkdirSync(output, { recursive: true });
 const command = (...args) => {
-  if (args[0] === "shell" && args[1] === "input" && ["tap", "swipe"].includes(args[2])) guardForeground();
+  if (args[0] === "shell" && args[1] === "input" && (["tap", "swipe"].includes(args[2]) || args[2] === "keyevent" && args[3] !== "KEYCODE_WAKEUP")) guardForeground();
   return execFileSync(adb, ["-s", serial, ...args], { encoding: "utf8", timeout: 20000 });
 };
 function guardForeground() {
@@ -86,6 +86,7 @@ function tapPrefix(xml, label) {
 }
 function shot(name) { guardForeground(); writeFileSync(`${output}/${name}.png`, bytes("exec-out", "screencap", "-p")); }
 try {
+  scenario: {
   command("shell", "input", "keyevent", "KEYCODE_WAKEUP"); command("shell", "wm", "dismiss-keyguard"); await connect();
   original = await invoke("get_android_playback_preferences"); await invoke("set_android_playback_preferences", { settings: { hardwareDecoding: true, hardwareDecoder: "mediacodec-copy", videoRenderer: "gpu", superResolution: 0 } });
   sourceId = await invoke("add_webdav_source", { input: { name: `QA Portrait ${run}`, endpoint: `http://127.0.0.1:${port}`, directory: "/dav/", username: "qa", password: "own-fixture", kind: "video" } });
@@ -175,7 +176,7 @@ try {
   await native("playerControl", { action: "pause" });
   assert.ok(node(dump(), "第01集 当前选集")); result.cases.actualSuperResolutionKeepsEpisodePanel = true;
   tap(dump(), "更多播放设置"); tapPrefix(dump(), "倍速");
-  command("shell", "input", "tap", String(physical[0] >> 1), String(Math.round(Math.max(...physical) * .9)));
+  command("shell", "input", "tap", "24", String(Math.round(Math.max(...physical) * .2)));
   assert.ok(!node(dump(), "开源说明"), "outside tap closes the full settings menu");
   await native("playerControl", { action: "superResolution", value: 0 });
   xml = dump(); tap(xml, "第02集");
@@ -211,9 +212,10 @@ try {
   assert.ok(scrollNode, "landscape menu is scrollable"); const scrollBounds = /bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/.exec(scrollNode).slice(1).map(Number);
   const scrollHeight = scrollBounds[3] - scrollBounds[1];
   command("shell", "input", "swipe", String((scrollBounds[0] + scrollBounds[2]) >> 1), String(Math.round(scrollBounds[1] + scrollHeight * .75)), String((scrollBounds[0] + scrollBounds[2]) >> 1), String(Math.round(scrollBounds[1] + scrollHeight * .3)), "350");
-  await delay(300); xml = dump(); assert.ok(node(xml, "开源说明")); shot("landscape-menu"); result.cases.landscapeMenuScrollsWithoutClipping = true;
+  await delay(300); xml = dump(); assert.ok(node(xml, "开源说明")); shot("landscape-menu"); result.cases.landscapeMenuDisplayedWithoutClipping = true;
   command("shell", "input", "keyevent", "KEYCODE_BACK"); command("shell", "input", "keyevent", "KEYCODE_BACK"); await delay(600);
   await wait(async () => dump(), xml => !!node(xml, "第02集 当前选集"), "fullscreen returns without closing"); assert.equal((await native("playerState")).sessionId, current.sessionId); result.cases.fullscreenBackKeepsSessionAndEpisode = true;
+  if (process.env.GENZO_PLAYER_MENU_ONLY === "1") { result.shortMenuOnly = true; break scenario; }
   tap(dump(), "评论");
   xml = await wait(async () => dump(), xml => xml.includes("第02集 · Bangumi 分集讨论") && !xml.includes("正在读取 Bangumi 本集讨论"), "Bangumi comments", 45000); shot("comments");
   assert.ok(!xml.includes("读取失败"), "live Bangumi comments failed"); assert.ok(xml.includes("Bangumi")); result.cases.liveCurrentEpisodeDiscussion = true;
@@ -266,6 +268,7 @@ try {
   tap(dump(), "评论"); assert.ok((await wait(async () => dump(), xml => xml.includes("尚未关联 Bangumi"), "unbound rule comments")).includes("尚未关联 Bangumi"));
   await native("playerControl", { action: "close", sessionId: current.sessionId });
   assert.equal((await invoke("get_playback_progress")).items.length, beforePreview); result.cases.ruleEpisodeSwitchAndUnboundPreviewPrivacy = true;
+  }
   console.log(JSON.stringify(result));
 } catch (error) { result.error = String(error); shot("failure"); throw error; }
 finally {
