@@ -22,4 +22,12 @@ class CommentTimeTest {
         org.junit.Assert.assertTrue(12000 / avatar <= 192)
         assertEquals(1,CommentImageSampling.sample(48,48,96,96))
     }
+    @Test fun sentImageMarkupKeepsBodyOrderAndSupportsBangumiSizesWhitespaceAndExternalHosts() {
+        val parts = CommentImageMarkup.parts("前文 [IMG=176,99] \n//lain.bgm.tv/a.jpg \n[/IMG] 中间 [img]https://i.postimg.cc/b.png[/img] 末尾")
+        assertEquals(listOf(false, true, false, true, false), parts.map { it.image })
+        assertEquals("https://lain.bgm.tv/a.jpg", parts[1].value)
+        assertEquals("https://i.postimg.cc/b.png", parts[3].value)
+        assertEquals("[img]file:///secret[/img]", CommentImageMarkup.parts("[img]file:///secret[/img]").single().value)
+        assertEquals(4, CommentImageMarkup.parts("[img]https://example.org/a.png[/img]".repeat(8)).count { it.image })
+    }
 }

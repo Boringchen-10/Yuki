@@ -21,6 +21,10 @@ mod comic_explore;
 mod comic_home;
 mod novel_explore;
 mod book_content;
+mod reading_history;
+mod download_center;
+mod video_downloads;
+mod bangumi_comment_images;
 mod android_reader;
 mod personal_sync;
 mod portable_data;
@@ -72,6 +76,10 @@ pub fn run() {
             android_events::init(app.handle());
             let state = tauri::async_runtime::block_on(db::initialize(app.handle()))
                 .map_err(|error| format!("Genzo 无法初始化本地数据库。{error}"))?;
+            tauri::async_runtime::block_on(download_center::initialize(&state, app.handle()))
+                .map_err(|error| format!("Genzo 无法读取下载任务。{error}"))?;
+            tauri::async_runtime::block_on(video_downloads::initialize(&state.pool))
+                .map_err(|error| format!("Genzo 无法读取视频下载任务。{error}"))?;
             tauri::async_runtime::block_on(bangumi_network::initialize(&state.pool))
                 .map_err(|error| format!("Genzo 无法读取 Bangumi 网络设置。{error}"))?;
             db::allow_cached_images(app.handle(), &state.cover_cache_path)?;
@@ -139,6 +147,20 @@ pub fn run() {
             book_content::cache_book_source_content,
             book_content::open_cached_book_content,
             book_content::clear_cached_book_content,
+            download_center::enqueue_book_downloads,
+            download_center::enqueue_file_download,
+            download_center::list_download_jobs,
+            download_center::control_download_job,
+            video_downloads::enqueue_rule_downloads,
+            video_downloads::enqueue_rule_media_download,
+            video_downloads::list_video_downloads,
+            video_downloads::control_video_download,
+            video_downloads::open_downloaded_video,
+            video_downloads::open_downloaded_file,
+            reading_history::list_reading_history,
+            reading_history::remove_reading_history,
+            reading_history::clear_reading_history,
+            bangumi_comment_images::cache_bangumi_comment_image,
             book_content::get_book_online_content,
             book_content::get_book_online_image,
             reading_network::get_reading_network,

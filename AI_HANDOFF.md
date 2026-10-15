@@ -1,5 +1,19 @@
 # Codex 与 DeepSeek Harness 项目交接记录
 
+## 下载中心、漫画历史与播放器设置 v0.16.0（2026-10-15）
+
+- 基线 `503c904`，继续 `.tmp/android-first` / `codex/android-first` 完整当前 OpenDesign。用户要求设置在当前栏展开、横屏去掉已有快捷设置的重复项、Bangumi 评论图片、漫画浏览历史、真实下载中心，并明确包含规则视频离线下载。原先背景玻璃 / 书籍无背景 / 560ms 转场与较大竖屏区域保留。
+- 菜单改为同列内展开 / 折叠，横屏倍速、超分和字幕从对应快捷入口直接展开，三点不再重复。评论与楼中楼使用受限独立图片缓存，兼容外站 / BBCode / 小尺寸图，封面来源白名单不放宽。
+- 迁移 0032 / 0033 / 0034 分别增加历史隐藏标记、书籍 / WebDAV 队列、稳定规则视频 recipe；不改已运行迁移。历史保存由真实阅读位置提交触发，统一视频 / 漫画 / 小说时间线，隐藏保留续读 / 书签 / 缓存。书籍与 WebDAV 任务单 worker、generation 与取消等待，暂停书籍丢弃未发布章卷 staging，WebDAV flush part 后验证 Range 续传；独立 scoped lease 防正在播放时清理，拒绝 junction / symlink 越界。
+- 规则视频单独解析，不占用或取消当前播放解析。Native `prepareOfflineVideo` 网络准备在独立线程、只产生2分钟能力 ticket，Rust锁外准备 / 锁内代际复查 / `commitOfflineVideo`，失效discard；prepare不写密文 / 清缓存。Media3 1.9.4 Apache2仅下载，libmpv仍唯一播放器；一条≤1080p视频与所需音轨，支持HTTP、HLS VOD / AES128，直播 / DRM等明确失败。URI / 请求头与映射key使用CredentialStore AES-GCM，普通索引 / 清单是opaque资源，跨源剥离敏感头；cache-only随机token loopback支持Range，无上游回落。下载中心阅读入口offlineOnly严格拒绝缓存缺失后的联网。
+- 最终审阅补上暂停旧失败任务重解析、Native add尚未入索引就移除、SQL丢失Native任务回收、首次offline正数operation误走acceptRuleMedia、native时间number导致React排序崩溃等问题。极窄跨存储窗口：Native commit成功但SQL handed_off前进程终止时可能重新准备并丢失部分下载进度，未宣称无缝跨存储事务。
+- TypeScript / 前端 **129** 项、Windows Rust全套 **413通过 / 19既有忽略**、最终视频6项通过；Android完整优化Rust / QA / 日常debug / 签名Release构建成功。真实React下载中心14组 / 入口5组 / 阅读行3组 / 完整混合历史7组，六尺寸360/412/915/1024/1366/1920检查无溢出；原生评论图片6项、offline下载8项实机通过。
+- PLK110 Android16独立organizeqa：真实4,120,162字节MP4、生成40秒HLS VOD、带认证WebDAV完成下载；关闭媒体源服务后libmpv实际视频帧 / duration / seek / 同mediaId进度通过。暂停任务重启不联网、显式继续、完成缓存重启续播、失败刷新ticket重试、WebDAV非零Range恢复、请求头与认证检查通过，最终无HLS跳过。证据 `D:/DevTools/Android/Build/qa/downloads-history-20261014/native-downloads/1792045347054/result.json`。首次锁屏尝试未计通过，其失败清理可能留下一个带QA recipe的测试任务，须仅在organizeqa按seed ID清理；后续成功轮自身任务已全部清理。
+- 菜单全流程实机脚本在手机切到其他应用时停止，尚不算最终通过；已给所有触屏、UI读取与截图加前台QA包检查，避免操作其他应用。后续是否继续菜单短测 / 更新用户包以本轮用户答复与最新记录为准。
+- 签名预览 `D:/DevTools/Android/Build/previews/downloads-history-20261015/Genzo_0.16.0_downloads-history_arm64-v8a.apk`，50,027,717字节，SHA256 `43a2207861eeaea879cfb8705b6a8484ff8808546fbd3d7b5cb73a47aa9db6c9`。449份生产源与D副本一致；0.16.0/code16000/com.genzo.android/arm64/min26/target36/非debuggable/原证书/16KiB对齐，3库与内嵌index-Cn3AE6Mh.js、index-C6xwctdG.css一致，无用户DB / 书籍 / 测试媒体。公开安卓仍v0.5.2，不创建Release / 标签 / 推送。
+- 原dirty AndroidApp / mobile.css / RuleBrowser / EpisodeSources / untracked BangumiCommentFeed / GenzoPlugin 的自身增量在 `docs/android/DOWNLOAD_CENTER_SOURCE_HANDOFF.patch`，当前已应用，reverse --check通过，不能重复应用或整文件提交其他维护者WIP。其余clean / 新模块、回归、迁移、Media3许可和版本文档纳入本轮提交。主目录桌面WIP未动。
+- 本地Gradle原distribution的kotlin-stdlib-2.0.21.jar损坏；独立校验副本 `native-validation/gradle-api-validation` 只替换其复制件为同版本完整缓存JAR，全局缓存未改。构建使用新输出目录，不清理用户目录或原构建缓存。
+
 ## 竖屏区域与横屏播放控件 v0.15.0（2026-10-14）
 
 - 基线 `c3a0fb5`，继续 `.tmp/android-first` / `codex/android-first` 的完整当前 OpenDesign。用户提供三张参考图，要求加大竖屏播放器、三点菜单采用并排子菜单、横屏扩展已有功能；未实现功能不加入。主目录桌面和安卓其余维护者 WIP 保留。

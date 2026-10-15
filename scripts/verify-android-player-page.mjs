@@ -8,7 +8,14 @@ const adb = "D:/DevTools/Android/Sdk/platform-tools/adb.exe", serial = "3B164M00
 const python = "C:/Users/Administrator/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/python.exe";
 const run = Date.now(), output = `D:/DevTools/Android/Build/qa/player-page-${run}`;
 mkdirSync(output, { recursive: true });
-const command = (...args) => execFileSync(adb, ["-s", serial, ...args], { encoding: "utf8", timeout: 20000 });
+const command = (...args) => {
+  if (args[0] === "shell" && args[1] === "input" && ["tap", "swipe"].includes(args[2])) guardForeground();
+  return execFileSync(adb, ["-s", serial, ...args], { encoding: "utf8", timeout: 20000 });
+};
+function guardForeground() {
+  const activities = execFileSync(adb, ["-s", serial, "shell", "dumpsys", "activity", "activities"], { encoding: "utf8", timeout: 20000 });
+  assert.ok(activities.split("\n").find(line => line.includes("topResumedActivity"))?.includes(app), "Keep the synthetic QA app foreground during this test");
+}
 const bytes = (...args) => execFileSync(adb, ["-s", serial, ...args], { timeout: 20000, maxBuffer: 24 * 1024 * 1024 });
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const media = readFileSync("D:/DevTools/Android/Samples/GenzoPrototype/h264.mp4");
@@ -59,6 +66,7 @@ async function wait(read, accept, label, timeout = 30000) {
   throw new Error(`${label}: ${JSON.stringify(value)}`);
 }
 function dump() {
+  guardForeground();
   try { command("shell", "uiautomator", "dump", "/data/local/tmp/genzo-player-page.xml"); }
   catch (error) { if (!String(error.stdout).includes("UI hierchary dumped to: /data/local/tmp/genzo-player-page.xml")) throw error; }
   return command("shell", "cat", "/data/local/tmp/genzo-player-page.xml");
@@ -76,7 +84,7 @@ function tapPrefix(xml, label) {
   const bounds = /bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/.exec(value);
   command("shell", "input", "tap", String((Number(bounds[1]) + Number(bounds[3])) >> 1), String((Number(bounds[2]) + Number(bounds[4])) >> 1));
 }
-function shot(name) { writeFileSync(`${output}/${name}.png`, bytes("exec-out", "screencap", "-p")); }
+function shot(name) { guardForeground(); writeFileSync(`${output}/${name}.png`, bytes("exec-out", "screencap", "-p")); }
 try {
   command("shell", "input", "keyevent", "KEYCODE_WAKEUP"); command("shell", "wm", "dismiss-keyguard"); await connect();
   original = await invoke("get_android_playback_preferences"); await invoke("set_android_playback_preferences", { settings: { hardwareDecoding: true, hardwareDecoder: "mediacodec-copy", videoRenderer: "gpu", superResolution: 0 } });
@@ -155,7 +163,7 @@ try {
   tapPrefix(xml, "倍速"); xml = dump();
   const boundsOf = value => /bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/.exec(value).slice(1).map(Number);
   const parentBounds = boundsOf(node(xml, "倍速")), childBounds = boundsOf(node(xml, "1.5×"));
-  assert.ok(childBounds[2] <= parentBounds[0] && childBounds[0] >= 0, "submenu opens alongside its parent"); shot("cascading-menu");
+  assert.ok(childBounds[0] === parentBounds[0] && childBounds[2] === parentBounds[2] && childBounds[1] >= parentBounds[3], "choices expand below their parent inside the same menu column"); shot("inline-settings-menu");
   command("shell", "input", "keyevent", "KEYCODE_BACK"); xml = dump(); assert.ok(node(xml, "倍速") && !node(xml, "1.5×"), "back closes only the submenu");
   tapPrefix(xml, "倍速"); tap(dump(), "1.5×"); await wait(() => native("playerState"), state => state.rate === 1.5, "speed menu applies"); result.cases.actualSpeedMenu = true;
   tap(dump(), "更多播放设置"); tapPrefix(dump(), "超分辨率"); tap(dump(), "流畅档");
@@ -168,7 +176,7 @@ try {
   assert.ok(node(dump(), "第01集 当前选集")); result.cases.actualSuperResolutionKeepsEpisodePanel = true;
   tap(dump(), "更多播放设置"); tapPrefix(dump(), "倍速");
   command("shell", "input", "tap", String(physical[0] >> 1), String(Math.round(Math.max(...physical) * .9)));
-  assert.ok(!node(dump(), "开源说明"), "outside tap closes the full cascading menu");
+  assert.ok(!node(dump(), "开源说明"), "outside tap closes the full settings menu");
   await native("playerControl", { action: "superResolution", value: 0 });
   xml = dump(); tap(xml, "第02集");
   await wait(() => native("playerState"), s => s.mediaFileId === files[1].id && s.status === "playing", "actual episode switch"); result.cases.nextEpisodeUsesStableMediaId = true;
@@ -179,10 +187,12 @@ try {
   const rotating = await native("playerState");
   assert.equal(rotating.engineInstance, current.engineInstance, "rotation keeps the existing decoder");
   assert.equal(rotating.status, "paused");
-  tap(dump(), "倍速"); tap(dump(), "1.25×"); await wait(() => native("playerState"), state => state.rate === 1.25, "landscape speed shortcut");
+  tap(dump(), "倍速"); xml = dump();
+  assert.ok(node(xml, "1.25×") && !node(xml, "开源说明") && !node(xml, "音轨"), "landscape speed opens only its own options");
+  tap(xml, "1.25×"); await wait(() => native("playerState"), state => state.rate === 1.25, "landscape speed shortcut");
   assert.equal((await native("playerState")).engineInstance, rotating.engineInstance);
-  tap(dump(), "字幕设置"); assert.ok(node(dump(), "关闭"));
-  command("shell", "input", "keyevent", "KEYCODE_BACK"); command("shell", "input", "keyevent", "KEYCODE_BACK");
+  tap(dump(), "字幕设置"); xml = dump(); assert.ok(node(xml, "关闭") && !node(xml, "选择外挂字幕") && !node(xml, "音轨"), "landscape subtitle opens only track options");
+  command("shell", "input", "keyevent", "KEYCODE_BACK");
   tap(dump(), "选择剧集"); xml = dump(); assert.ok(node(xml, "关闭选集") && node(xml, "第01集")); shot("landscape-episodes");
   tap(xml, "第01集");
   current = await wait(() => native("playerState"), state => [files[0].id, variant.id].includes(state.mediaFileId) && state.status === "playing", "landscape picker uses an actual file of the chosen episode");
@@ -194,6 +204,9 @@ try {
   assert.ok(current.displayWidth > current.displayHeight);await native("playerControl", { action: "pause", sessionId: current.sessionId });
   shot("landscape-controls"); result.cases.landscapeShortcutsAndEpisodeSelection = true;
   tap(dump(), "更多播放设置"); xml = dump();
+  for (const label of ["倍速", "超分辨率", "字幕"]) assert.ok(!node(xml, label), `landscape more menu omits the toolbar setting ${label}`);
+  for (const label of ["音轨", "选择外挂字幕", "字幕偏移", "视频详情", "开源说明"]) assert.ok(node(xml, label), `landscape more menu keeps ${label}`);
+  result.cases.landscapeSettingsDoNotRepeatToolbar = true;
   const scrollNode = [...xml.matchAll(/<node\b[^>]*>/g)].map(match => match[0]).find(value => value.includes('class="android.widget.ScrollView"'));
   assert.ok(scrollNode, "landscape menu is scrollable"); const scrollBounds = /bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/.exec(scrollNode).slice(1).map(Number);
   const scrollHeight = scrollBounds[3] - scrollBounds[1];

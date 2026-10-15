@@ -135,6 +135,7 @@ class PlayerActivity : ComponentActivity() {
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
         uri = intent.getStringExtra("uri").orEmpty()
         ruleOperation = intent.getLongExtra("ruleOperation", 0)
+        sourceKind = intent.getStringExtra("sourceKind") ?: "rule"
         if (ruleOperation > 0 && !RuleResolver.allowed(ruleOperation)) { finish(); return }
         if (uri.isEmpty() && !intent.getBooleanExtra("loading", false)) { finish(); return }
         current = WeakReference(this)
@@ -176,10 +177,10 @@ class PlayerActivity : ComponentActivity() {
         label = TextView(this).apply { setTextColor(Color.WHITE); textSize = 11f; gravity = Gravity.CENTER; minWidth = dp(82) }
         fullScreenButton = icon(R.drawable.ic_genzo_fullscreen, "横/竖屏") { requestedOrientation = if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) ActivityInfo.SCREEN_ORIENTATION_PORTRAIT else ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
         nextButton = icon(R.drawable.ic_genzo_skip_next, "下一集") { page.playNext(); showControls(true) }
-        subtitleButton = icon(R.drawable.ic_genzo_captions, "字幕设置") { showSettingsMenu("字幕") }
+        subtitleButton = icon(R.drawable.ic_genzo_captions, "字幕设置") { showSettingsMenu("字幕", subtitleButton) }
         episodesButton = icon(R.drawable.ic_genzo_list, "选择剧集") { handler.removeCallbacks(hideControls); page.showEpisodes { showControls(true) } }
-        speedButton = shortcut("倍速") { showSettingsMenu("倍速") }
-        superButton = shortcut("超分辨率") { showSettingsMenu("超分辨率") }
+        speedButton = shortcut("倍速") { showSettingsMenu("倍速", speedButton) }
+        superButton = shortcut("超分辨率") { showSettingsMenu("超分辨率", superButton) }
         chrome.addView(transport, FrameLayout.LayoutParams(-1, dp(48), Gravity.BOTTOM))
         viewport.addView(chrome, FrameLayout.LayoutParams(-1, -1))
         viewport.setOnClickListener { showControls(!controlsVisible) }
@@ -291,7 +292,7 @@ class PlayerActivity : ComponentActivity() {
         if (!engineActive || problem != null) return
         runCatching { action(); report() }.onFailure { Toast.makeText(this, "当前视频无法应用此设置", Toast.LENGTH_SHORT).show() }
     }
-    private fun showSettingsMenu(submenu: String? = null) {
+    private fun showSettingsMenu(submenu: String? = null, anchor: View = moreButton) {
         settingsMenu?.dismiss(); showControls(true); handler.removeCallbacks(hideControls)
         val ready = engineActive && problem == null
         val subtitles = ready && attemptRenderer != "mediacodec_embed"
@@ -300,7 +301,7 @@ class PlayerActivity : ComponentActivity() {
                 PlayerMenuItem(label, selected = index == selected) { applyPlayerSetting { action(index) } }
             })
         val rates = listOf(.5f, .75f, 1f, 1.25f, 1.5f, 2f)
-        val items = listOf(
+        val allItems = listOf(
             choices("倍速", rates.map { "${it}×" }, if (ready) rates.indexOf(player.rate) else -1) { setPlaybackRate(rates[it]) },
             choices("超分辨率", listOf("关闭", "流畅档", "画质档"), superResolutionMode) { switchSuperResolution(it) },
             PlayerMenuItem("音轨", ready, children = if (ready) trackChoices(false) else emptyList()),
@@ -313,7 +314,11 @@ class PlayerActivity : ComponentActivity() {
             PlayerMenuItem("视频详情") { showVideoDetails() },
             PlayerMenuItem("开源说明") { showSuperResolutionLicenses() },
         )
-        settingsMenu = PlayerSettingsMenu(moreButton, items) { settingsMenu = null; showControls(true) }.also { it.show(submenu) }
+        val items = if (submenu != null) allItems.firstOrNull { it.label == submenu && it.enabled }?.children.orEmpty()
+            else if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) allItems.filterNot { it.label in listOf("倍速", "超分辨率", "字幕") }
+            else allItems
+        if (items.isEmpty()) return
+        settingsMenu = PlayerSettingsMenu(anchor, items) { settingsMenu = null; showControls(true) }.also { it.show() }
     }
     private fun trackChoices(subtitle: Boolean): List<PlayerMenuItem> {
         val items = if (subtitle) player.spuTracks else player.audioTracks

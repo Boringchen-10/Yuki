@@ -391,7 +391,7 @@ async fn open_player(media_file_id: String, restart: bool, subtitle_id: Option<S
         if let Some(operation) = rule_operation { crate::rule_sources::check_resolve(operation)?; }
         *current = Some(Session { id:session.clone(), initial:initial.clone(), stream:remote_stream });
     }
-    monitor(state.clone(), session.clone(), source_id, subtitle_file);
+    monitor(state.clone(), session.clone(), source_id, subtitle_file, None);
     let opening = snapshot(initial);
     crate::android_events::player(opening.clone());
     Ok(opening)
@@ -400,10 +400,38 @@ async fn open_player(media_file_id: String, restart: bool, subtitle_id: Option<S
 pub(crate) fn is_current(session: &str) -> bool {
     SESSION.lock().ok().is_some_and(|value| value.as_ref().is_some_and(|current| current.id == session))
 }
+pub(crate) fn offline_download_active(id: &str) -> bool {
+    SESSION.lock().ok().is_some_and(|value|value.as_ref().is_some_and(|session|session.initial["offlineDownloadId"]==id))
+}
 
-fn monitor(state: AppState, owned_session: String, owned_source: String, subtitle_file: Option<std::path::PathBuf>) {
+pub(crate) async fn open_cached_locator(state: &AppState, locator: Value, lease: Option<crate::remote_transfer::OfflineCacheLease>) -> AppResult<Value> {
+    let operation=crate::rule_sources::begin_resolve();
+    let uri = locator["uri"].as_str().ok_or_else(||AppError::Validation("离线播放地址不可用".into()))?;
+    let parsed = reqwest::Url::parse(uri).map_err(|_|AppError::Validation("离线播放地址不可用".into()))?;
+    if parsed.scheme()!="http" || parsed.host_str()!=Some("127.0.0.1") || parsed.port().is_none() {
+        return Err(AppError::Validation("离线播放只允许应用内部缓存".into()));
+    }
+    sync_saved(&state.pool).await?;
+    let media = locator["mediaFileId"].as_str().map(str::to_owned);
+    let resume: Option<(i64,bool)> = sqlx::query_as("SELECT position_ms,completed FROM playback_progress WHERE media_file_id=?")
+        .bind(&media).fetch_optional(&state.pool).await?;
+    let resume = resume.filter(|(_,completed)| !completed).map(|(position,_)|position).unwrap_or(0);
+    let id = Uuid::new_v4().to_string();
+    crate::rule_sources::check_resolve(operation)?;
+    android_bridge::call("openPlayer",json!({"uri":uri,"sessionId":id,"mediaFileId":media,"resumeMs":resume,"sourceKind":"offline","ruleOperation":operation})).await?;
+    crate::rule_sources::check_resolve(operation)?;
+    let initial = json!({"sessionId":id,"mediaFileId":media,"status":"opening","positionMs":resume,"offlineDownloadId":locator["downloadId"]});
+    *SESSION.lock().map_err(|_|AppError::System("播放会话不可用".into()))? = Some(Session{id:id.clone(),initial:initial.clone(),stream:None});
+    crate::android_player_page::offline_origin(&id, locator);
+    monitor(state.clone(),id,String::new(),None,lease);
+    let opening = snapshot(initial); crate::android_events::player(opening.clone());
+    Ok(opening)
+}
+
+fn monitor(state: AppState, owned_session: String, owned_source: String, subtitle_file: Option<std::path::PathBuf>, lease: Option<crate::remote_transfer::OfflineCacheLease>) {
     crate::android_player_page::serve(state.clone(), owned_session.clone());
     tauri::async_runtime::spawn(async move {
+        let _lease = lease;
         let pool = state.pool;
         let mut last_saved = tokio::time::Instant::now() - std::time::Duration::from_secs(5);
         let mut last_status = String::new();
@@ -424,14 +452,14 @@ fn monitor(state: AppState, owned_session: String, owned_source: String, subtitl
                     let _ = android_bridge::call("playerSourceFailure", json!({"sessionId":owned_session,"code":code})).await;
                 }
             }
-            if status == "playing" && last_status != "playing" {
+            if !owned_source.is_empty() && status == "playing" && last_status != "playing" {
                 let _ = sqlx::query("UPDATE library_roots SET availability='online' WHERE id=?").bind(&owned_source).execute(&pool).await;
                 let _ = crate::android_sources::notify(&pool, &owned_source).await;
             }
             if status != last_status || (!sample["error"].is_object() && last_saved.elapsed().as_secs() >= 5) {
                 if persist(&pool, &sample).await.is_ok() { last_saved = tokio::time::Instant::now(); last_status = status.into(); }
             }
-            if sample["error"].is_object() {
+            if !owned_source.is_empty() && sample["error"].is_object() {
                 let code = sample["error"]["code"].as_str().unwrap_or("");
                 if code != last_error && ["credential_invalid","permission_denied","source_offline","network_timeout","range_unsupported"].contains(&code) {
                     let _ = crate::android_sources::set_failure(&pool, &owned_source, &sample["error"]).await;
@@ -459,7 +487,7 @@ pub(crate) async fn preview_stream(state: &AppState, stream: crate::remote_trans
         crate::rule_sources::check_resolve(operation)?;
         *current=Some(Session{id:session.clone(),initial:initial.clone(),stream:Some(stream)});
     }
-    monitor(state.clone(),session,source_id,None);
+    monitor(state.clone(),session,source_id,None,None);
     let value=snapshot(initial);crate::android_events::player(value.clone());Ok(value)
 }
 

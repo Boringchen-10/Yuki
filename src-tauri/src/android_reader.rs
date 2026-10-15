@@ -19,6 +19,7 @@ struct Session {
     book: String,
     group: String,
     initial: String,
+    offline_only: bool,
     base: String,
     chapters: Mutex<HashMap<String, Arc<Chapter>>>,
     comment_avatars: Mutex<HashMap<String, String>>,
@@ -91,6 +92,7 @@ impl Session {
             } else { Vec::new() };
             Chapter { title, archive: Some(archive), pages, sections: Vec::new(), inline_images:HashMap::new() }
         } else {
+            if self.offline_only { return Err(invalid("此章卷没有完整离线缓存，请先下载后再阅读")); }
             let content = serde_json::to_value(book_content::online_content(&self.state.pool, &self.kind, &self.book, entry, &self.group).await?)?;
             Chapter { title: content["title"].as_str().unwrap_or(entry).into(), archive: None,
                 pages: content["pages"].as_array().unwrap().iter().map(|value| value.as_str().unwrap().to_owned()).collect(),
@@ -161,20 +163,20 @@ impl Session {
 }
 
 #[tauri::command]
-pub async fn open_internal_reader(kind: String, path_word: String, entry_id: String, group: String, state: tauri::State<'_, AppState>) -> AppResult<Value> {
+pub async fn open_internal_reader(kind: String, path_word: String, entry_id: String, group: String, offline_only: Option<bool>, state: tauri::State<'_, AppState>) -> AppResult<Value> {
     if !cfg!(target_os = "android") { return Err(invalid("原生阅读器仅支持 Android")); }
     if !matches!(kind.as_str(), "comic" | "novel") || !valid_id(&path_word) || !valid_id(&entry_id)
         || (!group.is_empty() && !valid_id(&group)) || (kind == "novel" && !group.is_empty()) { return Err(invalid("阅读来源标识无效")); }
-    start_reader(state.inner().clone(),kind,path_word,entry_id,group,HashMap::new()).await
+    start_reader(state.inner().clone(),kind,path_word,entry_id,group,HashMap::new(),offline_only.unwrap_or(false)).await
 }
-async fn start_reader(state: AppState, kind: String, path_word: String, entry_id: String, group: String, chapters: HashMap<String, Arc<Chapter>>) -> AppResult<Value> {
+async fn start_reader(state: AppState, kind: String, path_word: String, entry_id: String, group: String, chapters: HashMap<String, Arc<Chapter>>, offline_only: bool) -> AppResult<Value> {
     let id = uuid::Uuid::new_v4().to_string();
     let closed = Arc::new(Notify::new());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let token = uuid::Uuid::new_v4().to_string();
     let base = format!("http://{}/{token}/", listener.local_addr()?);
     let session = Arc::new(Session { state, kind:kind.clone(), book:path_word,
-        group, initial:entry_id.clone(), base:base.clone(), chapters:Mutex::new(chapters), comment_avatars:Mutex::new(HashMap::new()), loading:Mutex::new(()), closed:closed.clone() });
+        group, initial:entry_id.clone(), offline_only, base:base.clone(), chapters:Mutex::new(chapters), comment_avatars:Mutex::new(HashMap::new()), loading:Mutex::new(()), closed:closed.clone() });
     let active = ACTIVE.get_or_init(|| Mutex::new(None));
     if let Some((_, previous)) = active.lock().await.replace((id.clone(), closed.clone())) { previous.notify_one(); }
     tauri::async_runtime::spawn(async move {
@@ -219,7 +221,7 @@ pub async fn open_reader_online_fixture(state: tauri::State<'_, AppState>) -> Ap
             sections:vec![json!({"title":"第一章：合成正文","text":rows[..300].join("\n")}),json!({"title":"独立合成插图","imageUrl":"qa-inline-image"}),json!({"title":"第二章：继续阅读","text":rows[300..].join("\n")})],
             inline_images:HashMap::from([(1,image)])})
     }).await.map_err(|error| AppError::System(error.to_string()))??;
-    start_reader(state.inner().clone(),"novel".into(),"reader-fixture-novel".into(),"one".into(),String::new(),HashMap::from([("one".into(),Arc::new(chapter))])).await
+    start_reader(state.inner().clone(),"novel".into(),"reader-fixture-novel".into(),"one".into(),String::new(),HashMap::from([("one".into(),Arc::new(chapter))]),false).await
 }
 
 async fn route(session: &Session, method: &str, path: &str, body: &[u8]) -> AppResult<(Vec<u8>, &'static str)> {
@@ -234,20 +236,21 @@ async fn route(session: &Session, method: &str, path: &str, body: &[u8]) -> AppR
     let result = match segments.as_slice() {
         ["entries", offset] if method == "GET" => {
             let offset = offset.parse::<u32>().map_err(|_| invalid("目录页无效"))?;
-            let offline = session.chapter(&session.initial).await?.archive.is_some();
+            let offline = session.offline_only || session.chapter(&session.initial).await?.archive.is_some();
             let page = if offline { book_content::reader_cached_directory(&session.state.pool,&session.kind,&session.book,&session.group,offset).await? }
                 else { book_content::directory(&session.state.pool, &session.kind, &session.book, &session.group, offset, false).await? };
             serde_json::to_value(page)?
         }
         ["bookmarks"] if method == "GET" => session.bookmarks().await?,
         ["history"] if method == "GET" => {
-            let rows: Vec<(String,String,String)> = sqlx::query_as("SELECT entry_id,location_json,updated_at FROM android_reading_progress WHERE kind=? AND book_id=? AND group_id=? ORDER BY updated_at DESC LIMIT 100")
+            let rows: Vec<(String,String,String)> = sqlx::query_as("SELECT p.entry_id,p.location_json,p.updated_at FROM android_reading_progress p LEFT JOIN android_reading_history h ON h.kind=p.kind AND h.book_id=p.book_id AND h.group_id=p.group_id AND h.entry_id=p.entry_id WHERE p.kind=? AND p.book_id=? AND p.group_id=? AND COALESCE(h.hidden,0)=0 ORDER BY p.updated_at DESC LIMIT 100")
                 .bind(&session.kind).bind(&session.book).bind(&session.group).fetch_all(&session.state.pool).await?;
             Value::Array(rows.into_iter().map(|(entry,location,time)| json!({"entryId":entry,"location":serde_json::from_str::<Value>(&location).unwrap_or(Value::Null),"updatedAt":time})).collect())
         }
         ["close"] if method == "POST" => { session.closed.notify_one(); json!({}) }
         ["chapter", entry] if method == "GET" => session.manifest(entry).await?,
         ["chapter", entry, "comments", offset] if method == "GET" => {
+            if session.offline_only { return Err(invalid("离线阅读不连接评论来源")); }
             if session.kind != "comic" { return Err(invalid("本话评论仅支持漫画来源")); }
             let offset = offset.parse::<u32>().map_err(|_| invalid("评论页码无效"))?;
             let page=crate::comic_explore::chapter_comments_for(
@@ -259,6 +262,7 @@ async fn route(session: &Session, method: &str, path: &str, body: &[u8]) -> AppR
             serde_json::to_value(page)?
         }
         ["chapter", entry, "comment-avatar", id] if method=="GET" => {
+            if session.offline_only { return Err(invalid("离线阅读不连接评论来源")); }
             if session.kind != "comic" || entry.len() != 36 || uuid::Uuid::parse_str(entry).is_err()
                 || id.parse::<u64>().ok().filter(|id| *id > 0).is_none() {
                 return Err(invalid("本话评论头像标识无效"));
@@ -295,8 +299,9 @@ async fn route(session: &Session, method: &str, path: &str, body: &[u8]) -> AppR
             let now = chrono::Utc::now().to_rfc3339();
             if *action == "progress" {
                 let location = session.location(entry, &value).await?;
-                sqlx::query("INSERT INTO android_reading_progress(kind,book_id,group_id,entry_id,location_json,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(kind,book_id,group_id,entry_id) DO UPDATE SET location_json=excluded.location_json,updated_at=excluded.updated_at")
-                    .bind(&session.kind).bind(&session.book).bind(&session.group).bind(entry).bind(location).bind(&now).execute(&session.state.pool).await?;
+                let chapter = session.chapter(entry).await?;
+                crate::reading_history::save_progress(&session.state.pool, &session.kind, &session.book, &session.group, entry,
+                    &location, &chapter.title, (session.kind == "comic").then_some(chapter.pages.len() as i64), &now).await?;
                 crate::android_events::reading(json!({"kind":session.kind,"pathWord":session.book,"entryId":entry,"group":session.group,"updatedAt":now}));
             } else if *action == "bookmark" {
                 let location = session.location(entry, &value["location"]).await?;
@@ -370,12 +375,55 @@ mod tests {
         let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
         crate::migration_compat::run(&pool).await.unwrap();
         let state = AppState { pool, database_path:root.path().join("db"),data_directory:root.path().into(),cover_cache_path:root.path().join("covers"),thumbnail_cache_path:root.path().join("thumbs") };
-        let session = Session { state,kind:kind.into(),book:"book".into(),group:"default".into(),initial:"one".into(),base:"http://127.0.0.1:1234/test/".into(),
+        let session = Session { state,kind:kind.into(),book:"book".into(),group:"default".into(),initial:"one".into(),offline_only:false,base:"http://127.0.0.1:1234/test/".into(),
             chapters:Mutex::new(HashMap::from([("one".into(),Arc::new(Chapter {title:"第一章".into(),archive:None,pages:vec!["one".into(),"two".into()],sections:vec![json!({"title":"正文","text":"<正文>\n第二段"})],inline_images:HashMap::new()}))])),comment_avatars:Mutex::new(HashMap::new()),loading:Mutex::new(()),closed:Arc::new(Notify::new()) };
         (session, root)
     }
 
     const COMMENT_CHAPTER: &str = "52615840-10a4-11e9-b68d-00163e0ca5bd";
+
+    #[tokio::test]
+    async fn offline_only_missing_chapter_directory_and_comments_never_connect_or_write_reading_progress() {
+        for kind in ["comic","novel"] {
+            let (mut session,_root) = fixture(kind).await;
+            session.offline_only = true; session.chapters.lock().await.clear();
+            let proxy = comment_proxy(&session).await;
+            for path in ["chapter/one".into(),"entries/0".into(),format!("chapter/{COMMENT_CHAPTER}/comments/0"),format!("chapter/{COMMENT_CHAPTER}/comment-avatar/1")] {
+                let result = tokio::time::timeout(Duration::from_secs(1),route(&session,"GET",&path,b"")).await.expect("offline requests must not wait for a source");
+                assert!(matches!(result,Err(AppError::Validation(_))),"{path}: {result:?}");
+            }
+            assert!(tokio::time::timeout(Duration::from_millis(50),proxy.accept()).await.is_err());
+            assert!(session.chapters.lock().await.is_empty());
+            assert_eq!(sqlx::query_scalar::<_,i64>("SELECT COUNT(*) FROM android_reading_progress").fetch_one(&session.state.pool).await.unwrap(),0);
+            assert_eq!(sqlx::query_scalar::<_,i64>("SELECT COUNT(*) FROM metadata_cache").fetch_one(&session.state.pool).await.unwrap(),0);
+        }
+    }
+    #[tokio::test]
+    async fn offline_only_reads_verified_archive_and_deleted_pages_do_not_fall_back_to_network() {
+        use sha2::{Digest,Sha256};
+        use std::io::Write;
+        let (mut session,root) = fixture("comic").await;
+        session.offline_only = true; session.chapters.lock().await.clear();
+        let proxy = comment_proxy(&session).await;
+        let hash = format!("{:x}",Sha256::digest(b"comic\nbook\none"));
+        let directory = root.path().join("reading-cache/v1").join(hash).join("complete-test");
+        std::fs::create_dir_all(&directory).unwrap();
+        let mut image = std::io::Cursor::new(vec![]); image::DynamicImage::new_rgb8(2,2).write_to(&mut image,image::ImageFormat::Png).unwrap();
+        let path = directory.join("chapter.cbz");
+        let mut archive = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+        archive.start_file("0001.png",zip::write::SimpleFileOptions::default()).unwrap(); archive.write_all(image.get_ref()).unwrap(); archive.finish().unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let manifest = json!({"version":1,"kind":"comic","bookId":"book","entryId":"one","title":"离线章节","openFile":"chapter.cbz",
+            "files":[{"name":"chapter.cbz","sha256":format!("{:x}",Sha256::digest(&bytes)),"bytes":bytes.len()}],"cachedAt":"2026-10-14T08:00:00Z"});
+        std::fs::write(directory.join("manifest.json"),serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let manifest = session.manifest("one").await.unwrap(); assert_eq!(manifest["offline"],true); assert_eq!(manifest["pages"].as_array().unwrap().len(),1);
+        assert_eq!(route(&session,"GET","chapter/one/page/0",b"").await.unwrap().0,image.into_inner());
+        route(&session,"POST","chapter/one/progress",b"{\"pageIndex\":0,\"offset\":0.25}").await.unwrap();
+        assert_eq!(crate::reading_history::list_in_pool(&session.state.pool).await.unwrap().len(),1);
+        std::fs::remove_file(path).unwrap();
+        assert!(route(&session,"GET","chapter/one/page/0",b"").await.is_err());
+        assert!(tokio::time::timeout(Duration::from_millis(50),proxy.accept()).await.is_err());
+    }
 
     async fn comment_proxy(session: &Session) -> tokio::net::TcpListener {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -512,8 +560,14 @@ mod tests {
     #[tokio::test]
     async fn comic_progress_roundtrips_and_rejects_invalid_page_or_offset() {
         let (session, _root) = fixture("comic").await;
+        session.manifest("one").await.unwrap();
+        assert!(crate::reading_history::list_in_pool(&session.state.pool).await.unwrap().is_empty());
         route(&session,"POST","chapter/one/progress",br#"{"pageIndex":1,"offset":0.4}"#).await.unwrap();
         assert_eq!(session.manifest("one").await.unwrap()["location"],json!({"pageIndex":1,"offset":0.4}));
+        let history = serde_json::to_value(crate::reading_history::list_in_pool(&session.state.pool).await.unwrap()).unwrap();
+        assert_eq!(history[0]["entryTitle"], "第一章");
+        assert_eq!(history[0]["pageCount"], 2);
+        assert_eq!(history[0]["location"], json!({"pageIndex":1,"offset":0.4}));
         for invalid in [json!({"pageIndex":2}),json!({"pageIndex":0,"offset":-1}),json!({"pageIndex":0,"offset":1.1})] {
             assert!(session.location("one",&invalid).await.is_err());
         }
@@ -526,6 +580,33 @@ mod tests {
             assert!(session.location("one",&json!({"href":href})).await.is_err());
         }
         assert!(session.location("one",&json!({"href":"OEBPS/chapter-0.xhtml","locations":{"progression":2}})).await.is_err());
+    }
+    #[tokio::test]
+    async fn novel_progress_records_the_real_locator_without_comic_page_counts() {
+        let (session, _root) = fixture("novel").await;
+        let location = json!({"href":"OEBPS/chapter-0.xhtml","locations":{"progression":0.4,"totalProgression":0.2}});
+        route(&session, "POST", "chapter/one/progress", &serde_json::to_vec(&location).unwrap()).await.unwrap();
+        let history = serde_json::to_value(crate::reading_history::list_in_pool(&session.state.pool).await.unwrap()).unwrap();
+        assert_eq!(history[0]["kind"], "novel");
+        assert_eq!(history[0]["entryTitle"], "第一章");
+        assert_eq!(history[0]["pageCount"], Value::Null);
+        assert_eq!(history[0]["location"], location);
+        assert!(route(&session, "POST", "chapter/one/progress", br#"{"href":"../outside.xhtml"}"#).await.is_err());
+        assert_eq!(session.manifest("one").await.unwrap()["location"], location);
+    }
+    #[tokio::test]
+    async fn reader_history_hides_removed_entries_but_keeps_resume_location_and_bookmarks() {
+        let (session, _root) = fixture("comic").await;
+        route(&session, "POST", "chapter/one/progress", br#"{"pageIndex":1,"offset":0.4}"#).await.unwrap();
+        route(&session, "POST", "chapter/one/bookmark", br#"{"location":{"pageIndex":1},"label":"saved"}"#).await.unwrap();
+        crate::reading_history::remove_in_pool(&session.state.pool, "comic", "book", "default", "one").await.unwrap();
+        let (body, _) = route(&session, "GET", "history", b"").await.unwrap();
+        assert_eq!(serde_json::from_slice::<Value>(&body).unwrap(), json!([]));
+        assert_eq!(session.manifest("one").await.unwrap()["location"], json!({"pageIndex":1,"offset":0.4}));
+        assert_eq!(session.bookmarks().await.unwrap().as_array().unwrap().len(), 1);
+        route(&session, "POST", "chapter/one/progress", br#"{"pageIndex":1,"offset":0.5}"#).await.unwrap();
+        let (body, _) = route(&session, "GET", "history", b"").await.unwrap();
+        assert_eq!(serde_json::from_slice::<Value>(&body).unwrap().as_array().unwrap().len(), 1);
     }
     #[tokio::test]
     async fn bookmarks_are_deduplicated_and_isolated_by_group() {

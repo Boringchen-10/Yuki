@@ -5,7 +5,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{collections::{HashMap, HashSet}, fs, io::{Read, Write}, path::{Path, PathBuf}, sync::{Arc, OnceLock}, time::Duration};
 use tauri::State;
-use tokio::sync::{Mutex, Semaphore};
+use tokio::sync::{watch, Mutex, Semaphore};
 use futures_util::{stream, StreamExt};
 use zip::{write::SimpleFileOptions, ZipWriter};
 
@@ -27,6 +27,10 @@ pub struct SourcePage { pub entries: Vec<SourceEntry>, pub total: u64, pub offse
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CachedContent { pub entry_id: String, pub title: String, pub format: String, pub bytes: u64, pub cached_at: String }
+#[derive(Clone, Default)]
+pub(crate) struct CacheProgress { pub bytes_downloaded: u64, pub completed_units: u64, pub total_units: Option<u64> }
+pub(crate) struct CacheControl { pub cancel: watch::Receiver<bool>, pub progress: watch::Sender<CacheProgress> }
+pub(crate) struct CachedDownload { pub kind: String, pub book_id: String, pub content: CachedContent }
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CachedFile { name: String, sha256: String, bytes: u64 }
@@ -120,6 +124,26 @@ fn key(root: &Path, kind: &str, book: &str, entry: &str) -> PathBuf {
     let hash = format!("{:x}", Sha256::digest(format!("{kind}\n{book}\n{entry}")));
     root.join("reading-cache").join("v1").join(hash)
 }
+fn checked_cache_root(root: &Path) -> AppResult<PathBuf> {
+    let parent = root.join("reading-cache");
+    let directory = parent.join("v1");
+    for path in [&parent, &directory] {
+        if let Ok(metadata) = fs::symlink_metadata(path) {
+            if !metadata.is_dir() || metadata.file_type().is_symlink()
+                || !fs::canonicalize(path)?.starts_with(fs::canonicalize(root)?) { return Err(invalid("阅读缓存目录无效，未修改文件")); }
+        }
+    }
+    Ok(directory)
+}
+fn checked_target(root: &Path, kind: &str, book: &str, entry: &str) -> AppResult<PathBuf> {
+    let directory = checked_cache_root(root)?;
+    let target = key(root, kind, book, entry);
+    if let Ok(metadata) = fs::symlink_metadata(&target) {
+        if !metadata.is_dir() || metadata.file_type().is_symlink()
+            || fs::canonicalize(&target)?.parent() != Some(fs::canonicalize(directory)?.as_path()) { return Err(invalid("阅读缓存目录无效，未修改文件")); }
+    }
+    Ok(target)
+}
 #[cfg(test)]
 fn hash(bytes: &[u8]) -> String { format!("{:x}", Sha256::digest(bytes)) }
 fn regular(path: &Path) -> bool { fs::symlink_metadata(path).is_ok_and(|v| v.file_type().is_file()) }
@@ -154,8 +178,37 @@ fn summary(manifest: &Manifest) -> CachedContent {
 /// Only verified, immutable app-generated archives are exposed to native readers.
 pub(crate) fn reader_archive(root: &Path, kind: &str, book: &str, entry: &str) -> AppResult<Option<(String, PathBuf)>> {
     check(kind, book, Some(entry))?;
-    Ok(load(&key(root, kind, book, entry), kind, book, entry, true)
+    Ok(load(&checked_target(root, kind, book, entry)?, kind, book, entry, true)
         .map(|(manifest, directory)| (manifest.title, directory.join(manifest.open_file))))
+}
+pub(crate) fn cached_downloads(root: &Path) -> AppResult<Vec<CachedDownload>> {
+    let directory = checked_cache_root(root)?;
+    if !directory.exists() { return Ok(vec![]); }
+    if fs::symlink_metadata(&directory)?.file_type().is_symlink()
+        || fs::symlink_metadata(directory.parent().unwrap())?.file_type().is_symlink()
+        || !fs::canonicalize(&directory)?.starts_with(fs::canonicalize(root)?) { return Err(invalid("阅读缓存目录无效")); }
+    let mut items = vec![];
+    for entry in fs::read_dir(&directory)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() { continue; }
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.len() != 64 || !name.bytes().all(|byte| byte.is_ascii_hexdigit()) { continue; }
+        for version in fs::read_dir(entry.path())? {
+            let version = version?;
+            if !version.file_type()?.is_dir() || !version.file_name().to_string_lossy().starts_with("complete-") { continue; }
+            let path = version.path().join("manifest.json");
+            if !regular(&path) || fs::metadata(&path)?.len() > 128 * 1024 { continue; }
+            let Some(manifest) = fs::read(&path).ok().and_then(|data| serde_json::from_slice::<Manifest>(&data).ok()) else { continue };
+            if check(&manifest.kind, &manifest.book_id, Some(&manifest.entry_id)).is_err()
+                || key(root, &manifest.kind, &manifest.book_id, &manifest.entry_id) != entry.path() { continue; }
+            if let Some((verified, _)) = load(&entry.path(), &manifest.kind, &manifest.book_id, &manifest.entry_id, true) {
+                items.push(CachedDownload { kind: verified.kind.clone(), book_id: verified.book_id.clone(), content: summary(&verified) });
+                break;
+            }
+        }
+    }
+    Ok(items)
 }
 fn publish(target: &Path, pending: &Path, manifest: &Manifest) -> AppResult<()> {
     let data = serde_json::to_vec(manifest)?;
@@ -172,7 +225,13 @@ pub async fn list_cached_book_content(kind: String, path_word: String, entry_ids
     if entry_ids.len() > 10_000 { return Err(invalid("缓存查询数量过多")); }
     for id in &entry_ids { check(&kind, &path_word, Some(id))?; }
     let root = state.data_directory.clone();
-    tauri::async_runtime::spawn_blocking(move || Ok(entry_ids.iter().filter_map(|id| load(&key(&root, &kind, &path_word, id), &kind, &path_word, id, false).map(|(v, _)| summary(&v))).collect()))
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut items = vec![];
+        for id in entry_ids {
+            if let Some((manifest, _)) = load(&checked_target(&root, &kind, &path_word, &id)?, &kind, &path_word, &id, false) { items.push(summary(&manifest)); }
+        }
+        Ok(items)
+    })
         .await.map_err(|_| invalid("缓存查询失败"))?
 }
 fn content_url(value: &str) -> AppResult<reqwest::Url> {
@@ -451,31 +510,58 @@ pub(crate) async fn reader_image(pool:&sqlx::SqlitePool,url:&str,timeout:u64)->A
 }
 #[tauri::command]
 pub async fn cache_book_source_content(kind: String, path_word: String, entry_id: String, group: String, refresh: bool, state: State<'_, AppState>) -> AppResult<CachedContent> {
-    check(&kind, &path_word, Some(&entry_id))?;
+    cache_content(&state, &kind, &path_word, &entry_id, &group, refresh, None).await
+}
+async fn cancellation(cancel: Option<watch::Receiver<bool>>) {
+    let Some(mut cancel) = cancel else { return std::future::pending().await };
+    while !*cancel.borrow_and_update() { if cancel.changed().await.is_err() { break; } }
+}
+async fn cancellable<T>(cancel: Option<watch::Receiver<bool>>, future: impl std::future::Future<Output = AppResult<T>>) -> AppResult<T> {
+    tokio::select! { biased;
+        _ = cancellation(cancel) => Err(invalid("下载已暂停")),
+        result = future => result,
+    }
+}
+pub(crate) async fn cache_content(state: &AppState, kind: &str, path_word: &str, entry_id: &str, group: &str, refresh: bool, control: Option<CacheControl>) -> AppResult<CachedContent> {
+    check(kind, path_word, Some(entry_id))?;
+    let cancel = control.as_ref().map(|control| control.cancel.clone());
     let started = chrono::Utc::now();
-    let target = key(&state.data_directory, &kind, &path_word, &entry_id);
-    let mutex = lock(&target).await; let _guard = mutex.lock().await;
-    if let Some((manifest, _)) = load(&target, &kind, &path_word, &entry_id, true) {
+    let target = checked_target(&state.data_directory, kind, path_word, entry_id)?;
+    let mutex = lock(&target).await; let _guard = cancellable(cancel.clone(), async { Ok(mutex.lock().await) }).await?;
+    if let Some((manifest, _)) = load(&target, kind, path_word, entry_id, true) {
         if !refresh || chrono::DateTime::parse_from_rfc3339(&manifest.cached_at).is_ok_and(|time| time >= started) { return Ok(summary(&manifest)); }
     }
-    let _slot = DOWNLOADS.acquire().await.map_err(|_| invalid("阅读获取队列不可用"))?;
+    let _slot = cancellable(cancel.clone(), async { DOWNLOADS.acquire().await.map_err(|_| invalid("阅读获取队列不可用")) }).await?;
     // Fresh access information for every explicit fetch. Expired signed URLs are never replayed.
-    let value = source_value(&state.pool, &kind, &path_word, &entry_id, &group).await?;
+    let value = cancellable(cancel.clone(), source_value(&state.pool, kind, path_word, entry_id, group)).await?;
     let config = crate::reading_network::load(&state.pool).await?;
     let client = config.client(Duration::from_secs(60))?;
     let concurrency = if kind == "comic" { config.comic_concurrency } else { config.novel_concurrency };
+    let progress = control.map(|control| control.progress);
+    if let Some(progress) = &progress {
+        let total = if kind == "comic" { value["chapter"]["contents"].as_array().map(|pages| pages.len() as u64) }
+            else { value["volume"]["contents"].as_array().map(|items| 1 + items.iter().filter(|item| item["content_type"].as_u64() == Some(2)).count() as u64) };
+        progress.send_modify(|value| *value = CacheProgress { total_units: total, ..Default::default() });
+    }
     fs::create_dir_all(&target)?;
     let pending = target.join(format!("pending-{}", uuid::Uuid::new_v4())); fs::create_dir(&pending)?;
-    let result = async {
-        let (title, open_file, names) = generate(&kind, &path_word, &entry_id, &value, &pending, concurrency, |url, limit| bytes(&client, url, limit)).await?;
+    let result = cancellable(cancel, async {
+        let (title, open_file, names) = generate(kind, path_word, entry_id, &value, &pending, concurrency, |url, limit| {
+            let progress = progress.clone(); let client = &client;
+            async move {
+                let data = bytes(client, url, limit).await?;
+                if let Some(progress) = progress { progress.send_modify(|value| { value.bytes_downloaded = value.bytes_downloaded.saturating_add(data.len() as u64); value.completed_units += 1; }); }
+                Ok(data)
+            }
+        }).await?;
         let files = names.into_iter().map(|name| {
             let path = pending.join(&name);
             Ok(CachedFile { bytes: fs::metadata(&path)?.len(), sha256: file_hash(&path)?, name })
         }).collect::<AppResult<Vec<_>>>()?;
-        let manifest = Manifest { version: 1, kind, book_id: path_word, entry_id, title, open_file, files, cached_at: chrono::Utc::now().to_rfc3339() };
+        let manifest = Manifest { version: 1, kind: kind.into(), book_id: path_word.into(), entry_id: entry_id.into(), title, open_file, files, cached_at: chrono::Utc::now().to_rfc3339() };
         publish(&target, &pending, &manifest)?;
         Ok(summary(&manifest))
-    }.await;
+    }).await;
     // Only this request's generated staging directory is removed. Interrupted staging is never opened.
     if pending.exists() && fs::canonicalize(&pending).is_ok_and(|p| fs::canonicalize(&target).is_ok_and(|t| p.parent() == Some(t.as_path()))) { let _ = fs::remove_dir_all(&pending); }
     result
@@ -484,7 +570,7 @@ pub async fn cache_book_source_content(kind: String, path_word: String, entry_id
 #[tauri::command]
 pub async fn open_cached_book_content(kind: String, path_word: String, entry_id: String, folder: bool, state: State<'_, AppState>) -> AppResult<()> {
     check(&kind, &path_word, Some(&entry_id))?;
-    let target = key(&state.data_directory, &kind, &path_word, &entry_id);
+    let target = checked_target(&state.data_directory, &kind, &path_word, &entry_id)?;
     let mutex = lock(&target).await; let _guard = mutex.lock().await;
     let (manifest, directory) = load(&target, &kind, &path_word, &entry_id, true).ok_or_else(|| invalid("完整缓存不存在或已损坏，请重新获取"))?;
     let selected: Option<(String, String, Option<String>)> = if folder { None } else {
@@ -503,9 +589,12 @@ pub async fn open_cached_book_content(kind: String, path_word: String, entry_id:
 
 #[tauri::command]
 pub async fn clear_cached_book_content(kind: String, path_word: String, entry_id: String, state: State<'_, AppState>) -> AppResult<()> {
-    check(&kind, &path_word, Some(&entry_id))?;
-    let root = state.data_directory.join("reading-cache").join("v1");
-    let target = key(&state.data_directory, &kind, &path_word, &entry_id);
+    clear_content(&state, &kind, &path_word, &entry_id).await
+}
+pub(crate) async fn clear_content(state: &AppState, kind: &str, path_word: &str, entry_id: &str) -> AppResult<()> {
+    check(kind, path_word, Some(entry_id))?;
+    let root = checked_cache_root(&state.data_directory)?;
+    let target = checked_target(&state.data_directory, kind, path_word, entry_id)?;
     let mutex = lock(&target).await; let _guard = mutex.lock().await;
     if target.exists() {
         let resolved = fs::canonicalize(&target)?; let parent = fs::canonicalize(root)?;
@@ -519,6 +608,48 @@ pub async fn clear_cached_book_content(kind: String, path_word: String, entry_id
 mod tests {
     use super::*;
     use serde_json::json;
+    async fn cache_test_state(directory: &Path) -> AppState {
+        AppState { pool: crate::db::test_pool().await.unwrap(), database_path: directory.join("test.db"), data_directory: directory.into(),
+            cover_cache_path: directory.join("covers"), thumbnail_cache_path: directory.join("thumbnails") }
+    }
+    #[tokio::test]
+    async fn cancelled_cache_request_does_not_fetch_source_create_staging_or_change_existing_archive() {
+        let directory = tempfile::tempdir().unwrap(); let state = cache_test_state(directory.path()).await;
+        let target = key(directory.path(),"comic","book","one");
+        let pending = target.join("pending-existing"); fs::create_dir_all(&pending).unwrap();
+        fs::write(pending.join("marker"),b"another request").unwrap();
+        let (cancel,receiver) = watch::channel(true); let (progress,_) = watch::channel(CacheProgress::default());
+        let result = cache_content(&state,"comic","book","one","default",false,Some(CacheControl {cancel:receiver,progress})).await;
+        assert!(result.is_err()); drop(cancel);
+        assert_eq!(fs::read(pending.join("marker")).unwrap(),b"another request");
+        assert_eq!(fs::read_dir(&target).unwrap().count(),1);
+        assert!(reader_archive(directory.path(),"comic","book","one").unwrap().is_none());
+        assert_eq!(sqlx::query_scalar::<_,i64>("SELECT COUNT(*) FROM metadata_cache").fetch_one(&state.pool).await.unwrap(),0);
+    }
+    #[tokio::test]
+    async fn cancellation_drops_inflight_network_future_before_it_can_publish() {
+        let (cancel,receiver) = watch::channel(false); let started = Arc::new(tokio::sync::Notify::new()); let signal = started.clone();
+        let result = tokio::spawn(async move { cancellable(Some(receiver),async move {
+            signal.notify_one(); std::future::pending::<AppResult<()>>().await
+        }).await });
+        started.notified().await; cancel.send_replace(true);
+        assert!(tokio::time::timeout(Duration::from_secs(1),result).await.unwrap().unwrap().is_err());
+    }
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn reading_cache_junction_never_cleans_or_reads_an_external_directory() {
+        let directory = tempfile::tempdir().unwrap(); let outside = tempfile::tempdir().unwrap();
+        let state = cache_test_state(directory.path()).await;
+        let link = directory.path().join("reading-cache");
+        fs::write(outside.path().join("original.cbz"),b"original media").unwrap();
+        let output = std::process::Command::new("cmd.exe").args(["/D","/C","mklink","/J"]).arg(&link).arg(outside.path()).output().unwrap();
+        assert!(output.status.success(),"{}",String::from_utf8_lossy(&output.stderr));
+        assert!(clear_content(&state,"comic","book","one").await.is_err());
+        assert!(cached_downloads(directory.path()).is_err());
+        assert!(reader_archive(directory.path(),"comic","book","one").is_err());
+        assert_eq!(fs::read(outside.path().join("original.cbz")).unwrap(),b"original media");
+        fs::remove_dir(link).unwrap();
+    }
     #[tokio::test]
     #[ignore = "explicit live anonymous content check; temporary memory only, no user library"]
     async fn live_anonymous_content_bytes() {

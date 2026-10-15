@@ -30,16 +30,24 @@ object RuleResolver {
         if (newestOperation <= cancelledThrough) cancelCurrent?.invoke()
     } }
     fun resolve(activity: Activity, url: String, legacy: Boolean, operation: Long, done: (JSONObject) -> Unit) {
+        render(activity, url, legacy, operation, done)
+    }
+    fun resolveDownload(activity: Activity, url: String, legacy: Boolean, done: (JSONObject) -> Unit) {
+        render(activity, url, legacy, null, done)
+    }
+    private fun render(activity: Activity, url: String, legacy: Boolean, operation: Long?, done: (JSONObject) -> Unit) {
         main.post {
-            if (!claim(operation)) { done(JSONObject().put("error", "播放解析已取消")); return@post }
-            cancelCurrent?.invoke()
+            if (operation != null && !claim(operation)) { done(JSONObject().put("error", "播放解析已取消")); return@post }
+            if (operation != null) cancelCurrent?.invoke()
             val view = WebView(activity)
             var finished = false
-            val timeout = Runnable { cancelCurrent?.invoke() }
+            var cancel: (() -> Unit)? = null
+            val timeout = Runnable { cancel?.invoke() }
             fun finish(value: JSONObject) {
                 val cleanup = Runnable {
                     if (!finished) {
-                        finished = true; main.removeCallbacks(timeout); cancelCurrent = null
+                        finished = true; main.removeCallbacks(timeout)
+                        if (operation != null && cancelCurrent === cancel) cancelCurrent = null
                         view.stopLoading(); view.removeJavascriptInterface("GenzoRuleVideo"); view.destroy(); done(value)
                     }
                 }
@@ -103,7 +111,8 @@ object RuleResolver {
             view.setDownloadListener { address, _, _, mime, _ ->
                 if (mime?.startsWith("video/") == true || mime?.contains("mpegurl") == true) report(address)
             }
-            cancelCurrent = { finish(JSONObject().put("error", "解析已取消或超时，请重试或切换线路")) }
+            cancel = { finish(JSONObject().put("error", "解析已取消或超时，请重试或切换线路")) }
+            if (operation != null) cancelCurrent = cancel
             main.postDelayed(timeout, 25000)
             view.loadUrl(url)
         }

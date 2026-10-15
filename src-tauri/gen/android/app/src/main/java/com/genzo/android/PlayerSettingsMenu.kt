@@ -19,13 +19,15 @@ import android.widget.TextView
 internal data class PlayerMenuItem(val label: String, val enabled: Boolean = true, val selected: Boolean = false,
     val children: List<PlayerMenuItem> = emptyList(), val action: () -> Unit = {})
 
-/** One focusable window keeps the parent and its adjacent submenu open together. */
+/** Settings expand inside one scrollable surface, including long track lists. */
 internal class PlayerSettingsMenu(private val anchor: View, private val items: List<PlayerMenuItem>, onDismiss: () -> Unit) {
     private val context = anchor.context
     private fun dp(value: Int) = (value * context.resources.displayMetrics.density).toInt()
     private val frame = FrameLayout(context).apply { clipChildren = false; clipToPadding = false; isFocusableInTouchMode = true }
     private val main = panel()
-    private var child: ScrollView? = null
+    private var child: LinearLayout? = null
+    private var expandedHeader: TextView? = null
+    private var popupTop: Int? = null
     private var closing = false
     private val popup = object : PopupWindow(frame, -2, -2, true) {
         override fun dismiss() {
@@ -45,16 +47,22 @@ internal class PlayerSettingsMenu(private val anchor: View, private val items: L
 
     init {
         val column = main.getChildAt(0) as LinearLayout
-        items.forEach { item -> column.addView(row(item).apply {
-            if (item.children.isNotEmpty()) {
-                setCompoundDrawablesWithIntrinsicBounds(0, 0, R.drawable.ic_genzo_arrow_right, 0)
-                compoundDrawablePadding = dp(4)
+        items.forEach { item ->
+            val group = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+            val header = row(item).apply {
+                if (item.children.isNotEmpty()) {
+                    setCompoundDrawablesWithIntrinsicBounds(0, 0, R.drawable.ic_genzo_arrow_right, 0)
+                    compoundDrawablePadding = dp(4)
+                }
+                setOnClickListener {
+                    if (item.children.isEmpty()) { dismiss(); item.action() }
+                    else if (expandedHeader === this) closeChild()
+                    else expand(item, this, group)
+                }
             }
-            setOnClickListener {
-                if (item.children.isEmpty()) { dismiss(); item.action() }
-                else expand(item, this)
-            }
-        }, LinearLayout.LayoutParams(-1, -2)) }
+            group.addView(header, LinearLayout.LayoutParams(-1, -2))
+            column.addView(group, LinearLayout.LayoutParams(-1, -2))
+        }
         frame.addView(main)
     }
     private fun panel() = ScrollView(context).apply {
@@ -70,52 +78,49 @@ internal class PlayerSettingsMenu(private val anchor: View, private val items: L
         background = RippleDrawable(ColorStateList.valueOf(0x334cc197),
             if (item.selected) ColorDrawable(0x224cc197) else null, ColorDrawable(Color.WHITE))
     }
-    private fun expand(item: PlayerMenuItem, selected: View) {
-        child?.let { frame.removeView(it) }
-        child = panel().also { panel ->
-            val column = panel.getChildAt(0) as LinearLayout
-            item.children.forEach { choice -> column.addView(row(choice).apply {
+    private fun expand(item: PlayerMenuItem, header: TextView, group: LinearLayout) {
+        removeChild()
+        expandedHeader = header
+        header.setCompoundDrawablesWithIntrinsicBounds(0, 0, R.drawable.ic_genzo_arrow_down, 0)
+        child = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(0x22000000)
+            item.children.forEach { choice -> addView(row(choice).apply {
+                setPadding(dp(24), dp(8), dp(8), dp(8))
                 setOnClickListener { dismiss(); choice.action() }
             }, LinearLayout.LayoutParams(-1, -2)) }
-            frame.addView(panel)
         }
-        val location = IntArray(2); selected.getLocationOnScreen(location)
-        position(location[1]); PlayerMotion.enter(requireNotNull(child)); frame.requestFocus()
+        group.addView(child, LinearLayout.LayoutParams(-1, -2))
+        position(); PlayerMotion.enter(requireNotNull(child)); frame.requestFocus()
+        main.post { if (expandedHeader === header) main.smoothScrollTo(0, group.top) }
     }
-    private fun position(rowY: Int? = null) {
+    private fun position() {
         val bounds = Rect(); anchor.getWindowVisibleDisplayFrame(bounds)
-        val gap = dp(8); val maxHeight = bounds.height() - gap * 2
-        val mainWidth = minOf(dp(184), bounds.width() - gap * 2)
-        main.measure(View.MeasureSpec.makeMeasureSpec(mainWidth, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(maxHeight, View.MeasureSpec.AT_MOST))
+        val gap = dp(8)
+        val mainWidth = minOf(dp(224), bounds.width() - gap * 2)
+        main.measure(View.MeasureSpec.makeMeasureSpec(mainWidth, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(bounds.height() - gap * 2, View.MeasureSpec.AT_MOST))
         val location = IntArray(2); anchor.getLocationOnScreen(location)
-        val top = (location[1] + anchor.height).coerceIn(bounds.top + gap, bounds.bottom - main.measuredHeight - gap)
-        val childWidth = if (child == null) 0 else minOf(dp(164), bounds.width() - mainWidth - gap * 3)
-        var height = main.measuredHeight
-        child?.let { panel ->
-            val availableHeight = bounds.bottom - top - gap
-            panel.measure(View.MeasureSpec.makeMeasureSpec(childWidth, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(availableHeight, View.MeasureSpec.AT_MOST))
-            val offset = ((rowY ?: top) - top).coerceIn(0, availableHeight - panel.measuredHeight)
-            panel.layoutParams = FrameLayout.LayoutParams(childWidth, panel.measuredHeight).apply { topMargin = offset }
-            height = maxOf(height, offset + panel.measuredHeight)
-        }
-        val width = mainWidth + if (child != null) childWidth + gap else 0
-        main.layoutParams = FrameLayout.LayoutParams(mainWidth, main.measuredHeight, Gravity.TOP or Gravity.RIGHT)
-        val right = (location[0] + anchor.width).coerceIn(bounds.left + width + gap, bounds.right - gap)
-        if (popup.isShowing) popup.update(right - width, top, width, height)
-        else { popup.width = width; popup.height = height; popup.showAtLocation(anchor, Gravity.TOP or Gravity.LEFT, right - width, top) }
+        val top = popupTop ?: (if (location[1] > bounds.centerY()) location[1] - main.measuredHeight else location[1] + anchor.height)
+            .coerceIn(bounds.top + gap, bounds.bottom - main.measuredHeight - gap).also { popupTop = it }
+        main.measure(View.MeasureSpec.makeMeasureSpec(mainWidth, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(bounds.bottom - top - gap, View.MeasureSpec.AT_MOST))
+        main.layoutParams = FrameLayout.LayoutParams(mainWidth, main.measuredHeight)
+        val right = (location[0] + anchor.width).coerceIn(bounds.left + mainWidth + gap, bounds.right - gap)
+        if (popup.isShowing) popup.update(right - mainWidth, top, mainWidth, main.measuredHeight)
+        else { popup.width = mainWidth; popup.height = main.measuredHeight; popup.showAtLocation(anchor, Gravity.TOP or Gravity.LEFT, right - mainWidth, top) }
     }
-    fun show(submenu: String? = null) {
+    fun show() {
         position(); frame.requestFocus()
-        if (submenu != null) {
-            val index = items.indexOfFirst { it.label == submenu && it.enabled && it.children.isNotEmpty() }
-            if (index >= 0) main.post { expand(items[index], (main.getChildAt(0) as LinearLayout).getChildAt(index)) }
-        }
     }
     fun back(): Boolean {
         if (!isShowing) return false
         if (child != null) closeChild() else dismiss()
         return true
     }
-    private fun closeChild() { child?.let { frame.removeView(it) }; child = null; position() }
+    private fun removeChild() {
+        child?.let { (it.parent as LinearLayout).removeView(it) }; child = null
+        expandedHeader?.setCompoundDrawablesWithIntrinsicBounds(0, 0, R.drawable.ic_genzo_arrow_right, 0)
+        expandedHeader = null
+    }
+    private fun closeChild() { removeChild(); position() }
     fun dismiss() { closing = true; popup.dismiss() }
 }

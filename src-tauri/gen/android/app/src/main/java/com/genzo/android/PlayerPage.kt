@@ -163,8 +163,10 @@ class PlayerPage(context: Context, private val session: String?, private val med
                 val path = value.optString("path").takeIf { it.isNotBlank() && it != "null" }
                 if (path != null) { imagePaths[key] = path; failedCommentImages.remove(key)
                     commentTargets.remove(key)?.forEach { (reference, width) -> reference.get()?.takeIf { it.tag == key && it.isAttachedToWindow }?.let { bindCommentImage(it, key.removePrefix("comment:"), width) } }
-                } else failedCommentImages.add(key)
-                if (path == null) commentTargets.remove(key)
+                } else {
+                    failedCommentImages.add(key)
+                    commentTargets.remove(key)?.forEach { (reference, width) -> reference.get()?.takeIf { it.tag == key }?.let { commentImageFailed(it, key.removePrefix("comment:"), width) } }
+                }
             }
             "play" -> { playing = false; if (value.has("error")) { message.text = value.optString("error"); retry.visibility = GONE }; adapter.notifyDataSetChanged() }
         }
@@ -199,19 +201,30 @@ class PlayerPage(context: Context, private val session: String?, private val med
         val path = imagePaths[key]?.takeIf { File(it).isFile }
         if (path == null) {
             view.tag = key
+            if (key in failedCommentImages) { commentImageFailed(view, url, width); return }
+            (view.parent as? ViewGroup)?.findViewWithTag<TextView>("comment-image-status")?.apply { text = "图片加载中…"; visibility = VISIBLE; setOnClickListener(null) }
             if (key !in failedCommentImages) commentTargets.getOrPut(key) { mutableListOf() }.apply { removeAll { it.first.get() == null }; add(java.lang.ref.WeakReference(view) to width) }
             if (key !in requestedImages && key !in failedCommentImages && request("commentImage", JSONObject().put("url", url))) requestedImages.add(key)
             return
         }
         view.tag = path
         val cached = bitmaps.get(path)
-        if (cached != null) { view.setImageBitmap(cached); return }
+        if (cached != null) { view.setImageBitmap(cached); (view.parent as? ViewGroup)?.findViewWithTag<TextView>("comment-image-status")?.visibility = GONE; return }
         images.execute {
             if (!File(path).canonicalPath.startsWith(File(context.applicationInfo.dataDir).canonicalPath + "/")) return@execute
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }; BitmapFactory.decodeFile(path, bounds)
             val options = BitmapFactory.Options().apply { inSampleSize = CommentImageSampling.sample(bounds.outWidth, bounds.outHeight, width * 2, if (view.adjustViewBounds) resources.displayMetrics.heightPixels * 2 else width * 2) }
             val bitmap = BitmapFactory.decodeFile(path, options)
-            view.post { if (!disposed && view.tag == path && view.isAttachedToWindow && bitmap != null) { bitmaps.put(path, bitmap); view.setImageBitmap(bitmap) } }
+            view.post { if (!disposed && view.tag == path && view.isAttachedToWindow) {
+                if (bitmap != null) { bitmaps.put(path, bitmap); view.setImageBitmap(bitmap); (view.parent as? ViewGroup)?.findViewWithTag<TextView>("comment-image-status")?.visibility = GONE }
+                else { imagePaths.remove(key); failedCommentImages.add(key); commentImageFailed(view, url, width) }
+            } }
+        }
+    }
+    private fun commentImageFailed(view: ImageView, url: String, width: Int) {
+        (view.parent as? ViewGroup)?.findViewWithTag<TextView>("comment-image-status")?.apply {
+            text = "图片加载失败，点击重试"; visibility = VISIBLE
+            setOnClickListener { failedCommentImages.remove("comment:$url"); bindCommentImage(view, url, width) }
         }
     }
     private fun showReplies(parent: JSONObject, replies: JSONArray) {
@@ -282,7 +295,8 @@ class PlayerPage(context: Context, private val session: String?, private val med
         if (!ruleMode && data.has("episodeRows")) visibleRows = objects(data.optJSONArray("episodeRows"))
         else if (!ruleMode) visibleRows = visibleRows.groupBy { it.optString("episodeKey").takeUnless { key -> key.isBlank() || key == "null" } ?: it.optString("id") }.values.map { group -> group.firstOrNull { it.optBoolean("current") } ?: group.firstOrNull { it.optBoolean("available") } ?: group.first() }
         val currentFile = allRows.firstOrNull { it.optBoolean("current") && it.has("mediaFileId") }
-        source.text = if (ruleMode) "播放线路  ·  ${visibleRows.firstOrNull()?.optString("sourceLabel") ?: "暂无线路"}  ﹀" else "播放文件  ·  ${currentFile?.optString("fileName") ?: "当前文件"}  ﹀"
+        source.isEnabled = selectedSource != "offline"
+        source.text = if (selectedSource == "offline") "离线缓存" else if (ruleMode) "播放线路  ·  ${visibleRows.firstOrNull()?.optString("sourceLabel") ?: "暂无线路"}  ﹀" else "播放文件  ·  ${currentFile?.optString("fileName") ?: "当前文件"}  ﹀"
         pickerSource?.text = source.text
         val unmatched = visibleRows.count { it.optBoolean("unmatched") }
         summary.text = if (episodes) "全部剧集 · ${visibleRows.count { !it.optBoolean("sectionHeader") && !it.optBoolean("unmatched") }} 集${if (unmatched > 0) " · $unmatched 个未匹配文件" else ""}" else "${data.optString("commentEpisodeLabel").takeUnless { it == "null" || it.isBlank() } ?: "当前集"} · Bangumi 分集讨论${if (commentsLoaded) " · $commentsTotal 条" else ""}"

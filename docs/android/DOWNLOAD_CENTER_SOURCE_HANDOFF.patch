@@ -1,0 +1,347 @@
+diff --git a/src/android/AndroidApp.tsx b/src/android/AndroidApp.tsx
+--- a/src/android/AndroidApp.tsx
++++ b/src/android/AndroidApp.tsx
+@@ -18,0 +19,4 @@ import BookReader from "./BookReader";
++import ReadingHistoryRow from "./ReadingHistoryRow";
++import DownloadCenter from "./DownloadCenter";
++import type { DownloadReadTarget } from "./downloadCenterApi";
++import { readingHistoryApi, readingHistoryKey, type ReadingHistoryItem } from "./readingHistory";
+@@ -391,0 +396,6 @@ export default function AndroidApp() {
++  const [readingHistory, setReadingHistory] = useState<ReadingHistoryItem[]>([]);
++  const [readingHistoryItem, setReadingHistoryItem] = useState<ReadingHistoryItem | null>(null);
++  const [historyReader, setHistoryReader] = useState<(DownloadReadTarget & {offlineOnly?: boolean}) | null>(null);
++  const [hiddenVideoHistory, setHiddenVideoHistory] = useState<Record<string, string>>({});
++  const [historyPending, setHistoryPending] = useState(false);
++  const historyRevision = useRef(0);
+@@ -453 +463 @@ export default function AndroidApp() {
+-  const title = top?.title || ({ sources: "资料库", inbox: "待整理", browse: "浏览目录", diagnostics: import.meta.env.DEV ? "开发验证" : "关于", bookshelf: "书架", explore: "发现", network: "网络", appearance: "外观", history: "浏览记录", "reading-stats": "阅读统计", "reading-stats-settings": "阅读统计设置", "playback-settings": "播放设置", "playback-settings/decoder": "硬件解码器", "playback-settings/renderer": "视频渲染器", "playback-settings/super": "超分辨率", sync: "同步备份", "sync/bangumi": "追番同步", "sync/webdav": "多设备同步" }[route]) || "作品详情";
++  const title = top?.title || ({ sources: "资料库", inbox: "待整理", browse: "浏览目录", diagnostics: import.meta.env.DEV ? "开发验证" : "关于", bookshelf: "书架", explore: "发现", network: "网络", appearance: "外观", history: "浏览记录", downloads: "下载中心", "reading-stats": "阅读统计", "reading-stats-settings": "阅读统计设置", "playback-settings": "播放设置", "playback-settings/decoder": "硬件解码器", "playback-settings/renderer": "视频渲染器", "playback-settings/super": "超分辨率", sync: "同步备份", "sync/bangumi": "追番同步", "sync/webdav": "多设备同步" }[route]) || "作品详情";
+@@ -458,0 +469 @@ export default function AndroidApp() {
++    const historyGeneration = historyRevision.current;
+@@ -465,0 +477,6 @@ export default function AndroidApp() {
++      readingHistoryApi.list().then(value => { if (active() && historyGeneration === historyRevision.current) setReadingHistory(value); }),
++      api.getSetting("android.history.hidden.v1").then(value => {
++        if (!active() || historyGeneration !== historyRevision.current) return;
++        try { const saved: unknown = JSON.parse(value || "{}"); setHiddenVideoHistory(saved && typeof saved === "object" && !Array.isArray(saved) ? Object.fromEntries(Object.entries(saved).filter((entry): entry is [string, string] => typeof entry[1] === "string")) : {}); }
++        catch { setHiddenVideoHistory({}); }
++      }),
+@@ -577,0 +595,2 @@ export default function AndroidApp() {
++    if (readingHistoryItem) { setReadingHistoryItem(null); return true; }
++    if (historyReader) { setHistoryReader(null); return true; }
+@@ -648 +667 @@ export default function AndroidApp() {
+-  }, [route, modal, busy, modalBusy, browseStack, sortSheet, statusSheet, historyItem, historyClear, historyEdit, readerEntry, bookSelecting]);
++  }, [route, modal, busy, modalBusy, browseStack, sortSheet, statusSheet, historyItem, readingHistoryItem, historyReader, historyClear, historyEdit, readerEntry, bookSelecting]);
+@@ -827,5 +846,12 @@ export default function AndroidApp() {
+-  const historyEntries = useMemo(() => progress.map(item => {
+-    const work = allWorks.find(candidate => candidate.id === item.workId);
+-    const category = (work?.category ?? work?.type ?? "video") as string;
+-    return { item, work, category: historyCategory(category) };
+-  }).filter(entry => historyTab === "all" || entry.category === historyTab).filter(entry => !historyQuery || [entry.item.title, entry.item.fileName].some(text => text.toLowerCase().includes(historyQuery.toLowerCase()))).sort((a, b) => Date.parse(b.item.updatedAt) - Date.parse(a.item.updatedAt)), [progress, allWorks, historyTab, historyQuery]);
++  const historyEntries = useMemo(() => {
++    const videos = progress.filter(item => hiddenVideoHistory[item.mediaFileId] !== item.updatedAt).map(item => {
++      const work = allWorks.find(candidate => candidate.id === item.workId);
++      const category = (work?.category ?? work?.type ?? "video") as string;
++      return { kind: "video" as const, item, work, category: historyCategory(category) };
++    });
++    const books = readingHistory.map(item => ({ kind: "reading" as const, item, category: item.kind }));
++    return [...videos, ...books].filter(entry => historyTab === "all" || entry.category === historyTab)
++      .filter(entry => !historyQuery || [entry.item.title, entry.kind === "video" ? entry.item.fileName : entry.item.entryTitle].some(text => text.toLowerCase().includes(historyQuery.toLowerCase())))
++      .sort((a, b) => Date.parse(b.item.updatedAt) - Date.parse(a.item.updatedAt));
++  }, [progress, allWorks, readingHistory, hiddenVideoHistory, historyTab, historyQuery]);
++  const historyCount = progress.filter(item => hiddenVideoHistory[item.mediaFileId] !== item.updatedAt).length + readingHistory.length;
+@@ -841,2 +867,27 @@ export default function AndroidApp() {
+-  const removeHistoryRecord = () => setToast("观看记录清除接口待后端接入，已登记");
+-  const clearHistoryRecords = () => { setHistoryClear(false); setHistoryEdit(false); setToast("观看记录清除接口待后端接入，已登记"); };
++  async function removeHistoryRecord(item: PlaybackProgress) {
++    if (historyPending) return;
++    historyRevision.current++;
++    setHistoryPending(true);
++    try { const next = { ...hiddenVideoHistory, [item.mediaFileId]: item.updatedAt }; await api.setSetting("android.history.hidden.v1", JSON.stringify(next)); setHiddenVideoHistory(next); setHistoryItem(null); }
++    catch (reason) { setToast(String(reason)); }
++    finally { setHistoryPending(false); }
++  }
++  async function removeReadingRecord(item: ReadingHistoryItem) {
++    if (historyPending) return;
++    historyRevision.current++;
++    setHistoryPending(true);
++    try { await readingHistoryApi.remove(item); setReadingHistory(previous => previous.filter(value => readingHistoryKey(value) !== readingHistoryKey(item))); setReadingHistoryItem(null); }
++    catch (reason) { setToast(String(reason)); }
++    finally { setHistoryPending(false); }
++  }
++  async function clearHistoryRecords() {
++    if (historyPending) return;
++    historyRevision.current++;
++    setHistoryPending(true);
++    try {
++      const next = Object.fromEntries(progress.map(item => [item.mediaFileId, item.updatedAt]));
++      await Promise.all([api.setSetting("android.history.hidden.v1", JSON.stringify(next)), readingHistoryApi.clear()]);
++      setHiddenVideoHistory(next); setReadingHistory([]); setHistoryClear(false); setHistoryEdit(false);
++    } catch (reason) { setToast(String(reason)); await refresh().catch(() => {}); }
++    finally { setHistoryPending(false); }
++  }
+@@ -875 +926 @@ export default function AndroidApp() {
+-  const remoteBookSection = readingSource && <OnlineChapters key={`${readingSource.kind}:${readingSource.pathWord}`} kind={readingSource.kind} pathWord={readingSource.pathWord} selecting={bookSelecting} onSelecting={setBookSelecting} onRead={(entry, group) => { setReaderEntry(entry); setSourceGroup(group); }} onToast={setToast} onTotal={setSourceTotal} />;
++  const remoteBookSection = readingSource && <OnlineChapters key={`${readingSource.kind}:${readingSource.pathWord}`} kind={readingSource.kind} pathWord={readingSource.pathWord} title={detail?.title} selecting={bookSelecting} onSelecting={setBookSelecting} onRead={(entry, group) => { setReaderEntry(entry); setSourceGroup(group); }} onToast={setToast} onTotal={setSourceTotal} />;
+@@ -889,0 +941 @@ export default function AndroidApp() {
++    if (entry.kind === "reading") return <ReadingHistoryRow key={`reading:${readingHistoryKey(entry.item)}`} item={entry.item} editing={historyEdit} busy={historyPending} onRead={setHistoryReader} onDetail={item => { if (item.workId) navigate(`detail/${encodeURIComponent(item.workId)}`); }} onRemove={item => void removeReadingRecord(item)} onMore={setReadingHistoryItem} />;
+@@ -903 +955 @@ export default function AndroidApp() {
+-        ? <button type="button" className="gz-history-del" disabled={busy} onClick={removeHistoryRecord} aria-label={`移除 ${item.title} 的记录`}><Trash2 size={18} /></button>
++        ? <button type="button" className="gz-history-del" disabled={historyPending} onClick={() => void removeHistoryRecord(item)} aria-label={`移除 ${item.title} 的记录`}><Trash2 size={18} /></button>
+@@ -915,2 +967,2 @@ export default function AndroidApp() {
+-          ? <><button type="button" className="gz-history-done" onClick={() => setHistoryEdit(false)}>完成</button><button type="button" className="gz-iconbtn gz-history-clear" disabled={!progress.length} onClick={() => setHistoryClear(true)} aria-label="清除全部记录"><Trash2 size={19} /></button></>
+-          : <button type="button" className="gz-iconbtn gz-history-manage" disabled={!progress.length} onClick={() => setHistoryEdit(true)} aria-label="管理历史记录" title="管理历史记录"><Pencil size={18} /></button>}
++          ? <><button type="button" className="gz-history-done" onClick={() => setHistoryEdit(false)}>完成</button><button type="button" className="gz-iconbtn gz-history-clear" disabled={!historyCount || historyPending} onClick={() => setHistoryClear(true)} aria-label="清除全部记录"><Trash2 size={19} /></button></>
++          : <button type="button" className="gz-iconbtn gz-history-manage" disabled={!historyCount} onClick={() => setHistoryEdit(true)} aria-label="管理历史记录" title="管理历史记录"><Pencil size={18} /></button>}
+@@ -921,2 +973,2 @@ export default function AndroidApp() {
+-    {progress.length > 0 && <p className="gz-meta gz-history-summary">共 {historyEntries.length} 条记录 · {historyEdit ? "点按删除按钮移除" : "最近观看优先"}</p>}
+-    {!progress.length ? <Empty title="还没有观看记录"><p>开始播放后，观看记录会出现在这里。</p><button className="gz-btn" onClick={() => navigate("library")}>去媒体库</button></Empty>
++    {historyCount > 0 && <p className="gz-meta gz-history-summary">共 {historyEntries.length} 条记录</p>}
++    {!historyCount ? <Empty title="还没有浏览记录"><button className="gz-btn" onClick={() => navigate(historyTab === "comic" || historyTab === "novel" ? "bookshelf" : "library")}>查看作品</button></Empty>
+@@ -925 +976,0 @@ export default function AndroidApp() {
+-    {historyEdit && <p className="gz-meta gz-history-hint">清除记录接口尚未接入，当前为界面预览，不会改动数据。</p>}
+@@ -1070 +1121 @@ export default function AndroidApp() {
+-          <QuickCard label="下载中心" subtitle="管理离线内容" icon={Download} onClick={() => navigate("future/下载中心")} />
++          <QuickCard label="下载中心" subtitle="管理离线内容" icon={Download} onClick={() => navigate("downloads")} />
+@@ -1250,0 +1302 @@ export default function AndroidApp() {
++      {route === "downloads" && <DownloadCenter onReadBook={target => setHistoryReader({...target,offlineOnly:true})} onOpenWork={id => navigate(`detail/${encodeURIComponent(id)}`)} onToast={setToast} onError={reason => setError(String(reason))} />}
+@@ -1299,0 +1352,10 @@ export default function AndroidApp() {
++    {historyReader && <BookReader key={readingHistoryKey(historyReader)} kind={historyReader.kind} pathWord={historyReader.pathWord} entryId={historyReader.entryId} group={historyReader.group} offlineOnly={historyReader.offlineOnly} onClose={() => setHistoryReader(null)} />}
++    {readingHistoryItem && <div className="gz-scrim" onClick={() => setReadingHistoryItem(null)}><section className="gz-sheet" role="dialog" aria-modal="true" aria-label="阅读记录操作" onClick={event => event.stopPropagation()}>
++      <span className="gz-sheet-handle" aria-hidden="true" />
++      <h2 className="gz-sheet-title gz-truncate">{readingHistoryItem.title}</h2><p className="gz-meta gz-truncate">{readingHistoryItem.entryTitle}</p>
++      <div className="gz-sort-list">
++        <button type="button" className="gz-sort-row" onClick={() => { setHistoryReader(readingHistoryItem); setReadingHistoryItem(null); }}><span className="gz-sort-main"><strong>继续阅读</strong></span><BookOpen size={18} /></button>
++        {readingHistoryItem.workId && <button type="button" className="gz-sort-row" onClick={() => { const id = readingHistoryItem.workId; setReadingHistoryItem(null); if (id) navigate(`detail/${encodeURIComponent(id)}`); }}><span className="gz-sort-main"><strong>查看作品</strong></span><ChevronRight size={18} /></button>}
++        <button type="button" className="gz-sort-row" disabled={historyPending} onClick={() => void removeReadingRecord(readingHistoryItem)}><span className="gz-sort-main"><strong>移除阅读记录</strong></span><Trash2 size={18} /></button>
++      </div>
++    </section></div>}
+@@ -1306 +1368 @@ export default function AndroidApp() {
+-        <button type="button" className="gz-sort-row" onClick={() => { setHistoryItem(null); removeHistoryRecord(); }}><span className="gz-sort-main"><strong>移除观看记录</strong><span className="gz-meta">从浏览记录中移除这一条</span></span><Trash2 size={18} /></button>
++        <button type="button" className="gz-sort-row" disabled={historyPending} onClick={() => void removeHistoryRecord(historyItem)}><span className="gz-sort-main"><strong>移除观看记录</strong></span><Trash2 size={18} /></button>
+@@ -1310,3 +1372,3 @@ export default function AndroidApp() {
+-      <h2 id="gz-confirm-title" className="gz-confirm-title">清除全部观看记录？</h2>
+-      <p className="gz-meta">仅清除 Genzo 中的观看记录，不会删除磁盘文件或作品。</p>
+-      <div className="gz-confirm-actions"><button type="button" className="gz-btn" onClick={() => setHistoryClear(false)}>取消</button><button type="button" className="gz-btn primary" onClick={clearHistoryRecords}>清除</button></div>
++      <h2 id="gz-confirm-title" className="gz-confirm-title">清除全部浏览记录？</h2>
++      <p className="gz-meta">保留作品、媒体、续读位置和书签。</p>
++      <div className="gz-confirm-actions"><button type="button" className="gz-btn" onClick={() => setHistoryClear(false)}>取消</button><button type="button" className="gz-btn primary" disabled={historyPending} onClick={() => void clearHistoryRecords()}>清除</button></div>
+diff --git a/src/android/mobile.css b/src/android/mobile.css
+--- a/src/android/mobile.css
++++ b/src/android/mobile.css
+@@ -743 +743 @@ html[data-trans="swap"][data-nav="back"]::view-transition-new(gz-view) { animati
+-.android-app .gz-history-play { display: grid; place-items: center; width: 40px; height: 40px; min-height: 40px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); }
++.android-app .gz-history-play { display: grid; place-items: center; width: 44px; height: 44px; min-height: 44px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); }
+@@ -746 +746 @@ html[data-trans="swap"][data-nav="back"]::view-transition-new(gz-view) { animati
+-.android-app .gz-history-del { display: grid; place-items: center; width: 40px; height: 40px; min-height: 40px; border-radius: 50%; background: #e5484d; color: #fff; }
++.android-app .gz-history-del { display: grid; place-items: center; width: 44px; height: 44px; min-height: 44px; border-radius: 50%; background: #e5484d; color: #fff; }
+diff --git a/src/android/RuleBrowser.tsx b/src/android/RuleBrowser.tsx
+--- a/src/android/RuleBrowser.tsx
++++ b/src/android/RuleBrowser.tsx
+@@ -2 +2,2 @@ import { useEffect, useRef, useState } from "react";
+-import { ArrowLeft, Check, Play, RefreshCw, Search } from "lucide-react";
++import { ArrowLeft, Check, Download, Play, RefreshCw, Search } from "lucide-react";
++import { downloadEntryApi } from "./downloadEntryApi";
+@@ -27,0 +29,2 @@ export default function RuleBrowser({ work, pluginId, initialSource, registerBac
++  const [queuing, setQueuing] = useState(false), [downloadMessage, setDownloadMessage] = useState("");
++  const queuePending = useRef(false);
+@@ -102,0 +106,9 @@ export default function RuleBrowser({ work, pluginId, initialSource, registerBac
++  async function queueDownloads(indexes: number[]) {
++    if (!subject || !indexes.length || queuePending.current) return;
++    const version = generation.current; queuePending.current=true; setQueuing(true); setDownloadMessage("");
++    try {
++      await downloadEntryApi.rules({pluginId:subject.plugin.id,source:subject.item.source,title:work?.title || subject.item.name,roadIndex:road,episodeIndexes:indexes,workId:work?.id});
++      if (version===generation.current) setDownloadMessage(`已加入下载中心（${indexes.length} 集）`);
++    } catch (reason) { if (version===generation.current) setError(String(reason)); }
++    finally { queuePending.current=false; setQueuing(false); }
++  }
+@@ -104,0 +117 @@ export default function RuleBrowser({ work, pluginId, initialSource, registerBac
++    {downloadMessage && <p className="gz-meta" role="status">{downloadMessage}</p>}
+@@ -126,0 +140 @@ export default function RuleBrowser({ work, pluginId, initialSource, registerBac
++        <div className="gz-actions"><button type="button" className="gz-btn" disabled={queuing || loading || saving || !selected.length} onClick={() => void queueDownloads(selected)}><Download size={16} />下载所选（{selected.length} 集）</button>{!work && <button type="button" className="gz-link" disabled={queuing || loading} onClick={() => setSelected(previous => pageSelected ? previous.filter(index => !pageIndexes.includes(index)) : [...new Set([...previous, ...pageIndexes])].slice(0,500))}>{pageSelected ? "取消当前页选择" : "选择当前页剧集"}</button>}</div>
+@@ -128 +142 @@ export default function RuleBrowser({ work, pluginId, initialSource, registerBac
+-        <div className="gz-rule-episodes">{pageEpisodes.map((episode, pageIndex) => { const index = pageStart + pageIndex; return <div className="gz-rule-episode" key={`${episode.url}:${index}`}>{work && <input aria-label={`关联 ${episode.name}`} type="checkbox" disabled={saving || loading || parsing || (!selected.includes(index) && selected.length >= 500)} checked={selected.includes(index)} onChange={event => { invalidate(); setSelected(previous => event.target.checked ? [...previous, index] : previous.filter(value => value !== index)); }} />}<span className="gz-file-name">{episode.name}</span><button className="gz-btn" aria-label={`${work ? "播放" : "试播"} ${episode.name}`} disabled={parsing || saving || loading || (!!work && !validOffset)} onClick={() => void trial(index)}><Play size={18} />{work ? "播放" : "试播"}</button></div>; })}</div>
++        <div className="gz-rule-episodes">{pageEpisodes.map((episode, pageIndex) => { const index = pageStart + pageIndex; return <div className="gz-rule-episode" key={`${episode.url}:${index}`}><input aria-label={`${work ? "关联" : "选择"} ${episode.name}`} type="checkbox" disabled={saving || loading || parsing || (!selected.includes(index) && selected.length >= 500)} checked={selected.includes(index)} onChange={event => { invalidate(); setSelected(previous => event.target.checked ? [...previous, index] : previous.filter(value => value !== index)); }} /><span className="gz-file-name">{episode.name}</span><button type="button" className="gz-iconbtn" aria-label={`下载 ${episode.name}`} title={`下载 ${episode.name}`} disabled={queuing || saving || loading} onClick={() => void queueDownloads([index])}><Download size={18} /></button><button className="gz-btn" aria-label={`${work ? "播放" : "试播"} ${episode.name}`} disabled={parsing || saving || loading || (!!work && !validOffset)} onClick={() => void trial(index)}><Play size={18} />{work ? "播放" : "试播"}</button></div>; })}</div>
+diff --git a/src/android/EpisodeSources.tsx b/src/android/EpisodeSources.tsx
+--- a/src/android/EpisodeSources.tsx
++++ b/src/android/EpisodeSources.tsx
+@@ -2 +2,2 @@ import { useState } from "react";
+-import { Check, MoreHorizontal, Sparkles, Unlink } from "lucide-react";
++import { Check, Download, MoreHorizontal, Sparkles, Unlink } from "lucide-react";
++import { downloadEntryApi } from "./downloadEntryApi";
+@@ -28,0 +30 @@ export default function EpisodeSources({ workId, subjectId, structure, files, so
++  const [downloadPending, setDownloadPending] = useState(false), [downloadMessage, setDownloadMessage] = useState("");
+@@ -47,0 +50,10 @@ export default function EpisodeSources({ workId, subjectId, structure, files, so
++  async function downloadFile(file: MediaFile) {
++    if (downloadPending) return;
++    setDownloadPending(true); setDownloadMessage("");
++    try {
++      if (episodeSource(file,sources)==="rule") await downloadEntryApi.ruleMedia(file.id);
++      else await downloadEntryApi.file(file.id);
++      setDownloadMessage("已加入下载中心");
++    } catch (reason) { setDownloadMessage(String(reason)); }
++    finally { setDownloadPending(false); }
++  }
+@@ -48,0 +61 @@ export default function EpisodeSources({ workId, subjectId, structure, files, so
++    {downloadMessage && <p className="gz-meta" role="status">{downloadMessage}</p>}
+@@ -56 +69 @@ export default function EpisodeSources({ workId, subjectId, structure, files, so
+-        {(onUnlinkEpisode || onDetachWork || onRecognizeOther || row.files.length > 1) && <button type="button" className="gz-episode-more" aria-label={`${row.label} 设置`} aria-haspopup="dialog" disabled={busy} onClick={() => setOpenKey(row.key)}><MoreHorizontal size={18} /></button>}
++        {(onUnlinkEpisode || onDetachWork || onRecognizeOther || row.files.length > 1 || (file && ["rule","webdav"].includes(episodeSource(file,sources)))) && <button type="button" className="gz-episode-more" aria-label={`${row.label} 设置`} aria-haspopup="dialog" disabled={busy} onClick={() => setOpenKey(row.key)}><MoreHorizontal size={18} /></button>}
+@@ -73,0 +87 @@ export default function EpisodeSources({ workId, subjectId, structure, files, so
++        {sheetFile && ["rule","webdav"].includes(episodeSource(sheetFile,sources)) && <button type="button" disabled={busy || downloadPending || !available(sheetFile)} onClick={() => void downloadFile(sheetFile)}><Download size={18} />{downloadPending ? "正在加入…" : "下载此视频"}</button>}
+diff --git a/src/android/BangumiCommentFeed.tsx b/src/android/BangumiCommentFeed.tsx
+--- a/src/android/BangumiCommentFeed.tsx
++++ b/src/android/BangumiCommentFeed.tsx
+@@ -2,0 +3 @@ import CommentRate from "./CommentRating";
++import BangumiCommentBody from "./BangumiCommentBody";
+@@ -31 +32 @@ export default function BangumiCommentFeed({ items }: { items: BangumiComment[]
+-      <p className="gz-comment-body">{comment.comment}</p>
++      <BangumiCommentBody value={comment.comment} />
+diff --git a/src-tauri/gen/android/app/src/main/java/com/genzo/android/GenzoPlugin.kt b/src-tauri/gen/android/app/src/main/java/com/genzo/android/GenzoPlugin.kt
+--- a/src-tauri/gen/android/app/src/main/java/com/genzo/android/GenzoPlugin.kt
++++ b/src-tauri/gen/android/app/src/main/java/com/genzo/android/GenzoPlugin.kt
+@@ -72,0 +73,13 @@ class RuleArgs { var html: String = ""; var rule: String = "{}"; var operation:
++@InvokeArg
++class OfflineVideoArgs {
++    lateinit var id: String; var uri: String = ""; var headers: HashMap<String, String> = hashMapOf(); var title: String = ""
++    var mediaFileId: String? = null; var workId: String? = null; var episodeTitle: String? = null; var action: String = ""
++    var recipe: Any? = null
++    var forceRefresh: Boolean = false
++}
++@InvokeArg
++class OfflinePrepareTicketArgs { lateinit var ticket: String; var id: String? = null }
++@InvokeArg
++class BookDownloadActivityArgs { var running: Boolean = false; var count: Int = 0 }
++@InvokeArg
++class OfflineFileArgs { lateinit var path: String; var mediaFileId: String? = null; var title: String? = null }
+@@ -93,0 +107,122 @@ class GenzoPlugin(private val activity: Activity) : Plugin(activity) {
++    fun resolveDownloadVideo(invoke: Invoke) {
++        val args = invoke.parseArgs(RuleArgs::class.java)
++        try { checkedHttpUri(args.url) } catch (_: Exception) { invoke.reject("invalid_download_source"); return }
++        RuleResolver.resolveDownload(activity, args.url, args.legacy) { invoke.resolve(JSObject(it.toString())) }
++    }
++    @Command
++    fun addOfflineVideo(invoke: Invoke) {
++        val args = invoke.parseArgs(OfflineVideoArgs::class.java)
++        activity.runOnUiThread {
++            val downloads = try { OfflineVideoDownloads.get(activity) } catch (_: Exception) { invoke.reject("offline_download_storage_unavailable"); return@runOnUiThread }
++            downloadPrepareWorker.execute { try {
++                val prepared = prepareDownloadArgs(downloads, args)
++                downloadControlWorker.execute { try {
++                    val request = downloads.commit(prepared)
++                    activity.runOnUiThread { try {
++                        requestDownloadNotifications(); val state = downloads.add(request)
++                        invoke.resolve(JSObject().put("id", request.id).put("state", state))
++                    } catch (_: Exception) { invoke.reject("offline_download_service_unavailable") } }
++                } catch (error: Exception) { invoke.reject(offlineErrorCode(error, "offline_download_prepare_failed")) } }
++            } catch (error: Exception) { invoke.reject((error as? OfflineDownloadException)?.reason ?: "offline_download_prepare_failed") } }
++        }
++    }
++    private fun prepareDownloadArgs(downloads: OfflineVideoDownloads, args: OfflineVideoArgs): OfflineVideoPreparation {
++        val recipe = when (val raw = args.recipe) {
++            is String -> org.json.JSONObject(raw)
++            is Map<*, *> -> org.json.JSONObject(raw)
++            null -> org.json.JSONObject()
++            else -> throw IllegalArgumentException("invalid_download_recipe")
++        }
++        return downloads.prepare(args.id, args.uri, args.headers, args.title, args.mediaFileId, args.workId, args.episodeTitle, recipe, args.forceRefresh)
++    }
++    @Command
++    fun prepareOfflineVideo(invoke: Invoke) {
++        val args = invoke.parseArgs(OfflineVideoArgs::class.java)
++        activity.runOnUiThread {
++            val downloads = try { OfflineVideoDownloads.get(activity) } catch (_: Exception) { invoke.resolve(JSObject().put("errorCode", "offline_download_storage_unavailable")); return@runOnUiThread }
++            downloadPrepareWorker.execute { try {
++                val ticket = downloads.stage { prepareDownloadArgs(downloads, args) }
++                invoke.resolve(JSObject().put("ticket", ticket))
++            } catch (error: Exception) { invoke.resolve(JSObject().put("errorCode", offlineErrorCode(error, "offline_download_prepare_failed"))) } }
++        }
++    }
++    @Command
++    fun commitOfflineVideo(invoke: Invoke) {
++        val args = invoke.parseArgs(OfflinePrepareTicketArgs::class.java)
++        activity.runOnUiThread {
++            val downloads = try { OfflineVideoDownloads.get(activity) } catch (_: Exception) { invoke.resolve(JSObject().put("errorCode", "offline_download_storage_unavailable")); return@runOnUiThread }
++            downloadControlWorker.execute { try {
++                val request = downloads.commitTicket(args.ticket, args.id)
++                activity.runOnUiThread { try {
++                    requestDownloadNotifications(); val state = downloads.add(request)
++                    invoke.resolve(JSObject().put("id", request.id).put("state", state))
++                } catch (_: Exception) { invoke.resolve(JSObject().put("errorCode", "offline_download_service_unavailable")) } }
++            } catch (error: Exception) { invoke.resolve(JSObject().put("errorCode", offlineErrorCode(error, "offline_download_prepare_failed"))) } }
++        }
++    }
++    @Command
++    fun discardOfflineVideoPrepare(invoke: Invoke) {
++        val args = invoke.parseArgs(OfflinePrepareTicketArgs::class.java)
++        activity.runOnUiThread {
++            try { OfflineVideoDownloads.get(activity).discard(args.ticket); invoke.resolve(JSObject().put("discarded", true)) }
++            catch (_: Exception) { invoke.resolve(JSObject().put("errorCode", "offline_download_storage_unavailable")) }
++        }
++    }
++    @Command
++    fun listOfflineVideos(invoke: Invoke) {
++        activity.runOnUiThread {
++            val downloads = try { OfflineVideoDownloads.get(activity) } catch (_: Exception) { invoke.reject("offline_download_storage_unavailable"); return@runOnUiThread }
++            val active = downloads.manager.currentDownloads.toList()
++            downloadReadWorker.execute { try { invoke.resolve(JSObject().put("downloads", downloads.list(active))) }
++                catch (_: Exception) { invoke.reject("offline_download_list_failed") } }
++        }
++    }
++    @Command
++    fun controlOfflineVideo(invoke: Invoke) {
++        val args = invoke.parseArgs(OfflineVideoArgs::class.java)
++        activity.runOnUiThread { try {
++            if (args.action in listOf("resume", "retry")) requestDownloadNotifications()
++            OfflineVideoDownloads.get(activity).control(args.id, args.action)
++            invoke.resolve(JSObject().put("id", args.id).put("action", args.action))
++        } catch (error: Exception) { invoke.reject((error as? OfflineDownloadException)?.reason ?: "offline_download_control_failed") } }
++    }
++    @Command
++    fun offlineVideoLocator(invoke: Invoke) {
++        val args = invoke.parseArgs(OfflineVideoArgs::class.java)
++        activity.runOnUiThread {
++            val downloads = try { OfflineVideoDownloads.get(activity) } catch (_: Exception) { invoke.reject("offline_download_storage_unavailable"); return@runOnUiThread }
++            downloadReadWorker.execute { try { invoke.resolve(JSObject(downloads.locator(args.id).toString())) }
++                catch (error: Exception) { invoke.reject((error as? OfflineDownloadException)?.reason ?: "offline_download_read_failed") } }
++        }
++    }
++    @Command
++    fun offlineFileLocator(invoke: Invoke) {
++        val args = invoke.parseArgs(OfflineFileArgs::class.java)
++        activity.runOnUiThread {
++            val downloads = try { OfflineVideoDownloads.get(activity) } catch (_: Exception) { invoke.reject("offline_download_storage_unavailable"); return@runOnUiThread }
++            downloadReadWorker.execute { try { invoke.resolve(JSObject().put("uri", downloads.fileLocator(args.path)).put("mediaFileId", args.mediaFileId).put("title", args.title)) }
++                catch (_: Exception) { invoke.reject("offline_file_unavailable") } }
++        }
++    }
++    @Command
++    fun setBookDownloadActivity(invoke: Invoke) {
++        val args = invoke.parseArgs(BookDownloadActivityArgs::class.java)
++        activity.runOnUiThread { try {
++            if (args.running) {
++                requestDownloadNotifications()
++                BookDownloadService.stopped = false
++                androidx.core.content.ContextCompat.startForegroundService(activity, Intent(activity, BookDownloadService::class.java).putExtra("count", args.count))
++            } else activity.stopService(Intent(activity, BookDownloadService::class.java))
++            invoke.resolve(JSObject().put("running", args.running))
++        } catch (_: Exception) { BookDownloadService.stopped = true; invoke.reject("book_download_service_unavailable") } }
++    }
++    @Command
++    fun bookDownloadActivityState(invoke: Invoke) { invoke.resolve(JSObject().put("stopped", BookDownloadService.stopped)) }
++    private var askedDownloadNotifications = false
++    private fun requestDownloadNotifications() {
++        if (!askedDownloadNotifications && android.os.Build.VERSION.SDK_INT >= 33 && activity.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
++            askedDownloadNotifications = true
++            activity.requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 5407)
++        }
++    }
++    @Command
+@@ -200,0 +336,3 @@ class GenzoPlugin(private val activity: Activity) : Plugin(activity) {
++    private val downloadPrepareWorker = Executors.newSingleThreadExecutor()
++    private val downloadControlWorker = Executors.newSingleThreadExecutor()
++    private val downloadReadWorker = Executors.newSingleThreadExecutor()
+@@ -385 +523 @@ class GenzoPlugin(private val activity: Activity) : Plugin(activity) {
+-            if (args.ruleOperation > 0 && !args.loading) {
++            if (args.ruleOperation > 0 && !args.loading && args.sourceKind != "offline") {
+@@ -394,0 +533 @@ class GenzoPlugin(private val activity: Activity) : Plugin(activity) {
++                .putExtra("sourceKind", args.sourceKind)

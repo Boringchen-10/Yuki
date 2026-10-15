@@ -342,6 +342,14 @@ pub(crate) fn decode_and_save_image(
     destination: &Path,
     create_thumbnail: bool,
 ) -> AppResult<()> {
+    decode_and_save_sized_image(bytes, destination, create_thumbnail, 80)
+}
+
+pub(crate) fn decode_and_save_comment_image(bytes: &[u8], destination: &Path) -> AppResult<()> {
+    decode_and_save_sized_image(bytes, destination, false, 1)
+}
+
+fn decode_and_save_sized_image(bytes: &[u8], destination: &Path, create_thumbnail: bool, min_dimension: u32) -> AppResult<()> {
     let mut reader = image::ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
         .map_err(|error| AppError::Validation(format!("无法识别图片格式：{error}")))?;
@@ -354,7 +362,7 @@ pub(crate) fn decode_and_save_image(
     let image = reader
         .decode()
         .map_err(|error| AppError::Validation(format!("下载内容不是有效图片：{error}")))?;
-    if image.width() < 80 || image.height() < 80 {
+    if image.width() < min_dimension || image.height() < min_dimension {
         return Err(AppError::Validation(
             "元数据封面分辨率过低，已拒绝缓存".to_string(),
         ));
@@ -708,6 +716,20 @@ mod tests {
         let result = decode_and_save_image(b"not an image", &destination, true);
         assert!(matches!(result, Err(AppError::Validation(_))));
         assert!(!destination.exists());
+    }
+
+    #[test]
+    fn comments_allow_small_sent_images_without_weakening_cover_checks() {
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("comment.jpg");
+        let mut bytes = Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(48, 48).write_to(&mut bytes, image::ImageFormat::Png).unwrap();
+        assert!(decode_and_save_image(bytes.get_ref(), &destination, false).is_err());
+        decode_and_save_comment_image(bytes.get_ref(), &destination).unwrap();
+        assert_eq!(image::image_dimensions(&destination).unwrap(), (48, 48));
+        let cached = std::fs::read(&destination).unwrap();
+        assert!(decode_and_save_comment_image(b"not an image", &destination).is_err());
+        assert_eq!(std::fs::read(&destination).unwrap(), cached);
     }
 
     #[test]

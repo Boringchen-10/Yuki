@@ -29,6 +29,23 @@ struct Proxy {
     filter: bool,
     failure: StreamFailure,
 }
+pub(crate) async fn download_descriptor(rule: &Value, page: &str) -> AppResult<Value> {
+    let page = absolute(&field(rule, "baseURL"), page)?;
+    let resolved = if rule_sources::direct_media(&page) || rule["useWebview"] == false {
+        json!({"url":page})
+    } else {
+        crate::android_bridge::call("resolveDownloadVideo", json!({"url":page,"legacy":flag(rule,"useLegacyParser")})).await?
+    };
+    let url = field(&resolved, "url");
+    http_url(&url)?;
+    let env = rule_sources::environment(&url).await?;
+    let mut headers = serde_json::Map::new();
+    let user_agent = if field(rule, "userAgent").is_empty() { field(&env, "userAgent") } else { field(rule, "userAgent") };
+    for (key, value) in [("User-Agent", user_agent), ("Referer", field(rule, "referer")), ("Cookie", field(&env, "cookie"))] {
+        if !value.is_empty() { headers.insert(key.into(), json!(value)); }
+    }
+    Ok(json!({"uri":url,"headers":headers}))
+}
 pub(crate) async fn for_page(rule: &Value, page: &str, operation: u64) -> AppResult<AndroidStream> {
     rule_sources::check_resolve(operation)?;
     let page = absolute(&field(rule, "baseURL"), page)?;

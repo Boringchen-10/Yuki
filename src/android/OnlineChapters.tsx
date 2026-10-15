@@ -4,6 +4,7 @@ import { ArrowDown, ArrowUp, Download, Play, RefreshCw, X } from "lucide-react";
 import { bookContentApi, type ReadingKind, type SourceEntry, type SourcePage, type ReadingResume } from "../bookContent";
 import LoadingIndicator from "./LoadingIndicator";
 import { androidSession, READING_NETWORK_CHANGED } from "./sessionCache";
+import { downloadEntryApi } from "./downloadEntryApi";
 
 export const CHAPTER_PAGE_SIZE = 100;
 type ChapterView = { source: SourcePage; page: number; descending: boolean; groupTotals: Record<string, number> };
@@ -12,8 +13,8 @@ export function chapterPageRange(total: number, page: number, descending: boolea
   return { offset: descending ? Math.max(0, total - start - CHAPTER_PAGE_SIZE) : start, length: Math.max(0, Math.min(CHAPTER_PAGE_SIZE, total - start)) };
 }
 
-export default function OnlineChapters({ kind, pathWord, selecting, onSelecting, onRead, onToast, onTotal }: {
-  kind: ReadingKind; pathWord: string; selecting: boolean; onSelecting: (value: boolean) => void;
+export default function OnlineChapters({ kind, pathWord, title, selecting, onSelecting, onRead, onToast, onTotal }: {
+  kind: ReadingKind; pathWord: string; title?: string; selecting: boolean; onSelecting: (value: boolean) => void;
   onRead: (entry: SourceEntry, group: string) => void; onToast: (message: string) => void; onTotal?: (total: number) => void;
 }) {
   const cachePrefix = `reading:chapters:${kind}:${pathWord}:`;
@@ -25,7 +26,7 @@ export default function OnlineChapters({ kind, pathWord, selecting, onSelecting,
   const [loading, setLoading] = useState(() => !saved);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<Map<string, SourceEntry>>(new Map());
-  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [queuing, setQueuing] = useState(false);
   const [cached, setCached] = useState<Set<string>>(new Set());
   const [groupTotals, setGroupTotals] = useState<Record<string, number>>(() => saved?.groupTotals ?? {});
   const request = useRef(0);
@@ -94,33 +95,25 @@ export default function OnlineChapters({ kind, pathWord, selecting, onSelecting,
     if (source && !loading && !error) androidSession.set(viewKey, { source, page, descending, groupTotals } satisfies ChapterView);
   }, [source, page, descending, groupTotals, loading, error, viewKey]);
   useEffect(() => { if (!selecting) { setSelected(new Map()); downloadActive.current = false; } }, [selecting]);
+  useEffect(() => {
+    let active = true;
+    let stop: (() => void) | undefined;
+    void listen("download-jobs-updated", () => { if (active && source) readCached(source.entries, request.current); })
+      .then(value => { if (active) stop=value; else value(); }).catch(() => {});
+    return () => { active=false; stop?.(); };
+  }, [source]);
 
   async function downloadSelected() {
     if (!source || !selected.size || downloadActive.current) return;
     const entries = [...selected.values()];
-    const group = source.group;
-    downloadActive.current = true;
-    setProgress({ done: 0, total: entries.length });
-    let done = 0;
-    for (const entry of entries) {
-      if (!downloadActive.current) break;
-      try {
-        await bookContentApi.cache(kind, pathWord, entry.id, group);
-        done++;
-        if (!mounted.current) return;
-        setCached(previous => new Set([...previous, entry.id]));
-        setSelected(previous => { const next = new Map(previous); next.delete(entry.id); return next; });
-        setProgress({ done, total: entries.length });
-      } catch (reason) {
-        if (mounted.current) onToast(`${entry.title} 下载失败：${String(reason)}；未完成章节保留选择，可重试`);
-        break;
-      }
-    }
-    if (!mounted.current) return;
-    downloadActive.current = false; setProgress(null);
-    if (done === entries.length) { onSelecting(false); onToast(`已下载 ${done} 话，可离线阅读`); }
+    downloadActive.current = true; setQueuing(true);
+    try {
+      await downloadEntryApi.books(kind, pathWord, source.group, title || pathWord, entries.map(({id,title}) => ({id,title})));
+      if (mounted.current) { onSelecting(false); onToast(`已加入下载中心（${entries.length} 项）`); }
+    } catch (reason) { if (mounted.current) onToast(String(reason)); }
+    finally { downloadActive.current=false; if (mounted.current) setQueuing(false); }
   }
-  const busy = !!progress;
+  const busy = queuing;
   const pages = Math.max(1, Math.ceil((source?.total ?? 0) / CHAPTER_PAGE_SIZE));
   const visiblePages = [...new Set([1, ...Array.from({ length: 5 }, (_, index) => page - 2 + index).filter(value => value > 0 && value <= pages), pages])].sort((a, b) => a - b);
   const allSelected = !!source?.entries.length && source.entries.every(entry => selected.has(entry.id));
@@ -139,7 +132,7 @@ export default function OnlineChapters({ kind, pathWord, selecting, onSelecting,
     </div>}
     {selecting && source && <div className="gz-chapter-selection">
       <button className="gz-chip" disabled={busy || loading} onClick={() => setSelected(previous => { const next = new Map(previous); for (const entry of source.entries) { if (allSelected) next.delete(entry.id); else next.set(entry.id, entry); } return next; })}>{allSelected ? "取消本页全选" : "全选本页"}</button>
-      <button className="gz-btn primary" disabled={busy || !selected.size} onClick={() => void downloadSelected()}><Download size={16} />{progress ? `下载 ${progress.done}/${progress.total}` : `下载 ${selected.size} 话`}</button>
+      <button className="gz-btn primary" disabled={busy || !selected.size || selected.size > 500} onClick={() => void downloadSelected()}><Download size={16} />{queuing ? "正在加入…" : `下载 ${selected.size} 项`}</button>
       <button className="gz-chip" disabled={busy} onClick={() => onSelecting(false)}><X size={14} />取消</button>
     </div>}
     {loading && <LoadingIndicator label="正在读取章节目录…" compact={!!source} />}

@@ -11,13 +11,32 @@ use std::{path::PathBuf, sync::OnceLock, time::Duration};
 use tauri::State;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    sync::Mutex,
+    sync::{watch, Mutex},
 };
 use uuid::Uuid;
 
 static TRANSFER_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static CACHE_LIFECYCLE: OnceLock<Mutex<()>> = OnceLock::new();
 static LEASES: OnceLock<std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>> =
     OnceLock::new();
+static OFFLINE_LEASES: OnceLock<std::sync::Mutex<std::collections::HashMap<String, usize>>> = OnceLock::new();
+pub(crate) struct OfflineCacheLease { id: String }
+impl Drop for OfflineCacheLease {
+    fn drop(&mut self) {
+        let mut leases = OFFLINE_LEASES.get_or_init(Default::default).lock().unwrap();
+        if let Some(count) = leases.get_mut(&self.id) {
+            *count -= 1;
+            if *count == 0 { leases.remove(&self.id); }
+        }
+    }
+}
+pub(crate) fn lease_offline(id: &str) -> AppResult<OfflineCacheLease> {
+    Uuid::parse_str(id).map_err(|_| AppError::Validation("文件标识无效".into()))?;
+    let _cache = CACHE_LIFECYCLE.get_or_init(|| Mutex::new(())).try_lock()
+        .map_err(|_| AppError::Validation("正在清理下载缓存，请稍后重试播放".into()))?;
+    *OFFLINE_LEASES.get_or_init(Default::default).lock().unwrap().entry(id.into()).or_default() += 1;
+    Ok(OfflineCacheLease {id:id.into()})
+}
 fn lease(id: &str) {
     LEASES.get_or_init(Default::default).lock().unwrap().insert(
         id.into(),
@@ -31,6 +50,7 @@ fn leased(id: &str) -> bool {
         .unwrap()
         .get(id)
         .is_some_and(|t| *t > std::time::Instant::now())
+        || OFFLINE_LEASES.get_or_init(Default::default).lock().unwrap().contains_key(id)
 }
 pub fn relocation_leased(id: &str) -> bool { leased(id) }
 pub async fn relocation_lock() -> AppResult<tokio::sync::MutexGuard<'static, ()>> {
@@ -80,15 +100,27 @@ async fn resource(pool: &SqlitePool, id: &str) -> AppResult<Resource> {
         .bind(id).fetch_optional(pool).await?.ok_or_else(|| AppError::NotFound("远程文件不存在".into()))
 }
 
+fn cache_directory(state: &AppState) -> AppResult<PathBuf> {
+    let directory = state.data_directory.join("remote-cache");
+    if let Ok(metadata) = std::fs::symlink_metadata(&directory) {
+        let resolved = std::fs::canonicalize(&directory)?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink()
+            || resolved.parent() != Some(std::fs::canonicalize(&state.data_directory)?.as_path()) {
+            return Err(AppError::Validation("下载缓存目录无效，未修改文件".into()));
+        }
+    }
+    Ok(directory)
+}
 fn cache_path(state: &AppState, id: &str, extension: &str, partial: bool) -> AppResult<PathBuf> {
     Uuid::parse_str(id).map_err(|_| AppError::Validation("文件标识无效".into()))?;
     if extension.len() > 16 || !extension.bytes().all(|b| b.is_ascii_alphanumeric()) {
         return Err(AppError::Validation("文件扩展名无效".into()));
     }
-    Ok(state
-        .data_directory
-        .join("remote-cache")
-        .join(format!("{id}.{}", if partial { "part" } else { extension })))
+    let path = cache_directory(state)?.join(format!("{id}.{}", if partial { "part" } else { extension }));
+    if std::fs::symlink_metadata(&path).is_ok_and(|metadata| !metadata.is_file() || metadata.file_type().is_symlink()) {
+        return Err(AppError::Validation("下载缓存文件无效，未修改文件".into()));
+    }
+    Ok(path)
 }
 
 pub async fn cached_path(state: &AppState, id: &str) -> AppResult<Option<PathBuf>> {
@@ -144,24 +176,46 @@ pub async fn set_cache_limit(gib: u32, state: State<'_, AppState>) -> AppResult<
 }
 
 async fn remove(state: &AppState, id: &str) -> AppResult<()> {
+    let _cache = CACHE_LIFECYCLE.get_or_init(|| Mutex::new(())).lock().await;
     if leased(id) {
         return Err(AppError::Validation(
             "该缓存最近已交给播放器使用，请稍后清理或重启应用后重试".into(),
         ));
     }
-    let r = resource(&state.pool, id).await?;
-    for partial in [false, true] {
-        let path = cache_path(state, id, &r.extension, partial)?;
+    Uuid::parse_str(id).map_err(|_| AppError::Validation("文件标识无效".into()))?;
+    let directory = cache_directory(state)?;
+    let paths = match resource(&state.pool, id).await {
+        Ok(r) => vec![cache_path(state, id, &r.extension, false)?, cache_path(state, id, &r.extension, true)?],
+        Err(AppError::NotFound(_)) => {
+            let mut paths = vec![];
+            if directory.exists() {
+                for item in std::fs::read_dir(&directory)? {
+                    let item = item?;
+                    let path = item.path();
+                    if path.file_stem().and_then(|value| value.to_str()) == Some(id) {
+                        if let Some(extension) = path.extension().and_then(|value| value.to_str()) {
+                            paths.push(cache_path(state, id, extension, false)?);
+                        }
+                    }
+                }
+            }
+            paths
+        }
+        Err(error) => return Err(error),
+    };
+    for path in paths {
         match tokio::fs::remove_file(path).await {
             Ok(()) => (),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
             Err(e) => return Err(e.into()),
         }
     }
+    let (_writer, mut tx) = crate::db::begin_write(&state.pool).await?;
     sqlx::query("DELETE FROM remote_cache WHERE media_file_id=?")
         .bind(id)
-        .execute(&state.pool)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     Ok(())
 }
 #[tauri::command]
@@ -169,11 +223,14 @@ pub async fn remove_remote_cache(
     media_file_id: String,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
+    remove_download(&state, &media_file_id).await
+}
+pub(crate) async fn remove_download(state: &AppState, media_file_id: &str) -> AppResult<()> {
     let _guard = TRANSFER_LOCK
         .get_or_init(|| Mutex::new(()))
         .try_lock()
         .map_err(|_| AppError::Validation("请等待当前传输完成".into()))?;
-    remove(&state, &media_file_id).await
+    remove(state, media_file_id).await
 }
 
 async fn make_room(state: &AppState, id: &str, needed: u64, capacity: u64) -> AppResult<u64> {
@@ -210,6 +267,22 @@ async fn make_room(state: &AppState, id: &str, needed: u64, capacity: u64) -> Ap
 }
 
 pub async fn download(state: &AppState, id: &str, pinned: bool) -> AppResult<PathBuf> {
+    download_inner(state, id, pinned, None).await
+}
+pub(crate) async fn download_controlled(state: &AppState, id: &str, pinned: bool, cancel: watch::Receiver<bool>) -> AppResult<PathBuf> {
+    download_inner(state, id, pinned, Some(cancel)).await
+}
+async fn cancellation(cancel: Option<watch::Receiver<bool>>) {
+    let Some(mut cancel) = cancel else { return std::future::pending().await };
+    while !*cancel.borrow_and_update() { if cancel.changed().await.is_err() { break; } }
+}
+async fn cancellable<T>(cancel: Option<watch::Receiver<bool>>, future: impl std::future::Future<Output = AppResult<T>>) -> AppResult<T> {
+    tokio::select! { biased;
+        _ = cancellation(cancel) => Err(AppError::Validation("下载已暂停".into())),
+        result = future => result,
+    }
+}
+async fn download_inner(state: &AppState, id: &str, pinned: bool, cancel: Option<watch::Receiver<bool>>) -> AppResult<PathBuf> {
     let _guard = TRANSFER_LOCK
         .get_or_init(|| Mutex::new(()))
         .try_lock()
@@ -247,17 +320,15 @@ pub async fn download(state: &AppState, id: &str, pinned: bool) -> AppResult<Pat
         0
     };
     let range = format!("bytes={offset}-");
-    let mut response = client
-        .get(
+    let mut response = cancellable(cancel.clone(), client.get(
             &r.href,
             (offset > 0).then_some(range.as_str()),
             false,
             r.validator(),
-        )
-        .await?;
+        )).await?;
     if response.status().as_u16() == 416 && offset > 0 {
         offset = 0;
-        response = client.get(&r.href, None, false, None).await?;
+        response = cancellable(cancel.clone(), client.get(&r.href, None, false, None)).await?;
     }
     let status = response.status().as_u16();
     if ![200, 206].contains(&status) {
@@ -306,10 +377,8 @@ pub async fn download(state: &AppState, id: &str, pinned: bool) -> AppResult<Pat
     let mut written = offset;
     let result: AppResult<()> = async {
         let mut last_update = std::time::Instant::now();
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|_| AppError::Network("下载中断，可重试继续缓存".into()))?
+        while let Some(chunk) = cancellable(cancel.clone(), async { response.chunk().await
+            .map_err(|_| AppError::Network("下载中断，可重试继续缓存".into())) }).await?
         {
             if used
                 .saturating_add(written)
@@ -331,13 +400,13 @@ pub async fn download(state: &AppState, id: &str, pinned: bool) -> AppResult<Pat
                 last_update = std::time::Instant::now();
             }
         }
-        file.flush().await?;
         if total > 0 && total != written {
             return Err(AppError::Network("下载长度不完整，请重试".into()));
         }
         Ok(())
     }
     .await;
+    let flushed = file.flush().await;
     drop(file);
     sqlx::query("UPDATE remote_cache SET size=? WHERE media_file_id=?")
         .bind(written as i64)
@@ -345,6 +414,7 @@ pub async fn download(state: &AppState, id: &str, pinned: bool) -> AppResult<Pat
         .execute(&state.pool)
         .await?;
     result?;
+    flushed?;
     if target.exists() {
         tokio::fs::remove_file(&target).await?;
     }
@@ -632,6 +702,54 @@ fn valid_range(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn offline_cache_leases_are_session_scoped_reference_counted_and_do_not_erase_external_leases() {
+        let id = Uuid::new_v4().to_string();
+        let first = lease_offline(&id).unwrap(); let second = lease_offline(&id).unwrap();
+        assert!(leased(&id)); drop(first); assert!(leased(&id)); drop(second); assert!(!leased(&id));
+        lease(&id); let scoped = lease_offline(&id).unwrap(); drop(scoped); assert!(leased(&id));
+        LEASES.get().unwrap().lock().unwrap().remove(&id);
+        let transfer = TRANSFER_LOCK.get_or_init(|| Mutex::new(())).lock().await;
+        assert!(lease_offline(&id).is_ok()); drop(transfer);
+        let _cache = CACHE_LIFECYCLE.get_or_init(|| Mutex::new(())).lock().await;
+        assert!(lease_offline(&id).is_err());
+    }
+    #[tokio::test]
+    async fn cancellation_interrupts_a_pending_response_and_preserves_the_request_marker() {
+        let (cancel,receiver) = watch::channel(false);
+        let started = std::sync::Arc::new(tokio::sync::Notify::new()); let signal = started.clone();
+        let task = tokio::spawn(async move { cancellable(Some(receiver),async move {
+            signal.notify_one(); std::future::pending::<AppResult<()>>().await
+        }).await });
+        started.notified().await; cancel.send_replace(true);
+        assert!(tokio::time::timeout(Duration::from_secs(1),task).await.unwrap().unwrap().is_err());
+    }
+    #[tokio::test]
+    async fn orphaned_cache_cleanup_is_limited_to_the_exact_validated_media_id() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = AppState {pool:crate::db::test_pool().await.unwrap(),database_path:directory.path().join("test.db"),data_directory:directory.path().into(),
+            cover_cache_path:directory.path().join("covers"),thumbnail_cache_path:directory.path().join("thumbnails")};
+        let id = Uuid::new_v4().to_string(); let other = Uuid::new_v4().to_string();
+        let cache = directory.path().join("remote-cache"); std::fs::create_dir(&cache).unwrap();
+        for name in [format!("{id}.mp4"),format!("{id}.part"),format!("{other}.mp4"),format!("{id}-original.mp4")] { std::fs::write(cache.join(name),b"fixture").unwrap(); }
+        remove_download(&state,&id).await.unwrap();
+        assert!(!cache.join(format!("{id}.mp4")).exists()); assert!(!cache.join(format!("{id}.part")).exists());
+        assert!(cache.join(format!("{other}.mp4")).exists()); assert!(cache.join(format!("{id}-original.mp4")).exists());
+        assert!(remove_download(&state,"../original").await.is_err());
+    }
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn remote_cache_junction_is_rejected_without_touching_an_external_media_file() {
+        let directory = tempfile::tempdir().unwrap(); let outside = tempfile::tempdir().unwrap();
+        let state = AppState {pool:crate::db::test_pool().await.unwrap(),database_path:directory.path().join("test.db"),data_directory:directory.path().into(),
+            cover_cache_path:directory.path().join("covers"),thumbnail_cache_path:directory.path().join("thumbnails")};
+        let id = Uuid::new_v4().to_string(); let original = outside.path().join(format!("{id}.mp4")); std::fs::write(&original,b"original media").unwrap();
+        let link = directory.path().join("remote-cache");
+        let output = std::process::Command::new("cmd.exe").args(["/D","/C","mklink","/J"]).arg(&link).arg(outside.path()).output().unwrap();
+        assert!(output.status.success(),"{}",String::from_utf8_lossy(&output.stderr));
+        assert!(cache_path(&state,&id,"mp4",false).is_err()); assert!(remove_download(&state,&id).await.is_err());
+        assert_eq!(std::fs::read(original).unwrap(),b"original media"); std::fs::remove_dir(link).unwrap();
+    }
     #[tokio::test]
     async fn range_probe_drains_one_byte_and_reuses_the_same_http_connection() {
         let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

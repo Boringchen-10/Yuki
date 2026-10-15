@@ -1,5 +1,10 @@
 # 第三方依赖与许可证
 
+## 安卓离线下载（2026-10-15）
+
+- AndroidX Media3 `1.9.4` 的 exoplayer / exoplayer-hls / datasource-okhttp 及其 common / datasource / database / extractor / decoder 模块用于持久下载任务、HLS VOD 解析和缓存，不创建 ExoPlayer 播放器；视频仍由既有 libmpv 播放。源码固定版本为 <https://github.com/androidx/media/tree/1.9.4>，Copyright The Android Open Source Project，Apache-2.0，与 Genzo GPLv3 兼容。完整许可见 `licenses/androidx-media3-Apache-2.0.txt`。
+- Media3 的 OkHttp DataSource 使用 OkHttp `4.12.0`，并复用既有依赖图中的 Okio；均为 Copyright Square, Inc.、Apache-2.0。完整许可见同一 Apache-2.0 文本；版本与传递依赖以 Gradle 实际解析结果为准。未复制上游品牌或媒体素材，不引入 DRM/LCP 下载组件。
+
 ## 安卓 Anime4K / libmpv（2026-10-11）
 
 - `bloc97/Anime4K@7684e9586f8dcc738af08a1cdceb024cc184f426`：MIT，Copyright (c) 2019 bloc97。直接包含官方 Clamp / Restore CNN M、VL / Upscale CNN x2 S、M、VL / AutoDownscalePre x2、x4 GLSL；全文 [licenses/anime4k-MIT.txt](licenses/anime4k-MIT.txt)。预设以官方低端 / 高端 Mode A 为准，参考 Kazumi 对 mpv shaders 的加载方式。

@@ -322,7 +322,9 @@ impl BangumiProvider {
     pub async fn comments(&self, external_id: &str, offset: u32, limit: u32) -> AppResult<BangumiCommentPage> {
         let subject_id = external_id.trim().parse::<i64>().map_err(|_| AppError::Validation("Bangumi 条目 ID 无效".into()))?;
         if offset > 1_000_000 || !(1..=100).contains(&limit) { return Err(AppError::Validation("Bangumi 评论分页参数无效".into())); }
-        fetch_comments(self.comments_request(subject_id, offset, limit), subject_id, offset, limit).await
+        let page = fetch_comments(self.comments_request(subject_id, offset, limit), subject_id, offset, limit).await?;
+        crate::bangumi_comment_images::remember_subject_comments(&page.items);
+        Ok(page)
     }
 
     pub async fn episode_comments(&self, episode_id: &str) -> AppResult<Vec<BangumiEpisodeDiscussion>> {

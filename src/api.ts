@@ -273,6 +273,7 @@ export const api = {
     withAnimeStructureAssets(await call<AnimeWorkStructure>("get_bangumi_subject_structure", { externalId, section: section ?? null, force })),
   bangumiComments: (externalId: string, offset = 0, limit = 20) =>
     call<BangumiCommentPage>("get_bangumi_subject_comments", { externalId, offset, limit }),
+  bangumiCommentImage: async (url: string) => localAssetUrl(await call<string>("cache_bangumi_comment_image", { url })) ?? null,
   refreshWorkMetadata: async (workId: string) =>
     withAnimeStructureAssets(await call<AnimeWorkStructure>("refresh_work_metadata", { workId })),
   setMediaEpisode: (mediaFileId: string, episodeExternalId: string | null) =>

@@ -8,6 +8,10 @@ use std::sync::{Arc, Mutex};
 #[derive(Clone)]
 struct RuleOrigin { plugin: String, source: String, work: Option<String>, title: String, road: usize, index: usize, offset: i64 }
 static PREVIEW: Mutex<Option<(String, RuleOrigin)>> = Mutex::new(None);
+static OFFLINE: Mutex<Option<(String, Value)>> = Mutex::new(None);
+pub(crate) fn offline_origin(session: &str, locator: Value) {
+    *OFFLINE.lock().unwrap() = Some((session.into(),locator));
+}
 static SERVING: Mutex<Vec<String>> = Mutex::new(Vec::new());
 pub(crate) fn preview_origin(session: &str, plugin: &str, source: &str, road: usize, index: usize) {
     *PREVIEW.lock().unwrap() = Some((session.into(), RuleOrigin { plugin:plugin.into(), source:source.into(), work:None, title:"规则试播".into(), road, index, offset:0 }));
@@ -77,24 +81,7 @@ fn playback_title(title: &str, rows: &[Value]) -> String {
 }
 
 fn discussion_images(comment: &crate::models::BangumiComment) -> Vec<String> {
-    static IMAGES: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(||regex::Regex::new(r"\[img(?:=[^\]]*)?\](https?://[^\s\[]+)\[/img\]").unwrap());
-    comment.user_avatar.iter().cloned().chain(IMAGES.captures_iter(&comment.comment).take(4).map(|cap|cap[1].to_owned())).collect()
-}
-
-async fn cache_discussion_image(state: &AppState, url: &str) -> AppResult<std::path::PathBuf> {
-    let directory=state.cover_cache_path.join("comment-discussions");
-    std::fs::create_dir_all(&directory)?;
-    let target=crate::metadata_aggregator::artwork_cache_path(&directory,"bangumi-discussion","comment",url);
-    if !target.is_file() {crate::metadata_aggregator::cache_banner(url,&target).await?;}
-    // Only this generated cache is trimmed; library covers and real media stay untouched.
-    let mut files=std::fs::read_dir(&directory)?.filter_map(Result::ok).filter_map(|entry| {
-        let path=entry.path();let metadata=std::fs::symlink_metadata(&path).ok()?;
-        (metadata.file_type().is_file() && path.file_name()?.to_str()?.starts_with("art-v2-") && path.file_name()?.to_str()?.ends_with("-comment.jpg"))
-            .then(||(metadata.modified().unwrap_or(std::time::UNIX_EPOCH),metadata.len(),path))
-    }).collect::<Vec<_>>();
-    let mut total=files.iter().map(|(_,size,_)|size).sum::<u64>(); files.sort_by_key(|(time,_,_)|*time);
-    for (_,size,path) in files {if total<=64*1024*1024 {break;} if path!=target && std::fs::remove_file(path).is_ok() {total=total.saturating_sub(size);} }
-    Ok(target)
+    crate::bangumi_comment_images::image_urls(comment)
 }
 
 fn comment_episode(rows: &[Value], media: Option<&str>) -> Option<(String,String)> {
@@ -106,6 +93,19 @@ fn comment_episode(rows: &[Value], media: Option<&str>) -> Option<(String,String
 }
 
 async fn context(state: &AppState, session: &str, media: Option<&str>) -> AppResult<PageContext> {
+    let offline = OFFLINE.lock().unwrap().as_ref().filter(|(id,_)| id==session).map(|(_,value)|value.clone());
+    if let Some(locator)=offline {
+        let work:Option<String>=if let Some(id)=media {sqlx::query_scalar("SELECT work_id FROM media_files WHERE id=?").bind(id).fetch_optional(&state.pool).await?.flatten()} else {None};
+        let bangumi=if let Some(work)=&work {sqlx::query_scalar("SELECT external_id FROM work_external_ids WHERE work_id=? AND provider='bangumi'").bind(work).fetch_optional(&state.pool).await?} else {None};
+        let linked:Option<(String,String,Option<String>)>=sqlx::query_as("SELECT l.provider,l.episode_external_id,e.title FROM media_episode_links l LEFT JOIN anime_episodes e ON e.work_id=l.work_id AND e.provider=l.provider AND e.external_id=l.episode_external_id JOIN media_files m ON m.id=l.media_file_id AND m.work_id=l.work_id WHERE l.media_file_id=?")
+            .bind(media).fetch_optional(&state.pool).await?;
+        let key=linked.as_ref().map(|(provider,id,_)|format!("{provider}:{id}"));
+        let title=locator["title"].as_str().unwrap_or("离线视频").to_owned();
+        let episode=locator["episodeTitle"].as_str().filter(|value|!value.is_empty()).unwrap_or("已下载视频");
+        let rows=vec![json!({"id":"offline-current","mediaFileId":media,"label":episode,"title":linked.as_ref().and_then(|(_,_,title)|title.as_deref()).unwrap_or(episode),"episodeKey":key,"current":true,"available":false,"sourceKind":"offline","sourceId":"offline","sourceLabel":"离线缓存"})];
+        let comment_episode=comment_episode(&rows,media);
+        return Ok(PageContext{work,bangumi,comment_episode,comments:Arc::new(tokio::sync::Mutex::new(None)),rule:None,episode_rows:rows.clone(),rows,title,roads:vec![],selected_source:"offline".into()});
+    }
     let preview = PREVIEW.lock().unwrap().as_ref().filter(|(id,_)| id==session).map(|(_,origin)|origin.clone());
     let work: Option<String> = if let Some(media) = media { sqlx::query_scalar("SELECT work_id FROM media_files WHERE id=?").bind(media).fetch_optional(&state.pool).await?.flatten() } else { None };
     let work = work.or_else(||preview.as_ref().and_then(|origin|origin.work.clone()));
@@ -219,7 +219,7 @@ pub(crate) fn serve(state: AppState, session: String) {
                             let allowed=context.comments.lock().await.as_ref().is_some_and(|rows| rows.iter().any(|row|
                                 discussion_images(&row.comment).iter().any(|image|image==url) || row.replies.iter().any(|reply|discussion_images(reply).iter().any(|image|image==url))));
                             if !allowed {return Err(AppError::Validation("图片不属于当前分集讨论".into()));}
-                            let path=cache_discussion_image(&state,url).await?;
+                            let path=crate::bangumi_comment_images::cache(&state,url).await?;
                             Ok(json!({"url":url,"path":path.to_string_lossy()}))
                         },
                         "play" => {

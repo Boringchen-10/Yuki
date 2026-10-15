@@ -117,6 +117,11 @@ async fn fixture() -> Fixture {
                     let _=socket.write_all(format!("HTTP/1.1 207 Multi-Status\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{xml}",xml.len()).as_bytes()).await;
                 } else {
                     g.fetch_add(1, Ordering::SeqCst);
+                    if m.load(Ordering::SeqCst) == 7 {
+                        let _=socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\n0123").await;
+                        let mut closed = [0]; let _ = socket.read(&mut closed).await;
+                        return;
+                    }
                     let range = request
                         .lines()
                         .filter_map(|l| l.split_once(':'))
@@ -382,6 +387,31 @@ async fn downloads_resume_and_cached_playback_survives_offline_source() {
     );
     assert_eq!(f.gets.load(Ordering::SeqCst), before);
     assert!(remote_storage::display_path(&format!("webdav://{}/", f.root)).contains(&f.root));
+}
+
+#[tokio::test]
+async fn controlled_download_pause_flushes_partial_bytes_and_resumes_only_the_remaining_range() {
+    let f = fixture().await;
+    scanner::scan_library_root(&f.state.pool,&f.root).await.unwrap();
+    let id: String = sqlx::query_scalar("SELECT id FROM media_files LIMIT 1").fetch_one(&f.state.pool).await.unwrap();
+    f.mode.store(7,Ordering::SeqCst);
+    let (cancel,receiver) = tokio::sync::watch::channel(false);
+    let state = f.state.clone(); let media = id.clone();
+    let download = tokio::spawn(async move {remote_transfer::download_controlled(&state,&media,true,receiver).await});
+    let partial = f.state.data_directory.join("remote-cache").join(format!("{id}.part"));
+    tokio::time::timeout(std::time::Duration::from_secs(5),async {
+        while !tokio::fs::metadata(&partial).await.is_ok_and(|metadata| metadata.len()==4) {tokio::time::sleep(std::time::Duration::from_millis(10)).await;}
+    }).await.unwrap();
+    cancel.send_replace(true);
+    assert!(tokio::time::timeout(std::time::Duration::from_secs(2),download).await.unwrap().unwrap().is_err());
+    assert_eq!(tokio::fs::read(&partial).await.unwrap(),b"0123");
+    assert_eq!(sqlx::query_as::<_,(i64,bool)>("SELECT size,completed FROM remote_cache WHERE media_file_id=?").bind(&id).fetch_one(&f.state.pool).await.unwrap(),(4,false));
+    f.mode.store(0,Ordering::SeqCst);
+    let (cancel,receiver) = tokio::sync::watch::channel(false);
+    let completed = remote_transfer::download_controlled(&f.state,&id,true,receiver).await.unwrap(); drop(cancel);
+    assert_eq!(tokio::fs::read(completed).await.unwrap(),b"0123456789");
+    assert_eq!(f.resumes.load(Ordering::SeqCst),1);
+    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT COUNT(*) FROM media_files").fetch_one(&f.state.pool).await.unwrap(),3);
 }
 
 #[tokio::test]

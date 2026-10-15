@@ -5,6 +5,9 @@ import android.content.Intent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
+import android.widget.ImageView
+import android.graphics.Bitmap
+import android.graphics.drawable.BitmapDrawable
 import androidx.recyclerview.widget.RecyclerView
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
@@ -79,6 +82,41 @@ class PlayerEpisodeCommentsTest {
             onView(withText(containsString("未匹配 Bangumi 分集"))).check(matches(isDisplayed()))
             scene.onActivity { assertNull(panel.takeRequest()) }
         }
+    }
+
+    @Test fun suppliedPicturesRenderAndFailedPicturesRetryWithoutChangingTheComment() {
+        fun pictures(view: View): List<ImageView> = when (view) {
+            is ImageView -> if (view.contentDescription == "评论图片") listOf(view) else emptyList()
+            is ViewGroup -> (0 until view.childCount).flatMap { pictures(view.getChildAt(it)) }
+            else -> emptyList()
+        }
+        val qaContext = ApplicationProvider.getApplicationContext<Context>()
+        val image = java.io.File(qaContext.cacheDir, "comment-picture-${UUID.randomUUID()}.png")
+        val bitmap = Bitmap.createBitmap(640, 360, Bitmap.Config.ARGB_8888).apply { eraseColor(android.graphics.Color.GREEN) }
+        image.outputStream().use { assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }; bitmap.recycle()
+        try {
+            scenario().use { scene ->
+                lateinit var panel: PlayerPage
+                scene.onActivity { activity -> panel = requireNotNull(page(activity.window.decorView)); panel.accept("context", context("1212094", "第01集"), requireNotNull(panel.takeRequest()).getLong("id")) }
+                onView(withText("评论")).perform(click())
+                val comments = take(scene, panel)
+                scene.onActivity { panel.accept("comments", response("前文 [IMG=176,99] \n//i.postimg.cc/generated.png\n[/IMG] 后文"), comments.getLong("id")) }
+                val first = take(scene, panel)
+                assertEquals("commentImage", first.getString("action")); assertEquals("https://i.postimg.cc/generated.png", first.getString("url"))
+                scene.onActivity { panel.accept("commentImage", JSONObject().put("error", ""), first.getLong("id")) }
+                onView(withText("图片加载失败，点击重试")).perform(click())
+                val retry = take(scene, panel); assertEquals(first.getString("url"), retry.getString("url"))
+                scene.onActivity { panel.accept("commentImage", JSONObject().put("path", image.path), retry.getLong("id")) }
+                var loaded = false
+                repeat(30) {
+                    scene.onActivity { loaded = pictures(panel).singleOrNull()?.drawable is BitmapDrawable }
+                    if (!loaded) Thread.sleep(50)
+                }
+                assertTrue("Comment image did not decode", loaded)
+                onView(withText("图片加载中…")).check(matches(withEffectiveVisibility(Visibility.GONE)))
+                onView(withText("前文")).check(matches(isDisplayed())); onView(withText("后文")).check(matches(isDisplayed()))
+            }
+        } finally { image.delete() }
     }
 
     @Test fun scrollingAppendsCommentsAndFailureRetriesTheSameOffsetWithoutLooping() {

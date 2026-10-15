@@ -38,6 +38,24 @@ internal object CommentImageSampling {
     }
 }
 
+internal object CommentImageMarkup {
+    data class Part(val value: String, val image: Boolean = false)
+    private val pattern = Regex("\\[img(?:=[^\\]]*)?\\]\\s*((?:https?:)?//[^\\s\\[\\]]+)\\s*\\[/img\\]", RegexOption.IGNORE_CASE)
+    fun parts(value: String): List<Part> {
+        val result = mutableListOf<Part>()
+        var end = 0
+        pattern.findAll(value).take(4).forEach { match ->
+            if (match.range.first > end) result.add(Part(value.substring(end, match.range.first)))
+            val source = match.groupValues[1]
+            val url = if (source.startsWith("//")) "https:$source" else source.replaceFirst(Regex("^http://", RegexOption.IGNORE_CASE), "https://")
+            result.add(Part(url, true))
+            end = match.range.last + 1
+        }
+        if (end < value.length) result.add(Part(value.substring(end)))
+        return result
+    }
+}
+
 /** Shared comment identity; images remain supplied by the existing private Rust routes. */
 internal class CommentViews(private val context: Context, private val foreground: Int, private val muted: Int,
     private val image: (ImageView, String, Int) -> Unit) {
@@ -66,16 +84,18 @@ internal class CommentViews(private val context: Context, private val foreground
     }
     fun body(value: String): LinearLayout {
         val column = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
-        var end = 0
-        fun append(content: String) { if (content.isNotBlank()) column.addView(text(content.trim(), 14f).apply { setTextIsSelectable(true); setPadding(0, dp(10), 0, dp(4)) }) }
-        Regex("\\[img(?:=[^\\]]*)?\\](https?://[^\\s\\[]+)\\[/img\\]").findAll(value).take(4).forEach { match ->
-            append(value.substring(end, match.range.first))
-            val picture = ImageView(context).apply { adjustViewBounds = true; scaleType = ImageView.ScaleType.FIT_CENTER; minimumHeight = dp(80); maxHeight = context.resources.displayMetrics.heightPixels * 2; contentDescription = "评论图片" }
-            column.addView(picture, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
-            image(picture, match.groupValues[1], context.resources.displayMetrics.widthPixels - dp(72))
-            end = match.range.last + 1
+        CommentImageMarkup.parts(value).forEach { part ->
+            if (part.image) {
+                val frame = FrameLayout(context)
+                val picture = ImageView(context).apply { adjustViewBounds = true; scaleType = ImageView.ScaleType.FIT_CENTER; minimumHeight = dp(80); maxHeight = context.resources.displayMetrics.heightPixels * 2; contentDescription = "评论图片" }
+                frame.addView(picture, FrameLayout.LayoutParams(-1, -2))
+                frame.addView(text("图片加载中…", 13f, muted).apply { tag = "comment-image-status"; gravity = Gravity.CENTER }, FrameLayout.LayoutParams(-1, dp(80)))
+                column.addView(frame, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
+                image(picture, part.value, context.resources.displayMetrics.widthPixels - dp(72))
+            } else if (part.value.isNotBlank()) {
+                column.addView(text(part.value.trim(), 14f).apply { setTextIsSelectable(true); setPadding(0, dp(10), 0, dp(4)) })
+            }
         }
-        append(value.substring(end))
         return column
     }
 }

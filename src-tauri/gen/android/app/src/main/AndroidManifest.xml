@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -33,6 +36,15 @@
         <activity android:name=".PlayerActivity" android:exported="false"
             android:configChanges="orientation|screenSize|keyboardHidden" />
         <service android:name=".SourceImportService" android:exported="false" android:foregroundServiceType="dataSync" />
+        <service android:name=".VideoDownloadService" android:exported="false" android:foregroundServiceType="dataSync">
+            <intent-filter>
+                <action android:name="androidx.media3.exoplayer.downloadService.action.RESTART" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </service>
+        <service android:name=".BookDownloadService" android:exported="false" android:foregroundServiceType="dataSync" />
+        <service android:name="androidx.media3.exoplayer.scheduler.PlatformScheduler$PlatformSchedulerService"
+            android:exported="true" android:permission="android.permission.BIND_JOB_SERVICE" />
         <activity android:name=".ReaderActivity" android:exported="false"
             android:configChanges="keyboardHidden|uiMode" />
         <activity android:name=".RuleVerificationActivity" android:exported="false" />
