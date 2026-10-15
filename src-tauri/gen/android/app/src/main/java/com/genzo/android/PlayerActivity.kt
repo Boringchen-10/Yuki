@@ -45,6 +45,8 @@ class PlayerActivity : ComponentActivity() {
     }
     private lateinit var player: MpvEngine
     private var engineActive = false
+    private var palette: PlayerPalette? = null
+    private var infoDialog: AlertDialog? = null
     private var problem: PlaybackFailure? = null
     private var playbackFailed = false
     private var lastPosition = 0L
@@ -123,6 +125,9 @@ class PlayerActivity : ComponentActivity() {
         .joinToString("") { "%02x".format(it) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        val appearance = PlayerAppearance.read(this)
+        setTheme(if (appearance.dark) R.style.Theme_Genzo_Player_Dark else R.style.Theme_Genzo_Player_Light)
+        palette = appearance
         super.onCreate(savedInstanceState)
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -146,7 +151,7 @@ class PlayerActivity : ComponentActivity() {
         initialSubtitle = intent.getStringExtra("subtitleUri")
         resumeMs = savedInstanceState?.getLong("positionMs") ?: if (intent.getBooleanExtra("restart", false)) 0 else
             intent.getLongExtra("resumeMs", -1L).takeIf { it >= 0 } ?: getSharedPreferences("genzo-prototype-progress", 0).getLong(identity(), 0)
-        root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(0xff0d1612.toInt()) }
+        root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(appearance.background) }
         viewport = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
         superResolutionMode = getSharedPreferences("genzo-player", 0).getInt("anime4kMode", 0).coerceIn(0, 2)
         playbackSettings = PlaybackSettings.read(this)
@@ -173,7 +178,7 @@ class PlayerActivity : ComponentActivity() {
         chrome.addView(top, FrameLayout.LayoutParams(-1, dp(48), Gravity.TOP))
         transport = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(0x77000000); setPadding(dp(8), 0, dp(8), 0) }
         playButton = icon(android.R.drawable.ic_media_play, "暂停/播放") { if (engineActive && problem == null) { if (player.isPlaying) player.pause() else player.play(); showControls(true) } }
-        seek = SeekBar(this).apply { max = 1000; progressTintList = ColorStateList.valueOf(0xff4cc197.toInt()); thumbTintList = progressTintList }
+        seek = SeekBar(this).apply { max = 1000; progressTintList = ColorStateList.valueOf(appearance.accent); thumbTintList = progressTintList }
         label = TextView(this).apply { setTextColor(Color.WHITE); textSize = 11f; gravity = Gravity.CENTER; minWidth = dp(82) }
         fullScreenButton = icon(R.drawable.ic_genzo_fullscreen, "横/竖屏") { requestedOrientation = if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) ActivityInfo.SCREEN_ORIENTATION_PORTRAIT else ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
         nextButton = icon(R.drawable.ic_genzo_skip_next, "下一集") { page.playNext(); showControls(true) }
@@ -187,6 +192,7 @@ class PlayerActivity : ComponentActivity() {
         page = PlayerPage(this, sessionId) { mediaFileId }
         root.addView(page, LinearLayout.LayoutParams(-1, 0, 1f))
         setContentView(root)
+        loadingSpinner.indeterminateTintList = ColorStateList.valueOf(appearance.accent)
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val cutout = insets.getInsets(WindowInsetsCompat.Type.displayCutout())
             val navigation = insets.getInsetsIgnoringVisibility(WindowInsetsCompat.Type.navigationBars())
@@ -275,7 +281,22 @@ class PlayerActivity : ComponentActivity() {
         }
     }
     override fun onConfigurationChanged(config: Configuration) {
-        super.onConfigurationChanged(config); settingsMenu?.dismiss(); page.dismissEpisodes(); layoutPlayer(); ViewCompat.requestApplyInsets(root)
+        super.onConfigurationChanged(config); settingsMenu?.dismiss(); page.dismissEpisodes(); applyAppearance(); layoutPlayer(); ViewCompat.requestApplyInsets(root)
+    }
+    fun applyAppearance() {
+        val next = PlayerAppearance.read(this)
+        if (next == palette || !::page.isInitialized) return
+        palette = next; settingsMenu?.dismiss(); infoDialog?.dismiss(); page.applyAppearance()
+        root.setBackgroundColor(next.background)
+        seek.progressTintList = ColorStateList.valueOf(next.accent); seek.thumbTintList = seek.progressTintList
+        loadingSpinner.indeterminateTintList = ColorStateList.valueOf(next.accent)
+    }
+    private fun showDialog(builder: AlertDialog.Builder) {
+        infoDialog?.dismiss()
+        infoDialog = builder.show().also { dialog ->
+            dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(requireNotNull(palette).menu))
+            listOf(AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEGATIVE).forEach { dialog.getButton(it)?.setTextColor(requireNotNull(palette).accent) }
+        }
     }
     fun takePageRequest(expected: String): JSObject {
         if (expected != sessionId) return JSObject()
@@ -335,7 +356,7 @@ class PlayerActivity : ComponentActivity() {
     }
     private fun showVideoDetails() {
         val video = if (engineActive) "${player.property("video-params/w") ?: "—"} × ${player.property("video-params/h") ?: "—"}\n解码：${player.property("hwdec-current") ?: "—"}\n渲染：${player.property("current-vo") ?: "—"}\n当前处理：${listOf("关闭", "流畅档", "画质档")[player.effectiveMode]}${player.performanceReason?.let { "\n$it" } ?: ""}" else "正在准备视频"
-        AlertDialog.Builder(this).setTitle("视频详情").setMessage("${titleView.text}\n\n$video\n选择档位：${listOf("关闭", "流畅档", "画质档")[superResolutionMode]}").setPositiveButton("关闭", null).show()
+        showDialog(AlertDialog.Builder(requireNotNull(palette).themed(this)).setTitle("视频详情").setMessage("${titleView.text}\n\n$video\n选择档位：${listOf("关闭", "流畅档", "画质档")[superResolutionMode]}").setPositiveButton("关闭", null))
     }
 
     private fun createEngine(mode: Int, paused: Boolean = false) {
@@ -382,12 +403,13 @@ class PlayerActivity : ComponentActivity() {
 
     private fun showSuperResolutionLicenses() {
         val files = listOf("THIRD_PARTY_NOTICES.md", "licenses/anime4k-MIT.txt", "licenses/mpv-android-MIT.txt", "licenses/libmpv-1.2.7/mpv-Copyright.txt", "licenses/libmpv-1.2.7/LGPL-3.0.txt")
-        val text = TextView(this).apply {
+        val text = TextView(requireNotNull(palette).themed(this)).apply {
+            setTextColor(requireNotNull(palette).text)
             setPadding(24, 16, 24, 16); textSize = 12f; setTextIsSelectable(true)
             text = files.joinToString("\n\n") { name -> assets.open(name).bufferedReader().use { it.readText() } }
         }
-        AlertDialog.Builder(this).setTitle("Anime4K 与播放组件许可")
-            .setView(android.widget.ScrollView(this).apply { addView(text) }).setPositiveButton("关闭", null).show()
+        showDialog(AlertDialog.Builder(requireNotNull(palette).themed(this)).setTitle("Anime4K 与播放组件许可")
+            .setView(android.widget.ScrollView(this).apply { addView(text) }).setPositiveButton("关闭", null))
     }
 
     private fun restorePlayback() {
@@ -505,10 +527,10 @@ class PlayerActivity : ComponentActivity() {
 
     private fun showFailureDetails() {
         val details = getSharedPreferences("genzo-player", 0).getString("lastFailure", "{}").orEmpty()
-        AlertDialog.Builder(this).setTitle("播放错误详情").setMessage(details)
+        showDialog(AlertDialog.Builder(requireNotNull(palette).themed(this)).setTitle("播放错误详情").setMessage(details)
             .setPositiveButton("复制详情") { _, _ ->
                 (getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText("播放错误详情", details))
-            }.setNegativeButton("关闭", null).show()
+            }.setNegativeButton("关闭", null))
     }
 
     private fun startMedia(paused: Boolean = false) {
@@ -726,7 +748,7 @@ class PlayerActivity : ComponentActivity() {
         super.finish()
         if (PlayerMotion.enabled) overridePendingTransition(R.anim.genzo_player_hold, R.anim.genzo_player_exit)
     }
-    override fun onResume() { super.onResume(); if (startOnResume && engineActive && player.length > 0) { startOnResume = false; player.play() } }
+    override fun onResume() { super.onResume(); applyAppearance(); if (startOnResume && engineActive && player.length > 0) { startOnResume = false; player.play() } }
     override fun onPause() {
         if (engineActive) player.pause()
         if (isFinishing) { status = "closed"; if (ruleOperation > 0) RuleResolver.cancel(ruleOperation) }
@@ -738,7 +760,7 @@ class PlayerActivity : ComponentActivity() {
     override fun onDestroy() {
         if (ruleOperation > 0) RuleResolver.cancel(ruleOperation)
         subtitlePicker?.resolve(JSObject().put("status", "cancelled")); subtitlePicker = null
-        settingsMenu?.dismiss(); handler.removeCallbacksAndMessages(null)
+        settingsMenu?.dismiss(); infoDialog?.dismiss(); handler.removeCallbacksAndMessages(null)
         if (::page.isInitialized) page.dispose()
         status = "closed"; report(); releaseEngine()
         subtitleFiles.forEach { it.delete() }

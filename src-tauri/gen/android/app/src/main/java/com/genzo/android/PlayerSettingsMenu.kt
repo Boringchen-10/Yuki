@@ -22,6 +22,7 @@ internal data class PlayerMenuItem(val label: String, val enabled: Boolean = tru
 /** Settings expand inside one scrollable surface, including long track lists. */
 internal class PlayerSettingsMenu(private val anchor: View, private val items: List<PlayerMenuItem>, onDismiss: () -> Unit) {
     private val context = anchor.context
+    private val palette = PlayerAppearance.read(context)
     private fun dp(value: Int) = (value * context.resources.displayMetrics.density).toInt()
     private val frame = FrameLayout(context).apply { clipChildren = false; clipToPadding = false; isFocusableInTouchMode = true }
     private val main = panel()
@@ -67,16 +68,17 @@ internal class PlayerSettingsMenu(private val anchor: View, private val items: L
     }
     private fun panel() = ScrollView(context).apply {
         isVerticalScrollBarEnabled = false; elevation = dp(12).toFloat()
-        background = GradientDrawable().apply { setColor(0xff1c2922.toInt()); cornerRadius = dp(8).toFloat() }
+        background = GradientDrawable().apply { setColor(palette.menu); cornerRadius = dp(8).toFloat() }
         addView(LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(6), dp(6), dp(6), dp(6)) })
     }
     private fun row(item: PlayerMenuItem) = TextView(context).apply {
         text = item.label; contentDescription = item.label; textSize = 14f; gravity = Gravity.CENTER_VERTICAL
         setPadding(dp(12), dp(8), dp(8), dp(8)); minimumHeight = dp(48); maxLines = 2; ellipsize = TextUtils.TruncateAt.END
         isEnabled = item.enabled; isSelected = item.selected; alpha = if (item.enabled) 1f else .4f
-        setTextColor(if (item.selected) 0xff4cc197.toInt() else Color.WHITE)
-        background = RippleDrawable(ColorStateList.valueOf(0x334cc197),
-            if (item.selected) ColorDrawable(0x224cc197) else null, ColorDrawable(Color.WHITE))
+        setTextColor(if (item.selected) palette.accent else palette.text)
+        androidx.core.widget.TextViewCompat.setCompoundDrawableTintList(this, ColorStateList.valueOf(currentTextColor))
+        background = RippleDrawable(ColorStateList.valueOf(palette.ripple),
+            if (item.selected) ColorDrawable(palette.selected) else null, ColorDrawable(Color.WHITE))
     }
     private fun expand(item: PlayerMenuItem, header: TextView, group: LinearLayout) {
         removeChild()
@@ -84,7 +86,7 @@ internal class PlayerSettingsMenu(private val anchor: View, private val items: L
         header.setCompoundDrawablesWithIntrinsicBounds(0, 0, R.drawable.ic_genzo_arrow_down, 0)
         child = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(0x22000000)
+            setBackgroundColor(palette.raised)
             item.children.forEach { choice -> addView(row(choice).apply {
                 setPadding(dp(24), dp(8), dp(8), dp(8))
                 setOnClickListener { dismiss(); choice.action() }

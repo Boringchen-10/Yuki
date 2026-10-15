@@ -26,10 +26,11 @@ import java.io.File
 
 /** Portrait business panel. Data comes through the existing Tauri native bridge. */
 class PlayerPage(context: Context, private val session: String?, private val mediaId: () -> String?) : LinearLayout(context) {
-    val accent = Color.rgb(76, 193, 151)
-    private val foregroundColor = Color.rgb(230, 235, 231)
-    private val muted = Color.rgb(143, 158, 150)
-    private val surface = Color.rgb(24, 35, 30)
+    private var palette = PlayerAppearance.read(context)
+    val accent get() = palette.accent
+    private val foregroundColor get() = palette.text
+    private val muted get() = palette.muted
+    private val surface get() = palette.surface
     private val requests = java.util.ArrayDeque<JSONObject>()
     private var sequence = 0L
     private var contextRequest = 0L
@@ -75,10 +76,10 @@ class PlayerPage(context: Context, private val session: String?, private val med
     private val grid = GridLayoutManager(context, 2)
     private val list = RecyclerView(context)
     private val adapter = RowsAdapter()
-    private val commentViews = CommentViews(context, foregroundColor, muted) { view, url, width -> bindCommentImage(view, url, width) }
+    private var commentViews = CommentViews(context, foregroundColor, muted) { view, url, width -> bindCommentImage(view, url, width) }
 
     init {
-        orientation = VERTICAL; setBackgroundColor(Color.rgb(13, 22, 18)); setPadding(dp(16), 0, dp(16), 0)
+        orientation = VERTICAL; setBackgroundColor(palette.background); setPadding(dp(16), 0, dp(16), 0)
         commentsTab.isEnabled = false
         title.maxLines = 2; title.ellipsize = TextUtils.TruncateAt.END
         source.maxLines = 2; source.ellipsize = TextUtils.TruncateAt.END
@@ -106,7 +107,17 @@ class PlayerPage(context: Context, private val session: String?, private val med
         text = value; textSize = size; setTextColor(foregroundColor); gravity = Gravity.CENTER_VERTICAL
         if (bold) setTypeface(typeface, Typeface.BOLD)
     }
-    private fun ripple() = android.graphics.drawable.RippleDrawable(ColorStateList.valueOf(0x334cc197), null, shape(Color.WHITE, 12))
+    private fun ripple() = android.graphics.drawable.RippleDrawable(ColorStateList.valueOf(palette.ripple), null, shape(Color.WHITE, 12))
+    fun applyAppearance() {
+        val next = PlayerAppearance.read(context); if (next == palette) return
+        palette = next; setBackgroundColor(palette.background)
+        repliesDialog?.dismiss(); sourceDialog?.dismiss(); episodePicker?.dismiss()
+        title.setTextColor(foregroundColor); source.setTextColor(foregroundColor); source.background = shape(surface, 16); source.foreground = ripple()
+        message.setTextColor(foregroundColor); retry.setTextColor(accent); more.setTextColor(muted)
+        episodesTab.background = ripple(); commentsTab.background = ripple(); retry.foreground = ripple()
+        commentViews = CommentViews(context, foregroundColor, muted) { view, url, width -> bindCommentImage(view, url, width) }
+        render()
+    }
     private fun tab(label: String, action: () -> Unit) = text(label, 15f, true).apply { gravity = Gravity.CENTER; background = ripple(); setOnClickListener { action() } }
 
     private fun request(action: String, extra: JSONObject = JSONObject()): Boolean {
@@ -229,7 +240,7 @@ class PlayerPage(context: Context, private val session: String?, private val med
     }
     private fun showReplies(parent: JSONObject, replies: JSONArray) {
         repliesDialog?.dismiss()
-        val dialog = BottomSheetDialog(context)
+        val dialog = BottomSheetDialog(palette.themed(context))
         repliesDialog = dialog
         dialog.setOnDismissListener { if (repliesDialog === dialog) repliesDialog = null }
         val column = LinearLayout(context).apply { orientation = VERTICAL; setPadding(dp(16), dp(12), dp(16), dp(20)); setBackgroundColor(surface) }
@@ -262,7 +273,7 @@ class PlayerPage(context: Context, private val session: String?, private val med
         val ruleMode = rules.isNotEmpty()
         val options = if (ruleMode) rules else objects(data.optJSONArray("fileChoices"))
         if (options.isEmpty()) return
-        val dialog = BottomSheetDialog(context); val column = LinearLayout(context).apply { orientation = VERTICAL; setPadding(dp(16), dp(16), dp(16), dp(24)); setBackgroundColor(surface) }
+        val dialog = BottomSheetDialog(palette.themed(context)); val column = LinearLayout(context).apply { orientation = VERTICAL; setPadding(dp(16), dp(16), dp(16), dp(24)); setBackgroundColor(surface) }
         sourceDialog?.dismiss(); sourceDialog = dialog
         dialog.setOnDismissListener { if (sourceDialog === dialog) sourceDialog = null }
         column.addView(text(if (ruleMode) "选择播放线路" else "选择本集文件", 18f, true), LayoutParams(-1, dp(48)))
@@ -271,7 +282,7 @@ class PlayerPage(context: Context, private val session: String?, private val med
             val chosen = if (ruleMode) id == selectedSource else option.optBoolean("current")
             val available = ruleMode || option.optBoolean("available")
             val card = LinearLayout(context).apply { orientation = VERTICAL; setPadding(dp(14), dp(12), dp(14), dp(12)); minimumHeight = dp(68)
-                background = shape(if (chosen) Color.rgb(45, 77, 63) else Color.rgb(31, 43, 36), 16); foreground = ripple(); alpha = if (available) 1f else .45f }
+                background = shape(if (chosen) palette.selected else palette.raised, 16); foreground = ripple(); alpha = if (available) 1f else .45f }
             card.addView(text((if (chosen) "✓  " else "") + (if (ruleMode) option.optString("label") else option.optString("fileName", "视频文件")), 15f, true).apply { maxLines = 3; ellipsize = TextUtils.TruncateAt.END })
             card.addView(text(if (ruleMode) "${allRows.count { it.optString("sourceId") == id }} 集" else option.optString("sourceLabel") + if (available) "" else " · 来源停用或文件缺失", 12f).apply { setTextColor(muted) })
             card.isEnabled = available && !playing
@@ -329,7 +340,7 @@ class PlayerPage(context: Context, private val session: String?, private val med
         if (!hasEpisodes()) return
         dismissEpisodes()
         val width = minOf(dp(360), (resources.displayMetrics.widthPixels * .5f).toInt())
-        val dialog = Dialog(context)
+        val dialog = Dialog(palette.themed(context))
         val column = LinearLayout(context).apply { orientation = VERTICAL; setPadding(dp(12), dp(8), dp(12), dp(8)); setBackgroundColor(surface) }
         val header = LinearLayout(context).apply { gravity = Gravity.CENTER_VERTICAL }
         header.addView(text("选择剧集", 18f, true), LayoutParams(0, dp(48), 1f))
@@ -381,7 +392,7 @@ class PlayerPage(context: Context, private val session: String?, private val med
             }
             column.foreground = ripple()
             column.background = GradientDrawable().apply { setColor(surface); cornerRadius = dp(12).toFloat(); if (current) setStroke(dp(2), accent) }
-            val cover = ImageView(context).apply { scaleType = ImageView.ScaleType.FIT_CENTER; setBackgroundColor(Color.rgb(34, 45, 39)); contentDescription = "${row.optString("label")}分集封面" }
+            val cover = ImageView(context).apply { scaleType = ImageView.ScaleType.FIT_CENTER; setBackgroundColor(palette.raised); contentDescription = "${row.optString("label")}分集封面" }
             val width = coverWidth ?: (resources.displayMetrics.widthPixels - dp(60)) / 2
             column.addView(cover, LayoutParams(-1, width * 9 / 16))
             val key = row.optString("episodeKey"); val path = imagePaths[key]

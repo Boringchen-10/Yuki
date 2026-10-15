@@ -1,0 +1,38 @@
+diff --git a/src/android/AndroidApp.tsx b/src/android/AndroidApp.tsx
+--- a/src/android/AndroidApp.tsx
++++ b/src/android/AndroidApp.tsx
+@@ -19,0 +20 @@ import ReadingHistoryRow from "./ReadingHistoryRow";
++import { nativeAppearance } from "./nativeAppearance";
+@@ -434 +435,2 @@ export default function AndroidApp() {
+-  const accentLightValue = dark ? clamp(accentLight * accentStyle.light, 10, 92) : clamp(accentLight * accentStyle.light * 0.5, 12, 46);
++  const darkAccentLight = clamp(accentLight * accentStyle.light, 10, 92), lightAccentLight = clamp(accentLight * accentStyle.light * 0.5, 12, 46);
++  const accentLightValue = dark ? darkAccentLight : lightAccentLight;
+@@ -654 +656,8 @@ export default function AndroidApp() {
+-  useEffect(() => { document.documentElement.dataset.theme = dark ? "dark" : "light"; void androidApi.appearance(dark).catch(reason => setError(String(reason))); }, [dark]);
++  const appearancePending = useRef<Promise<void>>(Promise.resolve());
++  useEffect(() => {
++    document.documentElement.dataset.theme = dark ? "dark" : "light";
++    const root = rootRef.current; if (!root) return;
++    const value = nativeAppearance(root, theme, lightAccentLight, darkAccentLight);
++    appearancePending.current = appearancePending.current.catch(() => {}).then(() => androidApi.appearance(dark, value));
++    void appearancePending.current.catch(reason => setError(String(reason)));
++  }, [dark, theme, accentHue, accentSatValue, lightAccentLight, darkAccentLight, neutralSatValue, neutralLiftValue, amoled]);
+diff --git a/src/android/api.ts b/src/android/api.ts
+--- a/src/android/api.ts
++++ b/src/android/api.ts
+@@ -69 +69 @@ export const androidApi = {
+-  appearance: (dark: boolean) => invoke<void>("set_android_appearance", { dark }),
++  appearance: (dark: boolean, appearance?: import("./nativeAppearance").NativeAppearance) => invoke<void>("set_android_appearance", { dark, appearance }),
+diff --git a/src-tauri/gen/android/app/src/main/java/com/genzo/android/GenzoPlugin.kt b/src-tauri/gen/android/app/src/main/java/com/genzo/android/GenzoPlugin.kt
+--- a/src-tauri/gen/android/app/src/main/java/com/genzo/android/GenzoPlugin.kt
++++ b/src-tauri/gen/android/app/src/main/java/com/genzo/android/GenzoPlugin.kt
+@@ -62 +62 @@ class PlaybackPreferencesArgs {
+-class AppearanceArgs { var dark: Boolean = true }
++class AppearanceArgs { var dark: Boolean = true; var appearance: Map<String, Any?>? = null }
+@@ -381,0 +382,2 @@ class GenzoPlugin(private val activity: Activity) : Plugin(activity) {
++            try { PlayerAppearance.save(activity, args.dark, args.appearance?.let { org.json.JSONObject(it) }) }
++            catch (_: Exception) { invoke.reject("invalid_player_appearance"); return@runOnUiThread }
+@@ -386 +388,2 @@ class GenzoPlugin(private val activity: Activity) : Plugin(activity) {
+-            activity.window.decorView.setBackgroundColor(if (args.dark) 0xff090d0f.toInt() else 0xfff3f6f5.toInt())
++            activity.window.decorView.setBackgroundColor(PlayerAppearance.read(activity).background)
++            PlayerActivity.current?.get()?.applyAppearance()

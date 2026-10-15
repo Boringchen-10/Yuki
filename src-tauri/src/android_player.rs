@@ -91,9 +91,33 @@ impl PlayerAction {
 }
 
 #[tauri::command]
-pub async fn set_android_appearance(dark: bool) -> AppResult<()> {
-    android_bridge::call("appearance", json!({"dark":dark})).await?;
+pub async fn set_android_appearance(dark: bool, appearance: Option<NativeAppearance>) -> AppResult<()> {
+    if let Some(value)=&appearance { value.validate()?; }
+    android_bridge::call("appearance", json!({"dark":dark,"appearance":appearance})).await?;
     Ok(())
+}
+
+#[derive(Debug, Deserialize, serde::Serialize)]
+#[serde(rename_all="camelCase", deny_unknown_fields)]
+pub struct NativeColors {
+    background: String, raised: String, surface: String, menu: String,
+    text: String, muted: String, accent: String, accent_ink: String,
+}
+#[derive(Debug, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeAppearance { mode: String, light: NativeColors, dark: NativeColors }
+impl NativeAppearance {
+    fn validate(&self) -> AppResult<()> {
+        if !matches!(self.mode.as_str(),"system"|"light"|"dark") { return Err(AppError::Validation("主题模式无效".into())); }
+        for colors in [&self.light,&self.dark] {
+            for value in [&colors.background,&colors.raised,&colors.surface,&colors.menu,&colors.text,&colors.muted,&colors.accent,&colors.accent_ink] {
+                if value.len()!=7 || !value.starts_with('#') || !value.as_bytes()[1..].iter().all(u8::is_ascii_hexdigit) {
+                    return Err(AppError::Validation("主题颜色无效".into()));
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Deserialize, serde::Serialize)]
@@ -494,6 +518,21 @@ pub(crate) async fn preview_stream(state: &AppState, stream: crate::remote_trans
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn appearance_accepts_only_known_modes_and_complete_hex_palettes() {
+        let colors=json!({"background":"#000000","raised":"#101010","surface":"#181818","menu":"#202020","text":"#ffffff","muted":"#aabbcc","accent":"#12AB34","accentInk":"#ffffff"});
+        for mode in ["light","dark","system"] {
+            let value:NativeAppearance=serde_json::from_value(json!({"mode":mode,"light":colors,"dark":colors})).unwrap();
+            assert!(value.validate().is_ok());
+        }
+        for invalid in ["red","#fff","#aabbccdd","#00000z",""] {
+            let mut palette=colors.clone();palette["accent"]=json!(invalid);
+            let value:NativeAppearance=serde_json::from_value(json!({"mode":"dark","light":colors,"dark":palette})).unwrap();
+            assert!(value.validate().is_err());
+        }
+        let value:NativeAppearance=serde_json::from_value(json!({"mode":"unknown","light":colors,"dark":colors})).unwrap();
+        assert!(value.validate().is_err());
+    }
 
     #[test]
     fn resolution_failures_are_actionable_and_do_not_echo_private_locators() {

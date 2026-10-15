@@ -1,5 +1,15 @@
 # Codex 与 DeepSeek Harness 项目交接记录
 
+## 原生播放器主题同步 v0.16.1（2026-10-15）
+
+- 基线 `22ed135`，用户报告播放器主题未匹配设置。根因：appearance仅改MainActivity系统栏，PlayerPage / PlayerSettingsMenu / SeekBar硬编码深绿色。按bug-hunter增量修复，保留主目录及当前OpenDesign其他WIP，无新依赖 / 迁移 / 媒体或个人数据模型变更。
+- 网页按实际CSS解析两套opaque颜色（含风格色调 / 主题色亮度 / AMOLED），通过校验mode及完整#RRGGBB的Rust DTO发送，调用有序；Native PlayerAppearance缓存两套配色和模式。显式浅深覆盖系统，system按原生uiMode选择，主WebView后台也能换色。PlayerActivity补uiMode清单处理并在onConfigurationChanged更新配色，原生测试检查已安装configChanges标记，避免系统切色重建Activity。面板 / 评论 / 来源 / 选集 / 菜单 / 弹窗与进度强调色复用配色；视频黑底和画面上的白字控件保留。换色关闭旧弹窗并重绘，不重建Activity或libmpv / 会话。
+- TypeScript、31前端文件 **130项**通过；真实React颜色6组 / 六宽度通过；Rust目标7项、全套 **414通过 / 19既有忽略**；原生PlayerAppearanceTest **3项**实机通过，包含显式浅深、反向系统配置、重开持久、同Page对象换色、菜单底色 / 文字 / 选中与箭头配色。混合历史7组与下载中心14组回归继续通过。
+- PLK110独立organizeqa真实合成40秒视频，从真实外观设置浅→深→自定义粉色→AMOLED，菜单截图已看；横竖屏后engineInstance / sessionId / paused保持。证据 `D:/DevTools/Android/Build/qa/player-theme-20261015/device-1792049579354/result.json`。只改QA设置并恢复，不创建用户作品或观看记录，不复制用户库 / 凭据。脚本先前尝试拦截不可写invoke与后台等待click稳定失败，仅为夹具错误；最终改读自身QA生成颜色prefs及DOM事件后完整通过。
+- 安卓优化Rust / QA / 日常debug / 签名Release成功，452份生产源与D副本一致；v0.16.1/code16001/com.genzo.android/arm64/min26/target36/非debuggable/原证书/16KiB对齐，无DB / 测试媒体，内嵌index-BPDEST0h.js与index-BTWAeo7R.css。签名制品 `D:/DevTools/Android/Build/previews/player-theme-20261015/Genzo_0.16.1_player-theme_arm64-v8a.apk`，50,027,717字节，最终uiMode清单修订后SHA256 `dd348fa2b842029577fd64f9de63fb3aede95a23255c3500ef5f2cc5cd123918`；原生3项在最终QA重验通过。
+- 普通包与日常readerqa均已install-r更新，最终清单修订也已重新安装并核对制品哈希。刚升级前新快照，前后36作品 / 17来源 / 30播放记录 / 7书籍 / 16规则及个人字段、阅读位置 / 条目、书架和播放偏好哈希一致，无隐式测试数据注入；首次CDP启动未就绪socket hang up，随后重连校验通过，无AndroidRuntime错误。只读核对已安装minified日常包，Native缓存mode / background / accent与实际设置及CSS一致，本机为dark，证据installed-theme.json。日常停留原页面，不自动播放用户媒体。公开版本仍v0.5.2，无Release / 标签 / 推送。
+- AndroidApp / Android api / GenzoPlugin原已dirty，仅本轮增量保存 `docs/android/PLAYER_THEME_SOURCE_HANDOFF.patch`，当前已应用，在v0.16.0 handoff之上；不重复应用，不整文件提交其他维护者WIP。新NativeAppearance / CSS解析模块、clean播放器文件、样式、测试、版本与文档按本轮提交。旧handoff逆向核对应先逆向最新theme增量，不能把后续修订当作旧补丁缺失。
+
 ## 下载中心、漫画历史与播放器设置 v0.16.0（2026-10-15）
 
 - 基线 `503c904`，继续 `.tmp/android-first` / `codex/android-first` 完整当前 OpenDesign。用户要求设置在当前栏展开、横屏去掉已有快捷设置的重复项、Bangumi 评论图片、漫画浏览历史、真实下载中心，并明确包含规则视频离线下载。原先背景玻璃 / 书籍无背景 / 560ms 转场与较大竖屏区域保留。

@@ -34,7 +34,7 @@
         </activity>
 
         <activity android:name=".PlayerActivity" android:exported="false"
-            android:configChanges="orientation|screenSize|keyboardHidden" />
+            android:configChanges="orientation|screenSize|keyboardHidden|uiMode" />
         <service android:name=".SourceImportService" android:exported="false" android:foregroundServiceType="dataSync" />
         <service android:name=".VideoDownloadService" android:exported="false" android:foregroundServiceType="dataSync">
             <intent-filter>
