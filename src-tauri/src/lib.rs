@@ -1,4 +1,5 @@
 mod anime_details;
+mod app_startup;
 mod android_probe;
 mod android_bridge;
 mod android_sources;
@@ -84,18 +85,11 @@ pub fn run() {
                 .map_err(|error| format!("Yuki 无法读取 Bangumi 网络设置。{error}"))?;
             db::allow_cached_images(app.handle(), &state.cover_cache_path)?;
             db::allow_cached_images(app.handle(), &state.thumbnail_cache_path)?;
-            let metadata_pool = state.pool.clone();
-            let reading_pool = state.pool.clone();
-            personal_sync::start(app.handle().clone(),state.pool.clone());
-            tauri::async_runtime::spawn(reading_network::auto_update(reading_pool));
+            #[cfg(not(target_os = "android"))]
+            app_startup::start(app.handle().clone(), state.pool.clone());
             app.manage(state);
             tauri::async_runtime::spawn_blocking(|| {
                 if let Err(error) = explore::warm_embedded_index() {
-                    eprintln!("{error}");
-                }
-            });
-            tauri::async_runtime::spawn(async move {
-                if let Err(error) = explore::check_bangumi_data_update(&metadata_pool).await {
                     eprintln!("{error}");
                 }
             });
@@ -105,6 +99,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            app_startup::start_android_background_services,
             rule_sources::list_rule_plugins,
             rule_sources::get_rule_definition,
             rule_sources::get_rule_catalog,

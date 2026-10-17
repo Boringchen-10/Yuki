@@ -47,6 +47,7 @@ export interface TreeListing {
 }
 export const isDirectoryEntry = (entry: DocumentEntry) => entry.mimeType === "vnd.android.document/directory";
 export const androidApi = {
+  startBackgroundServices: () => invoke<void>("start_android_background_services"),
   playbackPreferences: () => invoke<PlaybackPreferences>("get_android_playback_preferences"),
   savePlaybackPreferences: (settings: PlaybackPreferences) => invoke<PlaybackPreferences>("set_android_playback_preferences", { settings }),
   importSources: (sourceIds: string[], scan = true, mediaIds?: string[]) => invoke<SourceImportTask>("start_source_import", { sourceIds, scan, mediaIds }),

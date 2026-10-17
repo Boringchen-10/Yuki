@@ -10,7 +10,7 @@ function domainOf(origin: string | null): string {
   try { return new URL(origin).host; } catch { return origin.replace(/^[a-z]+:\/\//i, "").split("/")[0] ?? ""; }
 }
 
-export default function RuleSourceManager({ onChanged, registerBack }: { onChanged: () => Promise<void>; registerBack: (handler: (() => boolean) | null) => void }) {
+export default function RuleSourceManager({ onChanged, registerBack, onBusyChange }: { onChanged: () => Promise<void>; registerBack: (handler: (() => boolean) | null) => void; onBusyChange?: (busy: boolean) => void }) {
   const [plugins, setPlugins] = useState<RulePlugin[]>([]), [catalog, setCatalog] = useState<RuleCatalogItem[] | null>(null);
   const [filter, setFilter] = useState(""), [catalogFilter, setCatalogFilter] = useState(""), [catalogView, setCatalogView] = useState<"all" | "installed" | "updatable">("all"), [view, setView] = useState<"all" | "updatable">("all");
   const [definition, setDefinition] = useState(""), [busy, setBusy] = useState(false), [error, setError] = useState(""), [message, setMessage] = useState("");
@@ -21,6 +21,7 @@ export default function RuleSourceManager({ onChanged, registerBack }: { onChang
   const prevTops = useRef(new Map<string, number>());
   const dragState = useRef<{ id: string; grabOffset: number; translate: number; pointerY: number; slots: { top: number; bottom: number; id: string }[] } | null>(null);
   const ruleOrder = usePreferences(state => state.ruleOrder), setRuleOrder = usePreferences(state => state.setRuleOrder);
+  useEffect(() => { onBusyChange?.(busy); }, [busy, onBusyChange]);
   useEffect(() => { let active = true; void rulesApi.plugins().then(items => { if (active) setPlugins(items); }).catch(reason => { if (active) setError(String(reason)); }); return () => { active = false; }; }, []);
   useEffect(() => { let active = true; void rulesApi.catalog(false).then(result => { if (active) setCatalog(result.items); }).catch(() => {}); return () => { active = false; }; }, []);
   useEffect(() => { if (browser) dialog.current?.showModal(); }, [browser]);

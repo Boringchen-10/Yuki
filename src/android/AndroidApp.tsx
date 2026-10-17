@@ -17,6 +17,7 @@ import { androidApi, isDirectoryEntry, listenAndroidChanges, type DocumentEntry,
 import AndroidPrototype from "./AndroidPrototype";
 import AppUpdatePanel from "./AppUpdatePanel";
 import AppIconPicker from "./AppIconPicker";
+import LegalNotice from "./LegalNotice";
 import BookReader from "./BookReader";
 import ReadingHistoryRow from "./ReadingHistoryRow";
 import { nativeAppearance } from "./nativeAppearance";
@@ -403,6 +404,7 @@ export default function AndroidApp() {
   const [personalSyncState, setPersonalSyncState] = useState<SyncStatus | null>(null);
   useEffect(() => { void personalSync.status().then(setPersonalSyncState).catch(() => {}); }, []);
   const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { void androidApi.startBackgroundServices().catch(reason => setError(String(reason))); }, []);
   const main = useRef<HTMLElement>(null);
   const sheet = useRef<HTMLElement>(null);
   const sortSheetRef = useRef<HTMLElement>(null);
@@ -465,7 +467,7 @@ export default function AndroidApp() {
   }, [workId, detail?.mediaFiles.length]);
   const episodeSignature = structure?.episodes.map(episode => `${episode.provider}:${episode.externalId}`).join(",") ?? "";
   const episodeArtwork = useEpisodeArtwork(workId ?? undefined, episodeSignature);
-  const title = top?.title || ({ sources: "资料库", inbox: "待整理", browse: "浏览目录", diagnostics: import.meta.env.DEV ? "开发验证" : "关于", bookshelf: "书架", explore: "发现", network: "网络", appearance: "外观", history: "浏览记录", downloads: "下载中心", "reading-stats": "阅读统计", "reading-stats-settings": "阅读统计设置", "playback-settings": "播放设置", "playback-settings/decoder": "硬件解码器", "playback-settings/renderer": "视频渲染器", "playback-settings/super": "超分辨率", sync: "同步备份", "sync/bangumi": "追番同步", "sync/webdav": "多设备同步" }[route]) || "作品详情";
+  const title = top?.title || ({ legal: "使用协议与隐私说明", sources: "资料库", inbox: "待整理", browse: "浏览目录", diagnostics: import.meta.env.DEV ? "开发验证" : "关于", bookshelf: "书架", explore: "发现", network: "网络", appearance: "外观", history: "浏览记录", downloads: "下载中心", "reading-stats": "阅读统计", "reading-stats-settings": "阅读统计设置", "playback-settings": "播放设置", "playback-settings/decoder": "硬件解码器", "playback-settings/renderer": "视频渲染器", "playback-settings/super": "超分辨率", sync: "同步备份", "sync/bangumi": "追番同步", "sync/webdav": "多设备同步" }[route]) || "作品详情";
 
   async function refresh(renew = false): Promise<void> {
     if (refreshPending.current) return renew ? refreshPending.current.catch(() => {}).then(() => refresh(true)) : refreshPending.current;
@@ -1147,6 +1149,7 @@ export default function AndroidApp() {
           <MenuRow label="规则设置" icon={Package} subtitle="番剧规则来源与排序" onClick={() => navigate("rule-settings")} />
           <MenuRow label="存储管理" icon={HardDrive} subtitle="后续更新" onClick={() => navigate("future/存储管理")} />
           <MenuRow label="关于" icon={Info} onClick={() => navigate("diagnostics")} />
+          <MenuRow label="使用协议与隐私说明" icon={FileText} onClick={() => navigate("legal")} />
         </MenuSection>
         <p className="gz-footer">Yuki v{buildInfo.version} · GPLv3</p>
       </div>}
@@ -1307,6 +1310,7 @@ export default function AndroidApp() {
       {route === "downloads" && <DownloadCenter onReadBook={target => setHistoryReader({...target,offlineOnly:true})} onOpenWork={id => navigate(`detail/${encodeURIComponent(id)}`)} onToast={setToast} onError={reason => setError(String(reason))} />}
       {route === "reading-stats" && readingStatsPage}
       {route === "reading-stats-settings" && readingStatsSettings}
+      {route === "legal" && <><h1 className="gz-legal-title">使用协议与隐私说明</h1><LegalNotice /></>}
       {route === "sync" && syncSettingsPage}
       {route === "sync/bangumi" && bangumiSyncPage}
       {route === "sync/webdav" && webdavSyncPage}
