@@ -15,7 +15,7 @@ export const defaultReadingNetwork: ReadingNetwork = {
   autoUpdate: true, updatedAt: null, attemptedAt: null, comicConcurrency: 4, novelConcurrency: 2,
 };
 async function call<T>(command: string, config?: ReadingNetwork): Promise<T> {
-  if (!isTauri()) throw new Error("阅读网络设置需要在 Genzo 桌面应用中使用。");
+  if (!isTauri()) throw new Error("阅读网络设置需要在 Yuki 桌面应用中使用。");
   return invoke<T>(command, config ? { config } : {});
 }
 export const readingNetworkApi = {

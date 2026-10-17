@@ -37,7 +37,7 @@ async function layouts(name) {
 }
 try {
   await page.setContent('<html data-platform="android"><body style="margin:0"><div id="root"></div></body></html>');
-  await page.addStyleTag({ content: readFileSync(`${output}/fixture/genzo.css`, "utf8") });
+  await page.addStyleTag({ content: readFileSync(`${output}/fixture/yuki.css`, "utf8") });
   await page.addScriptTag({ content: readFileSync(`${output}/fixture/fixture.js`, "utf8") });
   await page.getByRole("button", { name: "浏览规则仓库", exact: true }).click();
   await page.locator(".gz-rule-catalog-row").filter({ hasText: "新安装规则" }).getByRole("button", { name: "安装", exact: true }).click();

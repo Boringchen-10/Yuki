@@ -18,7 +18,7 @@ export function ReadingNetworkPanel() {
       .catch(reason => { if (!cancelled) setError(getErrorMessage(reason)); });
     return () => { cancelled = true; };
   }, [attempt]);
-  if (!isTauri()) return <p className="quiet-inline">请通过 pnpm dev:desktop 启动 Genzo 桌面应用后配置阅读网络。</p>;
+  if (!isTauri()) return <p className="quiet-inline">请通过 pnpm dev:desktop 启动 Yuki 桌面应用后配置阅读网络。</p>;
   if (!config) return error ? <ErrorState message={error} retry={() => { setError(""); setAttempt(v => v + 1); }} /> : <LoadingState label="正在读取阅读网络设置" />;
   const change = <K extends keyof ReadingNetwork>(key: K, value: ReadingNetwork[K]) => { setConfig({ ...config, [key]: value }); setNotice(""); setProbes([]); };
   const action = async (operation: "save" | "fill" | "test") => {

@@ -25,7 +25,7 @@ export default function NetworkPanel({ onToast }: Props) {
     let alive = true;
     if (!isTauri()) {
       setState("error");
-      setError("网络设置需要在 Genzo Android 应用中使用。");
+      setError("网络设置需要在 Yuki Android 应用中使用。");
       return () => { alive = false; };
     }
     void Promise.all([readingNetworkApi.get(), bangumiNetworkApi.get()]).then(([readingConfig, bangumiConfig]) => {

@@ -1,6 +1,8 @@
-# Genzo
+# Yuki
 
-**你的私人次元媒体库。** Genzo 是 Windows 优先、本地优先的 ACGN 管理工具，把自己的动漫、电影、电视剧、漫画、小说和游戏整理成可浏览的作品库，保存收藏、评分、笔记与观看 / 阅读状态，并调用你熟悉的播放器或阅读器。
+项目已于 2026-10-17 由 Genzo 更名为 **Yuki**。开发版使用新名称，以下已发布的历史安装包仍沿用 Genzo 文件名与下载地址；已有数据与升级标识保持兼容，详见[更名说明](docs/PRODUCT_RENAME_YUKI.md)。
+
+**你的私人次元媒体库。** Yuki 是 Windows 优先、本地优先的 ACGN 管理工具，把自己的动漫、电影、电视剧、漫画、小说和游戏整理成可浏览的作品库，保存收藏、评分、笔记与观看 / 阅读状态，并调用你熟悉的播放器或阅读器。
 
 适合已有本地文件、NAS 或 WebDAV 目录，希望整理作品、分集和卷册的用户。扫描和归档建立本地索引；不会替你改名、移动或删除原始媒体文件。
 
@@ -20,7 +22,7 @@
 - [SHA-256 校验文件](https://github.com/Boringchen-10/genzo/releases/download/v0.5.0/SHA256SUMS.txt)
 
 1. 使用 Windows 10 / 11 **64 位**系统，下载上面的 `.exe`，双击并按安装向导操作。
-2. 安装到当前 Windows 用户；安装完成后，从开始菜单或快捷方式启动 **Genzo**。
+2. 安装到当前 Windows 用户；安装完成后，从开始菜单或快捷方式启动 **Genzo（旧版名称）**。
 3. 安装器附带 x64 **WebView2 离线运行时安装程序**：检测到已有运行时会复用，缺失时安装。无需另外安装 Node.js、Rust 或 Android Studio，也无需为 WebView2 临时下载引导程序。读取联网元数据仍需要网络。
 4. v0.5.0 安装包没有代码签名。若 Windows 提示未知发布者，请先核对下载来源和下方 SHA-256；干净系统的 SmartScreen 表现尚未自动验证。
 
@@ -30,7 +32,7 @@
 Get-FileHash .\Genzo_0.5.0_x64-setup.exe -Algorithm SHA256
 ```
 
-Windows 版的外部播放器、阅读器和游戏本体需自行安装 / 准备。安卓 APK 包含漫画 / 小说阅读器与 LibVLC 播放内核。本版没有自动更新器；Windows 升级时关闭 Genzo 后运行新安装包，沿用相同安装目录与用户。旧库通过增量迁移升级，不要手动清库或降级运行旧程序。
+Windows 版的外部播放器、阅读器和游戏本体需自行安装 / 准备。安卓 APK 包含漫画 / 小说阅读器与 LibVLC 播放内核。本版没有自动更新器；Windows 升级时关闭 Yuki 后运行新安装包，沿用相同安装目录与用户。旧库通过增量迁移升级，不要手动清库或降级运行旧程序。
 
 ## 界面预览
 
@@ -62,10 +64,10 @@ Windows 版的外部播放器、阅读器和游戏本体需自行安装 / 准备
 - 动漫以 Bangumi 为主，随包附带 `bangumi-data` 标题索引；TMDB 和 AniList 在身份核对后补充视觉资料、评分或标签。电影 / 电视剧使用 TMDB，需配置自己的 **API Read Access Token**（不是 API Key），参见 [TMDB 官方说明](https://developer.themoviedb.org/docs/authentication-application)。
 - 漫画 / 小说使用文件名、目录和 Bangumi 书籍资料；EPUB 的 OPF、CBZ / ZIP 的 ComicInfo 与内嵌封面可读取。CBR / RAR / 7z、PDF / TXT / MOBI / AZW3 等可以分类索引和交给外部工具，**不保证能提取内嵌资料或封面**。没有匹配资料时仍可手动建书。
 - 漫画探索目前使用拷贝兼容的**作品资料目录**，Kira 仅作为接口适配参考；没有内置漫画章节阅读、账号登录或章节下载。该第三方目录不是已确认的官方开放 API，服务变化可能影响可用性；已有本地库和缓存仍可使用。
-- PotPlayer 观看位置仅采集由 Genzo 调度、能够核对文件的受支持会话；从 Genzo 打开下一集或播放器内切到可唯一匹配的库内文件可继续记录。其他播放器和系统默认打开不自动记录位置，参见 [播放说明](docs/PLAYBACK.md)。
+- PotPlayer 观看位置仅采集由 Yuki 调度、能够核对文件的受支持会话；从 Yuki 打开下一集或播放器内切到可唯一匹配的库内文件可继续记录。其他播放器和系统默认打开不自动记录位置，参见 [播放说明](docs/PLAYBACK.md)。
 - 游戏目前支持本地记录与外部启动；VNDB / IGDB 刮削、跨设备同步、内置播放器 / 阅读器、安卓安装包仍属后续规划，见 [ROADMAP.md](ROADMAP.md)。界面中禁用的 Future 入口不代表功能已交付。
 
-Genzo 不提供影视片源搜索、盗版资源聚合或媒体分发。远程存储只连接用户自行配置且有权访问的文件。
+Yuki 不提供影视片源搜索、盗版资源聚合或媒体分发。远程存储只连接用户自行配置且有权访问的文件。
 
 ## 第一次使用
 
@@ -82,7 +84,7 @@ Genzo 不提供影视片源搜索、盗版资源聚合或媒体分发。远程�
 默认数据目录：`%APPDATA%\com.genzo.desktop`；默认安装目录：`%LOCALAPPDATA%\Genzo`。
 
 - `genzo.db` 保存作品、文件索引、关联、个人记录和设置；`covers` / `thumbnails` 保存图片，`remote-cache` 保存远程缓存。
-- **备份**：关闭 Genzo 后复制整个数据目录到私人位置；不要在运行时只复制 `genzo.db` 而忽略 WAL。恢复前同样关闭程序，并使用相同或更新版本。尚无跨设备账号同步和完整导出向导。
+- **备份**：关闭 Yuki 后复制整个数据目录到私人位置；不要在运行时只复制 `genzo.db` 而忽略 WAL。恢复前同样关闭程序，并使用相同或更新版本。尚无跨设备账号同步和完整导出向导。
 - WebDAV 密码保存于 **Windows 凭据管理器**，不会随数据库备份迁移到其他电脑；新电脑需重新保存连接凭据。TMDB Token 使用本机设置 / SQLite 存储，备份可能含密钥或私人信息，不要公开上传。
 - SQLite 初始化 / 迁移失败会中止启动，不静默重建库。v0.5.0 已验证旧版本磁盘库升级、再次打开与个人数据保留；验证范围和人工检查项见 [发布验证记录](docs/RELEASE_V0.5.0.md)。
 - 删除作品、目录配置或将卷册移出作品，只修改索引 / 关联；“清理缓存”处理应用生成的缓存，原始媒体文件保留。
@@ -110,6 +112,6 @@ node node_modules/@tauri-apps/cli/tauri.js build --bundles nsis -- --locked
 
 ## 许可证与来源
 
-Genzo 使用 [GPL-3.0-only](LICENSE)。第三方依赖、借鉴来源与许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)；内置 `bangumi-data` 按 CC BY 4.0 署名。Genzo 使用 Bangumi、TMDB 与 AniList 等作品资料，不隶属于这些平台。
+Yuki 使用 [GPL-3.0-only](LICENSE)。第三方依赖、借鉴来源与许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)；内置 `bangumi-data` 按 CC BY 4.0 署名。Yuki 使用 Bangumi、TMDB 与 AniList 等作品资料，不隶属于这些平台。
 
 This product uses the TMDB API but is not endorsed or certified by TMDB.

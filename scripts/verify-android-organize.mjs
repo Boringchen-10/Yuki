@@ -11,7 +11,7 @@ const errors = []; page.on("pageerror", error => errors.push(String(error)));
 const result = { output, cases: {}, layouts: [] };
 try {
   await page.setContent('<html data-platform="android"><body style="margin:0"><div id="root"></div></body></html>');
-  await page.addStyleTag({ content: readFileSync(`${output}/fixture/genzo.css`, "utf8") });
+  await page.addStyleTag({ content: readFileSync(`${output}/fixture/yuki.css`, "utf8") });
   await page.addScriptTag({ content: readFileSync(`${output}/fixture/fixture.js`, "utf8") });
   await page.getByRole("button", { name: /测试网盘/ }).click();
   await page.getByRole("button", { name: /动画/ }).click(); await page.getByRole("button", { name: /2024/ }).click();

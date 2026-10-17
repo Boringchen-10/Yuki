@@ -57,7 +57,7 @@ export function RemoteStoragePanel() {
   const directoryParts = input.directory.split("/").filter(Boolean);
   return <section className="content-section remote-storage">
     <div className="section-heading"><div><h2><Cloud size={19} /> WebDAV 与离线缓存</h2><span>直接连接 Alist、NAS 或其他 WebDAV 服务。</span></div><button className="button secondary" disabled={!enabled || !!busy} onClick={() => { setInput(initial); setDestination("media"); setEntries([]); setBrowsed(false); setManualDirectory(""); setError(""); setShow(true); }}>添加 WebDAV</button></div>
-    {!enabled && <p className="field-hint">请在 Genzo 桌面应用中配置连接。浏览器预览不会连接服务器。</p>}
+    {!enabled && <p className="field-hint">请在 Yuki 桌面应用中配置连接。浏览器预览不会连接服务器。</p>}
     {error && <p className="error-message" role="alert">{error}</p>}
     <div className="remote-source-list">{sources.map(source => {
       const root = roots.find(r => r.id === source.id);

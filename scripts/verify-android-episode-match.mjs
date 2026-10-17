@@ -10,7 +10,7 @@ const page = await browser.newPage({ viewport: { width: 412, height: 915 } }); c
 const result = { output, cases: {}, layouts: [] };
 try {
   await page.setContent('<html data-platform="android"><body style="margin:0"><div id="root"></div></body></html>');
-  await page.addStyleTag({ content: readFileSync(`${output}/fixture/genzo.css`, "utf8") }); await page.addScriptTag({ content: readFileSync(`${output}/fixture/fixture.js`, "utf8") });
+  await page.addStyleTag({ content: readFileSync(`${output}/fixture/yuki.css`, "utf8") }); await page.addScriptTag({ content: readFileSync(`${output}/fixture/fixture.js`, "utf8") });
   await page.getByLabel("文件起始集号", { exact: true }).waitFor();
   assert.equal(await page.getByRole("button", { name: /预览匹配/ }).isDisabled(), true);
   await page.getByLabel("文件起始集号", { exact: true }).fill("13");

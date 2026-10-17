@@ -224,7 +224,7 @@ export function HomePage() {
         <div className="seanime-banner-title">
           <span>CONTINUE YOUR JOURNEY</span>
           <h1>{featured?.title ?? "你的本地媒体，都在这里"}</h1>
-          <p>{featured?.description || "从作品组识别到本地播放，Genzo 让动画、漫画、小说和游戏保持清晰有序。"}</p>
+          <p>{featured?.description || "从作品组识别到本地播放，Yuki 让动画、漫画、小说和游戏保持清晰有序。"}</p>
           <div className="gnz-home-actions">
             {lastPlayed ? <button type="button" className="button primary icon-text" title={lastPlayed.fileName} disabled={resumeBusy || resumeActive || !lastPlayed.toolId} onClick={() => void resumeFeatured()}><Play size={17} fill="currentColor" />{resumeActive ? "播放中" : lastPlayed.completed ? "重新观看" : "继续观看"}</button> : featured ? <Link className="button primary icon-text" to={`/library/${featured.id}`}><Play size={17} fill="currentColor" />查看作品</Link> : <Link className="button primary icon-text" to="/library"><Library size={17}/>打开媒体库</Link>}
             {featured ? <Link className="button secondary" to={`/library/${featured.id}`}>作品详情</Link> : <Link className="button secondary" to="/library?tab=sources">添加媒体源</Link>}

@@ -75,13 +75,13 @@ pub fn run() {
         .setup(|app| {
             android_events::init(app.handle());
             let state = tauri::async_runtime::block_on(db::initialize(app.handle()))
-                .map_err(|error| format!("Genzo 无法初始化本地数据库。{error}"))?;
+                .map_err(|error| format!("Yuki 无法初始化本地数据库。{error}"))?;
             tauri::async_runtime::block_on(download_center::initialize(&state, app.handle()))
-                .map_err(|error| format!("Genzo 无法读取下载任务。{error}"))?;
+                .map_err(|error| format!("Yuki 无法读取下载任务。{error}"))?;
             tauri::async_runtime::block_on(video_downloads::initialize(&state.pool))
-                .map_err(|error| format!("Genzo 无法读取视频下载任务。{error}"))?;
+                .map_err(|error| format!("Yuki 无法读取视频下载任务。{error}"))?;
             tauri::async_runtime::block_on(bangumi_network::initialize(&state.pool))
-                .map_err(|error| format!("Genzo 无法读取 Bangumi 网络设置。{error}"))?;
+                .map_err(|error| format!("Yuki 无法读取 Bangumi 网络设置。{error}"))?;
             db::allow_cached_images(app.handle(), &state.cover_cache_path)?;
             db::allow_cached_images(app.handle(), &state.thumbnail_cache_path)?;
             let metadata_pool = state.pool.clone();
@@ -322,5 +322,5 @@ pub fn run() {
             window_style::window_material_supported,
         ])
         .run(tauri::generate_context!())
-        .expect("failed to run Genzo");
+        .expect("failed to run Yuki");
 }

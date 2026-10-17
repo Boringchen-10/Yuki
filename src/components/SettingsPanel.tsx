@@ -177,7 +177,7 @@ export function SettingsPanel() {
             <code title={info.databasePath}>{info.databasePath}</code>
             <code title={info.coverCachePath}>{info.coverCachePath}</code>
             <button type="button" className="button secondary icon-text" onClick={() => void openData()}><FolderOpen size={15} />打开数据目录</button>
-            <small>Genzo v{info.version} · 本地模式</small>
+            <small>Yuki v{info.version} · 本地模式</small>
           </div>
           <div className="setting" aria-label="元数据来源">
             <label htmlFor="tmdbToken">TMDB API Read Access Token</label>

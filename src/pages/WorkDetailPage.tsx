@@ -1078,7 +1078,7 @@ export function WorkDetailPage() {
           {attachLoading ? <LoadingState label="正在读取可关联文件" /> : attachError ? <ErrorState message={attachError} retry={() => void openAttach()} /> : <MediaFileBrowser files={unassigned} roots={attachRoots} busy={busyFile === "attach-batch"} onAttach={attach} />}
         </Modal>
       ) : null}
-      {deleteOpen ? <ConfirmDialog title="删除作品记录？" description="这只会删除 Genzo 数据库中的作品记录，并解除文件关联。任何本地媒体文件都不会被删除、移动或修改。" busy={saving} onCancel={() => setDeleteOpen(false)} onConfirm={() => void remove()} /> : null}
+      {deleteOpen ? <ConfirmDialog title="删除作品记录？" description="这只会删除 Yuki 数据库中的作品记录，并解除文件关联。任何本地媒体文件都不会被删除、移动或修改。" busy={saving} onCancel={() => setDeleteOpen(false)} onConfirm={() => void remove()} /> : null}
       {recognizingMedia ? <RecognitionDialog media={recognizingMedia} initialCandidates={work.candidates.filter((candidate) => candidate.mediaFileId === recognizingMedia.id)} onClose={() => setRecognizingMedia(null)} onMatched={(workId) => { setRecognizingMedia(null); if (workId === work.id) void load(); else navigate(`/library/${workId}`); }} onChanged={() => void load()} /> : null}
     </div>
   );

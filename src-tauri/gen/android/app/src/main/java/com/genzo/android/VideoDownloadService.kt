@@ -24,7 +24,7 @@ class VideoDownloadService : DownloadService(5407, 1000L) {
     override fun getForegroundNotification(downloads: MutableList<Download>, notMetRequirements: Int): Notification {
         val active = downloads.count { it.state == Download.STATE_DOWNLOADING }
         val text = if (notMetRequirements != 0) "等待网络连接" else "正在下载 $active 个视频"
-        return downloadNotification(this, "Genzo 下载中心", text)
+        return downloadNotification(this, "Yuki 下载中心", text)
     }
     override fun onTimeout(startId: Int, fgsType: Int) {
         val manager = OfflineVideoDownloads.get(this).manager
@@ -41,7 +41,7 @@ class BookDownloadService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         stopped = false
         val count = intent?.getIntExtra("count", 1)?.coerceAtLeast(1) ?: 1
-        val notification = downloadNotification(this, "Genzo 下载中心", "正在下载 $count 个书籍任务")
+        val notification = downloadNotification(this, "Yuki 下载中心", "正在下载 $count 个书籍任务")
         if (Build.VERSION.SDK_INT >= 29) startForeground(5408, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         else startForeground(5408, notification)
         return START_NOT_STICKY

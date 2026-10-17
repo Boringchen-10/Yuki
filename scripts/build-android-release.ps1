@@ -22,7 +22,7 @@ $taskVersion = (Get-Content -LiteralPath (Join-Path $taskSource 'package.json') 
 $taskOutput = "D:\DevTools\Android\Build\releases\v$taskVersion"
 New-Item -ItemType Directory -Force -Path $taskOutput | Out-Null
 $taskAligned = Join-Path $taskOutput 'aligned-unsigned.apk'
-$taskApk = Join-Path $taskOutput "Genzo_${taskVersion}_android_arm64-v8a.apk"
+$taskApk = Join-Path $taskOutput "Yuki_${taskVersion}_android_arm64-v8a.apk"
 $taskBuildTools = 'D:\DevTools\Android\Sdk\build-tools\35.0.0'
 & (Join-Path $taskBuildTools 'zipalign.exe') -f -P 16 4 $taskUnsigned $taskAligned
 if ($LASTEXITCODE -ne 0) { throw 'Android ZIP alignment failed' }

@@ -29,7 +29,7 @@ class SourceImportService : Service() {
         val pending = PendingIntent.getActivity(this, 0, open, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val notification = NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.stat_notify_sync)
-            .setContentTitle("Genzo 正在后台整理")
+            .setContentTitle("Yuki 正在后台整理")
             .setContentText(intent?.getStringExtra("text") ?: "正在准备扫描目录")
             .setContentIntent(pending).setOngoing(true).setOnlyAlertOnce(true).setSilent(true).build()
         if (Build.VERSION.SDK_INT >= 29) startForeground(ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)

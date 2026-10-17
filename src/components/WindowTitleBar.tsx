@@ -94,7 +94,7 @@ export function WindowTitleBar() {
     >
       <div className="window-identity" data-tauri-drag-region>
         <img src="/genzo-icon.svg" alt="" data-tauri-drag-region />
-        <span data-tauri-drag-region>Genzo</span>
+        <span data-tauri-drag-region>Yuki</span>
       </div>
       <div className="window-drag-space" data-tauri-drag-region>
         {provider.meta.mock ? (

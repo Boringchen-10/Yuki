@@ -1015,7 +1015,7 @@ export default function AndroidApp() {
           <MenuRow label="存储管理" icon={HardDrive} subtitle="后续更新" onClick={() => navigate("future/存储管理")} />
           <MenuRow label="关于" icon={Info} onClick={() => navigate("diagnostics")} />
         </MenuSection>
-        <p className="gz-footer">Genzo v{buildInfo.version} · GPLv3</p>
+        <p className="gz-footer">Yuki v{buildInfo.version} · GPLv3</p>
       </div>}
       {route.startsWith("playback-settings") && <PlaybackSettingsPanel page={(route.split("/")[1] || "main") as PlaybackSettingsPage} onNavigate={page => navigate(page === "main" ? "playback-settings" : `playback-settings/${page}`)} />}
       {route === "appearance" && <>
@@ -1199,7 +1199,7 @@ export default function AndroidApp() {
       {route === "sync" && syncSettingsPage}
       {route === "sync/bangumi" && bangumiSyncPage}
       {route === "sync/webdav" && webdavSyncPage}
-      {route === "diagnostics" && (import.meta.env.DEV ? <AndroidPrototype /> : <Section title={`Genzo v${buildInfo.version}`}><p className="gz-meta">本地优先的 ACGN 统一媒体库，管理你的作品、个人记录与阅读进度。</p><p className="gz-meta">本软件采用 GPLv3。源代码与第三方许可：github.com/Boringchen-10/genzo</p></Section>)}
+      {route === "diagnostics" && (import.meta.env.DEV ? <AndroidPrototype /> : <Section title={`Yuki v${buildInfo.version}`}><p className="gz-meta">本地优先的 ACGN 统一媒体库，管理你的作品、个人记录与阅读进度。</p><p className="gz-meta">本软件采用 GPLv3。源代码与第三方许可：github.com/Boringchen-10/genzo</p></Section>)}
       </>}
       {(route === "explore" || visitedPanels.includes("explore")) && <div className="gz-kept-page" hidden={route !== "explore"}><ExplorePanel active={route === "explore"} onToast={setToast} onLibraryChanged={() => void refresh(true).catch(reason => setError(String(reason)))} registerBack={registerSubviewBack} /></div>}
       {(route === "network" || visitedPanels.includes("network")) && <div className="gz-kept-page" hidden={route !== "network"}><NetworkPanel onToast={setToast} /></div>}
@@ -1252,7 +1252,7 @@ export default function AndroidApp() {
     </section></div>}
     {historyClear && <div className="gz-scrim gz-scrim-center" onClick={() => setHistoryClear(false)}><section className="gz-sheet gz-confirm" role="dialog" aria-modal="true" aria-labelledby="gz-confirm-title" onClick={event => event.stopPropagation()}>
       <h2 id="gz-confirm-title" className="gz-confirm-title">清除全部观看记录？</h2>
-      <p className="gz-meta">仅清除 Genzo 中的观看记录，不会删除磁盘文件或作品。</p>
+      <p className="gz-meta">仅清除 Yuki 中的观看记录，不会删除磁盘文件或作品。</p>
       <div className="gz-confirm-actions"><button type="button" className="gz-btn" onClick={() => setHistoryClear(false)}>取消</button><button type="button" className="gz-btn primary" onClick={clearHistoryRecords}>清除</button></div>
     </section></div>}
   </div>;

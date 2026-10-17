@@ -48,7 +48,7 @@ export default function AndroidPrototype() {
     return () => { active = false; window.clearInterval(timer); };
   }, [sourceId]);
   return <main className="android-prototype">
-    <h1>Genzo 安卓验证原型</h1>
+    <h1>Yuki 安卓验证原型</h1>
     <p>Windows v0.5.0 基线 · 当前为能力验证页，正式页面按 OpenDesign 规范接入</p>
     <h2>数据库与持久化</h2>
     <button disabled={busy} onClick={() => void probe(true)}>写入验证标记</button>

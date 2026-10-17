@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Genzo",
+  "productName": "Yuki",
   "version": "0.17.1",
   "identifier": "com.genzo.desktop",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Genzo",
+        "title": "Yuki",
         "width": 1366,
         "height": 768,
         "minWidth": 1024,
@@ -51,8 +51,8 @@
     ],
     "category": "Entertainment",
     "shortDescription": "本地优先的 ACGN 媒体库",
-    "longDescription": "Genzo 用于扫描、整理和打开用户自己的本地 ACGN 媒体文件。",
-    "publisher": "Genzo contributors",
+    "longDescription": "Yuki 用于扫描、整理和打开用户自己的本地 ACGN 媒体文件。",
+    "publisher": "Yuki contributors",
     "licenseFile": "../LICENSE",
     "icon": [
       "icons/32x32.png",

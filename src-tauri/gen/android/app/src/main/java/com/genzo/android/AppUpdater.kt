@@ -54,16 +54,17 @@ internal object AppUpdatePolicy {
             val tag = release.optString("tag_name")
             val version = tag.removePrefix("v")
             if (!newer(version, selected?.version ?: current)) continue
-            val name = "Genzo_${version}_android_${abi}.apk"
+            val names = listOf("Yuki_${version}_android_${abi}.apk", "Genzo_${version}_android_${abi}.apk")
             val assets = release.optJSONArray("assets") ?: continue
             var apk: JSONObject? = null
             var sums = ""
             for (assetIndex in 0 until assets.length()) {
                 val asset = assets.getJSONObject(assetIndex)
-                if (asset.optString("name") == name) apk = asset
+                if (asset.optString("name") in names && (apk == null || asset.optString("name") == names.first())) apk = asset
                 if (asset.optString("name") == "SHA256SUMS.txt") sums = asset.optString("browser_download_url")
             }
             val file = apk ?: continue
+            val name = file.getString("name")
             val url = file.optString("browser_download_url")
             val size = file.optLong("size")
             val digest = file.optString("digest").removePrefix("sha256:").lowercase().takeIf { it.matches(Regex("[a-f0-9]{64}")) } ?: ""
@@ -152,7 +153,7 @@ internal object AppUpdater {
         repeat(6) {
             check(current(id))
             require(if (api) url == "https://api.github.com/repos/${AppUpdatePolicy.REPOSITORY}/releases?per_page=30" else AppUpdatePolicy.trustedUrl(url, false)) { "更新下载地址不受信任" }
-            val call = client.newCall(Request.Builder().url(url).header("User-Agent", "Genzo-Android-Updater")
+            val call = client.newCall(Request.Builder().url(url).header("User-Agent", "Yuki-Android-Updater")
                 .header("Accept", if (api) "application/vnd.github+json" else "application/octet-stream").build())
             // Metadata and headers are bounded; the APK body uses an idle timeout so large downloads can finish.
             call.timeout().timeout(if (api) 20 else 0, TimeUnit.SECONDS)

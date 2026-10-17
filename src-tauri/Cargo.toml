@@ -1,8 +1,8 @@
 [package]
 name = "genzo"
 version = "0.17.1"
-description = "Genzo - 你的私人次元媒体库"
-authors = ["Genzo contributors"]
+description = "Yuki - 你的私人次元媒体库"
+authors = ["Yuki contributors"]
 edition = "2021"
 license = "GPL-3.0-only"
 

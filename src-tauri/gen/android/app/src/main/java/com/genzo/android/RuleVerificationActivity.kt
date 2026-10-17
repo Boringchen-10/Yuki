@@ -25,7 +25,7 @@ class RuleVerificationActivity : Activity() {
             view.setPadding(bars.left, bars.top, bars.right, bars.bottom); insets
         }
         layout.addView(TextView(this).apply { text = "完成来源网站的验证后，返回应用重试搜索"; setTextColor(Color.WHITE); textSize = 16f; setPadding(12,12,12,12) })
-        layout.addView(Button(this).apply { text = "完成验证，返回 Genzo"; setOnClickListener { android.webkit.CookieManager.getInstance().flush(); finish() } })
+        layout.addView(Button(this).apply { text = "完成验证，返回 Yuki"; setOnClickListener { android.webkit.CookieManager.getInstance().flush(); finish() } })
         val view = WebView(this); browser = view
         view.settings.apply { userAgentString = RuleResolver.USER_AGENT; javaScriptEnabled = true; domStorageEnabled = true; allowFileAccess = false; allowContentAccess = false; setGeolocationEnabled(false) }
         val anti = try { JSONObject(intent.getStringExtra("config") ?: "{}") } catch (_: Exception) { JSONObject() }

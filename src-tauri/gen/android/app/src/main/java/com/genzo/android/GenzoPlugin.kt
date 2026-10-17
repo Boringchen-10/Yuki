@@ -171,7 +171,7 @@ class GenzoPlugin(private val activity: Activity) : Plugin(activity) {
         if (data.size > 16 * 1024 * 1024 || pendingDataPackage != null) { invoke.reject("package_limit_or_busy"); return }
         pendingDataPackage = data
         startActivityForResult(invoke,Intent(Intent.ACTION_CREATE_DOCUMENT).setType("application/json").addCategory(Intent.CATEGORY_OPENABLE)
-            .putExtra(Intent.EXTRA_TITLE,"Genzo-personal-data.json"),"dataPackageSaved")
+            .putExtra(Intent.EXTRA_TITLE,"Yuki-personal-data.json"),"dataPackageSaved")
     }
     @ActivityCallback
     fun dataPackageSaved(invoke: Invoke,result: ActivityResult) {

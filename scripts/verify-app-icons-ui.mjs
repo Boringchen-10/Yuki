@@ -11,7 +11,7 @@ await build({ configFile: false, publicDir: false, logLevel: "error", define: { 
   build: { outDir: `${output}/fixture`, lib: { entry: "scripts/fixtures/android-app-icons.tsx", name: "IconFixture", formats: ["iife"], fileName: () => "fixture.js" } } });
 const server = createServer((req, res) => {
   const path = req.url === "/" ? null : resolve(`${output}/fixture${req.url}`);
-  if (!path) { res.setHeader("content-type", "text/html; charset=utf-8"); res.end('<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/genzo.css"><div id="root"></div><script src="/fixture.js"></script>'); return; }
+  if (!path) { res.setHeader("content-type", "text/html; charset=utf-8"); res.end('<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/yuki.css"><div id="root"></div><script src="/fixture.js"></script>'); return; }
   try { res.setHeader("content-type", path.endsWith(".png") ? "image/png" : path.endsWith(".css") ? "text/css" : "text/javascript"); res.end(readFileSync(path)); }
   catch { res.writeHead(404); res.end(); }
 });

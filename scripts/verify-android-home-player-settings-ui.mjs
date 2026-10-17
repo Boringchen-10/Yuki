@@ -25,7 +25,7 @@ async function layouts(label) {
 }
 try {
   await page.setContent('<html data-platform="android"><body style="margin:0"><div id="root"></div></body></html>');
-  await page.addStyleTag({ content: readFileSync(`${output}/fixture/genzo.css`, "utf8") });
+  await page.addStyleTag({ content: readFileSync(`${output}/fixture/yuki.css`, "utf8") });
   await page.addScriptTag({ content: readFileSync(`${output}/fixture/fixture.js`, "utf8") });
   const hardware = page.getByRole("switch", { name: /硬件解码/ }); await hardware.waitFor();
   await layouts("settings");

@@ -1,5 +1,5 @@
 /**
- * Genzo 设计期 Mock Provider（明确标记，非真实后端）
+ * Yuki 设计期 Mock Provider（明确标记，非真实后端）
  *
  * - 全部数据为固定 fixture，**不代表**任何真实后端能力。
  * - 只读操作返回带 `MOCK_NOTICE` 标记的示例数据；内存写操作仅用于演示交互，
@@ -324,7 +324,7 @@ const EXPLORE_SEEDS: MockExploreSeed[] = [
     title: "示例 · 第七码头的夏天",
     originalTitle: "Sample Summer at Pier Seven",
     aliases: ["第七码头（示例）"],
-    description: "示例简介：用于演示无封面时回退到 Genzo 自制占位封面。",
+    description: "示例简介：用于演示无封面时回退到 Yuki 自制占位封面。",
     coverUrl: null,
     year: 2026,
     month: 10,
@@ -826,7 +826,7 @@ export function createMockProvider(): GenzoDataProvider {
     },
 
     async recognizeMedia(mediaFileId, query, kind = "anime") {
-      if (kind !== "anime") throw new Error("电影与电视剧识别需要在 Genzo 桌面端运行，并配置 TMDB 凭据；浏览器预览不会执行真实刮削。");
+      if (kind !== "anime") throw new Error("电影与电视剧识别需要在 Yuki 桌面端运行，并配置 TMDB 凭据；浏览器预览不会执行真实刮削。");
       const title = query?.trim() || "示例作品";
       const candidates: MatchCandidate[] = [
         {
@@ -856,7 +856,7 @@ export function createMockProvider(): GenzoDataProvider {
       return result;
     },
     async recognizeUnmatched(kind = "anime") {
-      if (kind !== "anime") throw new Error("电影与电视剧批量识别需要在 Genzo 桌面端运行。");
+      if (kind !== "anime") throw new Error("电影与电视剧批量识别需要在 Yuki 桌面端运行。");
       const summary: RecognitionSummary = { scanned: 12, matched: 8, pending: 3, unmatched: 1, errors: 0 };
       return summary;
     },

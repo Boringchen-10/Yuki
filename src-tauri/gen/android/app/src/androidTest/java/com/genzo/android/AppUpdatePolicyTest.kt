@@ -14,8 +14,8 @@ import java.security.MessageDigest
 
 @RunWith(AndroidJUnit4::class)
 class AppUpdatePolicyTest {
-    private fun release(version: String, abi: String = "arm64-v8a", prerelease: Boolean = false): JSONObject {
-        val name = "Genzo_${version}_android_${abi}.apk"
+    private fun release(version: String, abi: String = "arm64-v8a", prerelease: Boolean = false, brand: String = "Genzo"): JSONObject {
+        val name = "${brand}_${version}_android_${abi}.apk"
         return JSONObject().put("tag_name", "v$version").put("prerelease", prerelease).put("assets", JSONArray()
             .put(JSONObject().put("name", name).put("size", 100).put("digest", "sha256:" + "a".repeat(64))
                 .put("browser_download_url", "https://github.com/Boringchen-10/genzo/releases/download/v$version/$name")))
@@ -40,6 +40,16 @@ class AppUpdatePolicyTest {
         val unsafe = release("0.17.1")
         unsafe.getJSONArray("assets").getJSONObject(0).put("browser_download_url", "https://github.com/other/genzo/releases/download/v0.17.1/Genzo.apk")
         assertNull(AppUpdatePolicy.offer(JSONArray().put(unsafe), "0.17.0", "arm64-v8a"))
+    }
+    @Test fun renamedAssetsPreferYukiAndStillAcceptPublishedGenzoFiles() {
+        val legacy = release("0.18.0")
+        val renamed = release("0.18.0", brand = "Yuki")
+        assertEquals("Genzo_0.18.0_android_arm64-v8a.apk", AppUpdatePolicy.offer(JSONArray().put(legacy), "0.17.1", "arm64-v8a")?.name)
+        assertEquals("Yuki_0.18.0_android_arm64-v8a.apk", AppUpdatePolicy.offer(JSONArray().put(renamed), "0.17.1", "arm64-v8a")?.name)
+        legacy.getJSONArray("assets").put(renamed.getJSONArray("assets").getJSONObject(0))
+        assertEquals("Yuki_0.18.0_android_arm64-v8a.apk", AppUpdatePolicy.offer(JSONArray().put(legacy), "0.17.1", "arm64-v8a")?.name)
+        val wrong = release("0.18.0", "x86_64", brand = "Yuki")
+        assertNull(AppUpdatePolicy.offer(JSONArray().put(wrong), "0.17.1", "arm64-v8a"))
     }
     @Test fun identityRequiresTheSameApplicationAndSigningKeyAndAHigherCode() {
         AppUpdatePolicy.validateIdentity("com.genzo.android", 17001, setOf("key"), "com.genzo.android", 17000, setOf("key"))

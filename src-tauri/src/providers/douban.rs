@@ -20,7 +20,7 @@ impl MetadataProvider for DoubanProvider {
             configured: false,
             requires_credential: true,
             message: Some(
-                "没有可供 Genzo 合规使用的稳定公开 API；不会抓取网页或调用未公开接口".to_string(),
+                "没有可供 Yuki 合规使用的稳定公开 API；不会抓取网页或调用未公开接口".to_string(),
             ),
         }
     }
@@ -36,6 +36,6 @@ impl MetadataProvider for DoubanProvider {
 
 fn unavailable() -> AppError {
     AppError::Validation(
-        "豆瓣补源尚不可用：当前没有稳定、授权的正式 API，Genzo 不会抓取网页".to_string(),
+        "豆瓣补源尚不可用：当前没有稳定、授权的正式 API，Yuki 不会抓取网页".to_string(),
     )
 }

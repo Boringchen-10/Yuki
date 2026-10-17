@@ -208,7 +208,7 @@ export function BookDetailSection({ workId, mediaFiles, onMetadataChanged }: { w
     void saveOrder(sortMode === "desc" ? "desc" : "custom", sortMode === "desc" ? ids.reverse() : ids);
   };
 
-  if (!isTauri()) return <p className="quiet-inline">书籍卷册与刮削需要在 Genzo 桌面应用中使用。</p>;
+  if (!isTauri()) return <p className="quiet-inline">书籍卷册与刮削需要在 Yuki 桌面应用中使用。</p>;
   return <div className="book-detail" id="bookshelf-entries">
     <div className="book-detail-toolbar">
       <strong>书籍与阅读记录</strong>

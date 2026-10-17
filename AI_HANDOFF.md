@@ -1,5 +1,14 @@
 # Codex 与 DeepSeek Harness 项目交接记录
 
+## 正式产品名称改为 Yuki（2026-10-17）
+
+- 用户确认将 Genzo 更名为 Yuki。Windows 主工作区与 `.tmp/android-first` 安卓分支分别修改展示名、标题 / 关于 / 提示、通知与导出名、前端包元信息和构建配置，原始设计归档与已发布附件保留。实现范围 / NSIS 旧安装器边界见 docs/PRODUCT_RENAME_YUKI.md；本轮没有创建 Windows 新安装器或正式 Release / 标签 / 推送。
+- 保留 com.genzo.desktop / com.genzo.android / readerqa、genzo.db、凭据 / Keystore / localStorage / 现有同步协议、内部 JNI / crate 和三个 Launcher 组件名。GitHub 仓库与固定签名不变。Android 新构建命名 Yuki_<version>_android_<abi>.apk，更新器优先 Yuki 并接受旧 Genzo 文件；保留 URL、ABI、版本、完整性与签名约束。
+- Windows TypeScript / 79 前端项 / 生产构建 / cargo check --locked --offline 通过；三尺寸 × 深浅主题六组合确认标题栏与设置品牌 Yuki、无水平溢出。Android TypeScript / 130 项 / 图标选择六场景与12布局、完整优化 Rust/Kotlin/R8 / 签名 Release 通过。独立 com.genzo.android.renameqa / Android16 的6项原生检查通过，含三入口名称和新旧更新附件选择、错误身份 / 签名 / ABI / 校验拒绝；测试包已清理。
+- 普通签名预览 D:/DevTools/Android/Build/previews/yuki-rename-20261017/Yuki_0.17.1_android_arm64-v8a.apk，50,700,357字节，SHA256 3f916f7ddf7567e4edfddea3383cb14635330b6009fa7237417bea9a6812357d。原证书 / 包名 / code17001 / min26 / target36 / 非debuggable / arm64 / v2+v3 /16KiB通过，406份生产输入与构建副本一致，三库按Gradle剥离结果核对，无DB；源清单与校验文件同目录。版本沿用0.17.1，不标为新正式发布。
+- 手机日常 com.genzo.android.readerqa 已同签名 install-r 更新为 Yuki，安装APK读回哈希8daa9299077b2824bcf593bf1d272aa5675b4e4c3823fa7bdba29420fd605072。38作品 /428关联媒体 /17来源 /33观看进度 /16规则 /7书籍作品 /32阅读历史，个人字段、关联、位置与外观/播放偏好哈希前后一致，原图标选择保留。只记录计数/单向哈希，不复制用户DB或凭据。证据 D:/DevTools/Android/Build/qa/rename-yuki-20261017/daily-update/result.json；现有前端预览已同步新包资源并重新连接。
+- 全部证据与开始备份在 D:/DevTools/Android/Build/qa/rename-yuki-20261017。只提交更名自身差异；原有 HomePage / WorkDetailPage / PlaybackHistory 及安卓 AndroidApp / NetworkPanel / GenzoPlugin / 整理验证脚本的 WIP 从原内容单独核对并保留。Windows AI_HANDOFF 原有8行删除继续留为未提交，不将其他维护者工作混入。本轮不修改真实媒体，不重跑完整Rust单元套件；Android8–12与Windows旧安装器覆盖升级未在本轮实测。
+
 ## 图标版日常手机覆盖更新（2026-10-17）
 
 - 用户明确要求代为更新手机。设备当时仅有日常 `com.genzo.android.readerqa`，不是普通 com.genzo.android；核对旧 / 新 APK 签名相同后，对现有日常包 install-r 升级 0.16.1 / 16001 → 0.17.1 / 17001，未卸载、清库或另建日常资料。使用最终优化 reader APK，SHA256 `5935f9865241aaef0aa857785e395fa61c66a12a9cb6b49946cbee1899e166e2`，已从设备读回安装 APK 核对一致；上一节签名普通包继续单独保留。

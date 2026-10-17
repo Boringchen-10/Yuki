@@ -6,7 +6,7 @@ export interface CachedContent { entryId: string; title: string; format: string;
 export interface ReadingResume { entryId: string; group: string; updatedAt: string }
 export interface OnlineContent { title: string; pages: string[]; sections: { title: string; text: string | null; imageUrl: string | null }[] }
 async function call<T>(command: string, args: Record<string, unknown>): Promise<T> {
-  if (!isTauri()) throw new Error("正文获取和外部阅读器需要在 Genzo 桌面应用中使用。");
+  if (!isTauri()) throw new Error("正文获取和外部阅读器需要在 Yuki 桌面应用中使用。");
   return invoke<T>(command, args);
 }
 export function appendSourcePage(previous: SourcePage, next: SourcePage): SourcePage {

@@ -202,7 +202,7 @@ async fn build(
             || crate::remote_transfer::relocation_leased(&old.id)
             || crate::remote_transfer::relocation_leased(&new.id)
         {
-            return Err(AppError::Validation("文件正在播放或仍受远程播放保护；结束使用后重试。如已停止远程播放，请关闭播放器并重启 Genzo 后重试".into()));
+            return Err(AppError::Validation("文件正在播放或仍受远程播放保护；结束使用后重试。如已停止远程播放，请关闭播放器并重启 Yuki 后重试".into()));
         }
         let running: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM scan_jobs WHERE status='running' AND library_root_id IN (?,?))")
             .bind(&old.library_root_id).bind(&new.library_root_id).fetch_one(&mut **tx).await?;

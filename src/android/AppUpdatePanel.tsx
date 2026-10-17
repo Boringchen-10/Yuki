@@ -39,7 +39,7 @@ export default function AppUpdatePanel() {
   const ready = !!status && ["ready", "permission"].includes(status.phase);
   return <section className="gz-panel" aria-label="应用更新">
     <h3>应用更新</h3>
-    <p className="gz-meta">当前版本 {status?.currentVersion || "…"} · 从 Genzo 官方 GitHub Release 获取新版安装包。</p>
+    <p className="gz-meta">当前版本 {status?.currentVersion || "…"} · 从 Yuki 官方 GitHub Release 获取新版安装包。</p>
     {status?.version && <p>发现新版本 v{status.version} · {size(status.total)}</p>}
     {status?.phase === "current" && <p role="status" className="gz-meta">暂无适合此设备的更高正式版本。本机预览可能比公开版本更新。</p>}
     {status?.phase === "checking" && <LoadingIndicator label="正在检查新版…" compact />}

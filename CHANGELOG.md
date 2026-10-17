@@ -1,8 +1,12 @@
 # Changelog
 
-Genzo 的重要变更记录在此文件中。格式参考 Keep a Changelog，版本号遵循 Semantic Versioning。
+Yuki 的重要变更记录在此文件中。格式参考 Keep a Changelog，版本号遵循 Semantic Versioning。
 
 ## [Unreleased]
+
+### Changed
+
+- 产品名称由 Genzo 改为 Yuki，沿用原应用身份、用户数据目录与同步格式。
 
 v0.17.1 修复安卓动漫详情封面缺失，仍为本机预览。
 

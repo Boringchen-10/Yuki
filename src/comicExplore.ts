@@ -86,7 +86,7 @@ export function appendComicPage(previous: ComicPage, next: ComicPage): ComicPage
 }
 
 async function call<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
-  if (!isTauri()) throw new Error("作品探索需要在 Genzo 桌面应用中使用。");
+  if (!isTauri()) throw new Error("作品探索需要在 Yuki 桌面应用中使用。");
   return invoke<T>(command, args);
 }
 

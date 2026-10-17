@@ -25,7 +25,7 @@ export function PortableDataPanel({ connected = false }: { connected?: boolean }
       const result = await invoke<{status:string}>("export_personal_data_file");
       if (result.status === "saved") setMessage("资料包已保存，可传给其他设备导入。");
     } else {
-      const path = await save({defaultPath:"Genzo-personal-data.json",filters:[{name:"Genzo 资料包",extensions:["json"]}]});
+      const path = await save({defaultPath:"Yuki-personal-data.json",filters:[{name:"Yuki 资料包",extensions:["json"]}]});
       if (path) { await invoke("save_personal_data_file",{path}); setMessage("资料包已保存。为保护已有文件，请使用新的文件名。"); }
     }
   };
@@ -34,7 +34,7 @@ export function PortableDataPanel({ connected = false }: { connected?: boolean }
     if (android) {
       const result = await invoke<{status:string;data?:string}>("pick_personal_data_file");text = result.data;
     } else {
-      const path = await open({multiple:false,filters:[{name:"Genzo 资料包",extensions:["json"]}]});
+      const path = await open({multiple:false,filters:[{name:"Yuki 资料包",extensions:["json"]}]});
       if (typeof path === "string") text = await invoke<string>("read_personal_data_file",{path});
     }
     if (!text) return;

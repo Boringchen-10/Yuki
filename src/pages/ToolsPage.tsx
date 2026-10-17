@@ -162,7 +162,7 @@ export function ToolsPage() {
         description="配置用于播放、阅读或启动本地内容的外部程序"
         actions={<><button type="button" className="button secondary icon-text" disabled={busy} onClick={() => void detect()}><Search size={16} />检测常用工具</button><button type="button" className="button primary icon-text" onClick={() => setEditing("new")}><Plus size={17} />添加工具</button></>}
       />
-      <div className="info-band"><Wrench size={18} /><span>Genzo 不会自动下载第三方程序。测试工具会实际启动所选程序。</span></div>
+      <div className="info-band"><Wrench size={18} /><span>Yuki 不会自动下载第三方程序。测试工具会实际启动所选程序。</span></div>
       {loading ? <LoadingState label="正在读取工具配置" /> : null}
       {!loading && error ? <ErrorState message={error} retry={() => void load()} /> : null}
       {!loading && !error && tools.length === 0 ? <EmptyState title="尚未配置外部工具" description="可检测 VLC、mpv、PotPlayer 和 MPC-BE 的常见安装位置，也可以手动添加。" action={<button type="button" className="button primary" onClick={() => setEditing("new")}>添加工具</button>} /> : null}
@@ -181,7 +181,7 @@ export function ToolsPage() {
         </div>
       ) : null}
       {editing ? <Modal title={editing === "new" ? "添加外部工具" : "编辑外部工具"} width="large" onClose={() => setEditing(null)}><ToolForm tool={editing === "new" ? null : editing} busy={busy} onCancel={() => setEditing(null)} onSave={save} /></Modal> : null}
-      {deleting ? <ConfirmDialog title="删除工具配置？" description={`将从 Genzo 中删除“${deleting.name}”的配置，不会卸载或修改该程序。`} busy={busy} onCancel={() => setDeleting(null)} onConfirm={() => void remove()} /> : null}
+      {deleting ? <ConfirmDialog title="删除工具配置？" description={`将从 Yuki 中删除“${deleting.name}”的配置，不会卸载或修改该程序。`} busy={busy} onCancel={() => setDeleting(null)} onConfirm={() => void remove()} /> : null}
     </div>
   );
 }

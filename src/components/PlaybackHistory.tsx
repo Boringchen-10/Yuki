@@ -19,7 +19,7 @@ export function PlaybackHistory({ workId, mediaIds, snapshot, works = [] }: { wo
   // 详情页只关心当前作品最近一次观看；首页要的是完整记录，故保留排序后的全部条目。
   const items = workId ? ordered.slice(0, 1) : ordered.filter(item =>
     !item.workId || works.some(work => work.id === item.workId && !isBookshelfWork(work)));
-  if (!items.length && !sessions.length && !error) return workId ? <p className="quiet-inline">观看记录：从 Genzo 选择 PotPlayer 打开后自动记录；其他播放器目前只支持打开。记录期间请保持 Genzo 运行。</p> : null;
+  if (!items.length && !sessions.length && !error) return workId ? <p className="quiet-inline">观看记录：从 Yuki 选择 PotPlayer 打开后自动记录；其他播放器目前只支持打开。记录期间请保持 Yuki 运行。</p> : null;
   const notices = <>
     {error && <p role="alert">观看记录读取失败：{error}</p>}
     {sessions.filter(s => s.status !== "stopped" && (!items.length || s.mediaFileId === items[0]?.mediaFileId)).map(s => <p key={s.mediaFileId} className="quiet-inline" role="status">{s.message}</p>)}
@@ -34,7 +34,7 @@ export function PlaybackHistory({ workId, mediaIds, snapshot, works = [] }: { wo
     return <section className="playback-history is-home" aria-label="观看记录">
       <div className="section-heading playback-history-heading">
         <div><h2>观看记录</h2><span>{watched.length} 部作品</span></div>
-        <details className="playback-history-help"><summary>记录说明</summary><p>PotPlayer 约每 5 秒保存一次，请保持 Genzo 运行。支持在播放器内切换已入库视频；未匹配的文件会等待确认，保留已有进度。</p></details>
+        <details className="playback-history-help"><summary>记录说明</summary><p>PotPlayer 约每 5 秒保存一次，请保持 Yuki 运行。支持在播放器内切换已入库视频；未匹配的文件会等待确认，保留已有进度。</p></details>
       </div>
       {notices}
       {watched.length ? <div className="gnz-shelf-grid">{watched.map(item => {
@@ -58,7 +58,7 @@ export function PlaybackHistory({ workId, mediaIds, snapshot, works = [] }: { wo
   }
 
   return <section className="playback-history" aria-label="观看记录">
-    <div className="playback-history-heading"><h2>上次观看</h2><details className="playback-history-help"><summary>记录说明</summary><p>PotPlayer 约每 5 秒保存一次，请保持 Genzo 运行。支持在播放器内切换已入库视频；未匹配的文件会等待确认，保留已有进度。</p></details></div>
+    <div className="playback-history-heading"><h2>上次观看</h2><details className="playback-history-help"><summary>记录说明</summary><p>PotPlayer 约每 5 秒保存一次，请保持 Yuki 运行。支持在播放器内切换已入库视频；未匹配的文件会等待确认，保留已有进度。</p></details></div>
     {notices}
     {items.map(item => {
       return <div className="playback-history-row" key={item.mediaFileId}>
