@@ -511,7 +511,8 @@ pub async fn stream_only(state: &AppState, id: &str) -> AppResult<AndroidStream>
             .is_some_and(|(start,end,total)| start == 0 && end == 0 && total > 0)
         && response.content_length().is_none_or(|length| length == 1);
     if !valid { return Err(AppError::Validation("range_unsupported：服务器没有提供有效的字节范围读取，请检查 WebDAV 服务".into())); }
-    finish_range_probe(response).await?;
+    tokio::time::timeout(Duration::from_secs(5), finish_range_probe(response)).await
+        .map_err(|_| AppError::Network("network_timeout：WebDAV 范围检查超时，请重试".into()))??;
     proxy(client, r.href, &r.extension, true, Some(Default::default())).await
 }
 

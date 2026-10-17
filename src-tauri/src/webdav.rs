@@ -3,13 +3,21 @@ use crate::error::{AppError, AppResult};
 use percent_encoding::percent_decode_str;
 use reqwest::{Client, Method, Response, Url};
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::{
+    sync::{Arc, Mutex, OnceLock},
+    time::Duration,
+};
+
+static HTTP_CLIENT: OnceLock<Client> = OnceLock::new();
+const RESPONSE_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Clone)]
 pub struct DavClient {
     pub base: Url,
     credentials: Credentials,
     client: Client,
+    // The signed redirect is private to this client/playback session, never persisted.
+    resolved_resource: Arc<Mutex<Option<(Url, Url)>>>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -107,17 +115,24 @@ pub fn decoded_path(path: &str) -> AppResult<String> {
 
 impl DavClient {
     pub fn new(address: &str, credentials: Credentials) -> AppResult<Self> {
-        let client = Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(Duration::from_secs(15))
-            .read_timeout(Duration::from_secs(60))
-            .user_agent("Genzo/0.4 WebDAV")
-            .build()
-            .map_err(|_| network())?;
+        let client = if let Some(client) = HTTP_CLIENT.get() {
+            client.clone()
+        } else {
+            let client = Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .connect_timeout(RESPONSE_TIMEOUT)
+                .read_timeout(Duration::from_secs(60))
+                .user_agent("Genzo/0.4 WebDAV")
+                .build()
+                .map_err(|_| network())?;
+            let _ = HTTP_CLIENT.set(client.clone());
+            client
+        };
         Ok(Self {
             base: endpoint(address)?,
             credentials,
             client,
+            resolved_resource: Default::default(),
         })
     }
 
@@ -193,7 +208,14 @@ impl DavClient {
         head: bool,
         if_range: Option<&str>,
     ) -> AppResult<Response> {
-        let mut url = self.resource_url(href)?;
+        let original = self.resource_url(href)?;
+        let cached = self.resolved_resource.lock().unwrap().as_ref()
+            .filter(|(source, _)| source == &original)
+            .map(|(_, target)| target.clone());
+        let mut url = cached.clone().unwrap_or_else(|| original.clone());
+        let mut refresh = cached.is_some();
+        // Bound connection/redirect preparation, without limiting the video body duration.
+        let deadline = tokio::time::Instant::now() + RESPONSE_TIMEOUT;
         for _ in 0..6 {
             let mut request = self
                 .client
@@ -209,7 +231,28 @@ impl DavClient {
             if let Some(value) = if_range {
                 request = request.header("If-Range", value);
             }
-            let response = request.send().await.map_err(request_error)?;
+            let result = match tokio::time::timeout_at(deadline, request.send()).await {
+                Ok(result) => result.map_err(request_error),
+                Err(_) => Err(AppError::Network(
+                    "network_timeout：WebDAV 连接超时，请检查网络后重试".into(),
+                )),
+            };
+            // A signed CDN URL can expire or become unavailable during a long session.
+            // Resolve through the authenticated WebDAV endpoint once, preserving Range.
+            if refresh && (result.is_err() || result.as_ref().is_ok_and(|response| {
+                matches!(response.status().as_u16(), 401 | 403 | 404 | 410)
+            })) {
+                let mut cached_resource = self.resolved_resource.lock().unwrap();
+                if cached_resource.as_ref().is_some_and(|(source, target)| {
+                    source == &original && Some(target) == cached.as_ref()
+                }) {
+                    *cached_resource = None;
+                }
+                url = original.clone();
+                refresh = false;
+                continue;
+            }
+            let response = result?;
             if response.status().is_redirection() {
                 let location = response
                     .headers()
@@ -226,12 +269,19 @@ impl DavClient {
                 }
                 url = next;
             } else {
+                if response.status().is_success() && !head && url != original {
+                    *self.resolved_resource.lock().unwrap() = Some((original, url));
+                }
                 return Ok(response);
             }
         }
         Err(AppError::Network("WebDAV 重定向次数过多".into()))
     }
 }
+
+#[cfg(test)]
+#[path = "webdav_network_tests.rs"]
+mod network_tests;
 
 pub fn status_error(code: u16) -> AppError {
     AppError::Network(match code {
