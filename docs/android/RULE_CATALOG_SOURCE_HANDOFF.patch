@@ -1,0 +1,35 @@
+--- a/src/android/RuleSourceManager.tsx
++++ b/src/android/RuleSourceManager.tsx
+@@ -143,7 +143,7 @@
+         <button type="button" className="gz-rule-hero-catalog" disabled={busy} onClick={() => openCatalog()}><Package size={16} />规则仓库</button>
+       </div>
+     </section>
+-    {error && <p className="gz-error" role="alert">{error}</p>}{message && <p className="gz-meta" role="status">{message}</p>}
++    {!catalogOpen && error && <p className="gz-error" role="alert">{error}</p>}{!catalogOpen && message && <p className="gz-meta" role="status">{message}</p>}
+     <label className="gz-rule-search"><Search size={18} aria-hidden="true" /><input type="search" aria-label="搜索名称或站点" placeholder="搜索名称或站点" value={filter} onChange={event => setFilter(event.target.value)} /></label>
+     <div className="gz-rule-chips">
+       <button type="button" className={`gz-rule-chip${view === "all" ? " active" : ""}`} onClick={() => setView("all")}>全部 {ordered.length}</button>
+@@ -180,6 +180,8 @@
+         <h2>规则仓库</h2>
+         <button type="button" className="gz-iconbtn" aria-label="刷新规则仓库" disabled={busy} onClick={() => void load(true)}><RefreshCw size={20} /></button>
+       </header>
++      {error && <p className="gz-error" role="alert">{error}</p>}
++      {message && <p className="gz-meta" role="status">{message}</p>}
+       <p className="gz-catalog-desc">发现并安装社区维护的番剧规则，安装后可随时回到这里更新。</p>
+       <label className="gz-rule-search"><Search size={18} aria-hidden="true" /><input type="search" aria-label="搜索规则仓库" placeholder="搜索规则名称" value={catalogFilter} onChange={event => setCatalogFilter(event.target.value)} /></label>
+       <div className="gz-rule-chips">
+--- a/src/android/rules.css
++++ b/src/android/rules.css
+@@ -59,7 +59,11 @@
+ .android-app .gz-add-option-arrow { flex: none; color: var(--muted); }
+ .android-app .gz-add-footer { display: flex; justify-content: flex-end; margin-top: 10px; }
+ .android-app .gz-add-cancel { min-height: 44px; padding: 0 18px; color: var(--muted); font-size: 14px; font-weight: 600; }
+-.android-app .gz-catalog-page { position: fixed; inset: 0; z-index: 90; display: flex; flex-direction: column; gap: 12px; padding: 8px 16px calc(20px + var(--safe-bottom, 0px)); overflow-y: auto; background: var(--bg); color: var(--text); }
++.android-app .gz-catalog-page { position: fixed; inset: 0; z-index: 90; display: flex; flex-direction: column; gap: 12px; padding: calc(8px + var(--safe-top, 0px)) 16px calc(20px + var(--safe-bottom, 0px)); overflow-y: auto; background: var(--bg); color: var(--text); }
++.android-app .gz-catalog-page > * { flex-shrink: 0; }
++.android-app .gz-catalog-page > .gz-rule-catalog { flex: 1 1 0; min-height: 0; max-height: none; overscroll-behavior: contain; }
++.android-app .gz-catalog-page .gz-row-main { min-width: 0; overflow-wrap: anywhere; }
++.android-app .gz-catalog-page .gz-rule-catalog-row > .gz-btn { flex: none; }
+ .android-app .gz-catalog-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 8px; padding: 4px 0; background: var(--bg); }
+ .android-app .gz-catalog-head h2 { flex: 1; font-size: 18px; font-weight: 700; }
+ .android-app .gz-catalog-desc { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.55; }

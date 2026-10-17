@@ -872,6 +872,7 @@ mod tests {
             .await
             .unwrap();
         let mut updated = rule("https://new.example.org/");
+        updated["api"] = json!("9");
         updated["version"] = json!("2");
         let next = install(&pool, updated, None).await.unwrap();
         assert_eq!(next, id);

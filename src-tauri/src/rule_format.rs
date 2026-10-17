@@ -91,9 +91,11 @@ pub fn validate(rule: &Value) -> AppResult<()> {
     {
         return Err(AppError::Validation("规则需包含有效 name / version".into()));
     }
-    let api = field(rule, "api").parse::<u32>().unwrap_or(1);
-    if !(1..=8).contains(&api) {
-        return Err(AppError::Validation("目前支持 Kazumi API 1–8 规则".into()));
+    let api = if rule["api"].is_null() { 1 } else {
+        field(rule, "api").parse::<u32>().map_err(|_| AppError::Validation("规则 API 版本须为整数".into()))?
+    };
+    if !(1..=9).contains(&api) {
+        return Err(AppError::Validation("目前支持 Kazumi API 1–9 规则，请更新客户端后重试".into()));
     }
     http_url(&field(rule, "baseURL"))?;
     for key in ["userAgent", "referer"] {
@@ -124,6 +126,9 @@ pub fn validate(rule: &Value) -> AppResult<()> {
             let template = field(request, "url");
             if template.is_empty() {
                 return Err(AppError::Validation("API 规则缺少请求地址".into()));
+            }
+            if mode == "searchMode" {
+                search_source_template(c)?;
             }
             for key in [
                 "listPath",
@@ -344,15 +349,32 @@ pub fn render_value(value: &Value, vars: &Variables) -> AppResult<Value> {
         v => v.clone(),
     })
 }
+fn search_source_template(config: &Value) -> AppResult<String> {
+    let template = field(config, "sourceTemplate");
+    if template.len() > 16384 || (!template.is_empty() && !template.contains("@source")) {
+        return Err(AppError::Validation("搜索详情页地址模板须包含 @source，且不能超过 16 KiB".into()));
+    }
+    Ok(template)
+}
 pub fn api_search(value: &Value, config: &Value) -> AppResult<Vec<SearchItem>> {
     let list = config_field(config, "listPath", "$.data[*]");
     let name = config_field(config, "namePath", "$.name");
     let source = config_field(config, "sourcePath", "$.url");
+    let template = search_source_template(config)?;
     let mut items = Vec::new();
     for row in query(value, &list)? {
         let name = first(row, &name)?;
         let source = first(row, &source)?;
         if !name.is_empty() && !source.is_empty() {
+            // API 9 allows embedded markers such as /GV@source, unlike request variables.
+            let source = if template.is_empty() { source } else {
+                let encoded = percent_encoding::utf8_percent_encode(&source, percent_encoding::NON_ALPHANUMERIC).to_string();
+                let count = template.matches("@source").count();
+                if (template.len() - count * "@source".len()).saturating_add(count.saturating_mul(encoded.len())) > 16384 {
+                    return Err(AppError::Validation("搜索详情页地址超过 16 KiB".into()));
+                }
+                template.replace("@source", &encoded)
+            };
             items.push(SearchItem { name, source });
         }
         if items.len() >= 200 {
@@ -495,6 +517,21 @@ pub fn api_roads(value: &Value, rule: &Value, source: &str) -> AppResult<Vec<Roa
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn api9_search_templates_keep_embedded_source_markers_and_encode_ids() {
+        let mut rule = json!({"api":"9","name":"API9","version":"2","baseURL":"https://example.org/","searchMode":"api","chapterMode":"xpath","searchApiConfig":{"request":{"url":"https://example.org/search"},"listPath":"$.list[*]","namePath":"$.name","sourcePath":"$.id","sourceTemplate":"https://example.org/GV@source/"},"chapterRoads":"//ul","chapterResult":".//a"});
+        assert!(validate(&rule).is_ok());
+        let items = api_search(&json!({"list":[{"name":"作品","id":"a /?中文"}]}), &rule["searchApiConfig"]).unwrap();
+        assert_eq!(items[0].source, "https://example.org/GVa%20%2F%3F%E4%B8%AD%E6%96%87/");
+        rule["searchApiConfig"]["sourceTemplate"] = json!("https://example.org/fixed");
+        assert!(validate(&rule).is_err());
+        assert!(api_search(&json!({"list":[{"name":"作品","id":"x".repeat(1000)}]}), &json!({"listPath":"$.list[*]","sourcePath":"$.id","sourceTemplate":format!("https://example.org/{}", "@source".repeat(20))})).is_err());
+        rule["searchApiConfig"]["sourceTemplate"] = json!("");
+        rule["api"] = json!(10);
+        assert!(validate(&rule).is_err());
+        rule["api"] = json!("invalid");
+        assert!(validate(&rule).is_err());
+    }
     #[test]
     fn restricted_paths_and_typed_templates_match_kazumi_api_rules() {
         let data = json!({"data":{"records":[{"id":17,"title":"作品甲"},{"id":18,"title":"作品乙"}]},"odd-key":{"中文":true}});

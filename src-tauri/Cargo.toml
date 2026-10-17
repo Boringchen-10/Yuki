@@ -1,6 +1,6 @@
 [package]
 name = "genzo"
-version = "0.17.1"
+version = "0.17.2"
 description = "Yuki - 你的私人次元媒体库"
 authors = ["Yuki contributors"]
 edition = "2021"

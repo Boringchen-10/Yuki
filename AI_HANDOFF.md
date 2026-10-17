@@ -1,5 +1,14 @@
 # Codex 与 DeepSeek Harness 项目交接记录
 
+## 规则仓库 API 9 与浮层修复 v0.17.2（2026-10-17）
+
+- 用户报告规则有更新却提示「目前支持 Kazumi API 1–8」，并报告仓库界面异常。只处理 `.tmp/android-first` / `codex/android-first`。官方当前17条中5条为API9，dalvdm / giriGiriLove / LMM使用sourceTemplate；旧版本门槛与缺失模板解析分别造成更新被拒绝和潜在错误详情地址。按上游语义独立实现编码后直接替换@source，支持/GV@source/，保留原有API路径/请求/网址限制并限制模板展开16KiB，非法API与未来API仍明确拒绝。
+- 新增回归在修复前确实失败于API9校验；仓库内错误回归修复前找不到浮层内alert。修复后130前端项、完整Rust429通过/19既有忽略、真实React错误/重试/身份停用保持及12尺寸主题组合通过。顶栏使用实际safe-top，错误/缓存警告放在仓库内，列表按剩余高度滚动并处理长名称，手机横屏和列表末尾已检查。
+- `RuleSourceManager.tsx` / `rules.css`已有他人OpenDesign WIP，只将本轮自身差异保存到docs/android/RULE_CATALOG_SOURCE_HANDOFF.patch，当前已应用；`git apply --ignore-whitespace --reverse --check`通过，勿重复应用或整文件覆盖/纳入提交。版本/锁文件仅Genzo原crate版本升至0.17.2，数据库迁移/规则身份/启停/播放与同步模型不变。使用与复跑见docs/android/RULE_CATALOG_API9.md。
+- PLK110/Android16独立com.genzo.android.rulesqa：真实仓库UI把旧LMM API8更新到API9，id与停用保持；API99拒绝且原定义不变；官方17条均通过真实IPC安装，未创建作品或播放来源视频；重新挂载后仓库安装数量、实际安全区与末行可达检查通过，截图已看。最终证据D:/DevTools/Android/Build/qa/rules-update-20261017/native-1792230878438/result.json。测试包与9390转发已清理。此验证不代表全部来源的视频/长期可用性验收。
+- 完整Android优化Rust/Kotlin/R8与签名Release通过。普通包D:/DevTools/Android/Build/previews/rules-update-20261017/Yuki_0.17.2_android_arm64-v8a.apk，50,700,357字节，SHA256 e57023c7f09ba3ba080d2cebf593e2e55fad48940579eb3cfe4bdba24f6c0249；原签名/com.genzo.android/code17002/arm64/min26/target36/非debuggable/v2+v3/16KiB通过，406份生产输入与D副本一致，三库按Gradle剥离结果核对，无DB；源清单和校验同目录。不创建公开Release/标签/推送。
+- 日常readerqa同签名install-r更新至0.17.2，设备APK读回SHA256 a934bfdffda1aa090a0d049bfc86c07f63a3030e6dbda681c73192ed2e8590ce。更新前后38作品/428关联媒体/17来源/33观看进度/16规则/7书籍作品/32阅读历史，个人字段/关联/阅读位置/外观与播放偏好哈希一致，图标选择保持，现有前端预览已重新连接。只留计数和单向哈希，不复制用户DB或凭据。日常只读检查仓库17条/已安装16/可更新4，safeTop40.29px/headerTop48.29px，无仓库报错；没有替用户自动覆盖规则定义，最后停在规则仓库。证据同目录daily-update/result.json与catalog-ui.json。
+
 ## 正式产品名称改为 Yuki（2026-10-17）
 
 - 用户确认将 Genzo 更名为 Yuki。Windows 主工作区与 `.tmp/android-first` 安卓分支分别修改展示名、标题 / 关于 / 提示、通知与导出名、前端包元信息和构建配置，原始设计归档与已发布附件保留。实现范围 / NSIS 旧安装器边界见 docs/PRODUCT_RENAME_YUKI.md；本轮没有创建 Windows 新安装器或正式 Release / 标签 / 推送。
