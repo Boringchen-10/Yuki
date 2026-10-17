@@ -18,7 +18,7 @@ class AppUpdatePolicyTest {
         val name = "${brand}_${version}_android_${abi}.apk"
         return JSONObject().put("tag_name", "v$version").put("prerelease", prerelease).put("assets", JSONArray()
             .put(JSONObject().put("name", name).put("size", 100).put("digest", "sha256:" + "a".repeat(64))
-                .put("browser_download_url", "https://github.com/Boringchen-10/genzo/releases/download/v$version/$name")))
+                .put("browser_download_url", "https://github.com/Boringchen-10/Yuki/releases/download/v$version/$name")))
     }
     @Test fun releaseSelectionSkipsWindowsOldPreviewAndWrongAbi() {
         val releases = JSONArray().put(release("0.5.2")).put(release("0.18.0", prerelease = true))
@@ -30,8 +30,8 @@ class AppUpdatePolicyTest {
         assertFalse(AppUpdatePolicy.newer("99999999999999999.1.0", "0.16.1"))
     }
     @Test fun downloadUrlsAndChecksumsAreBoundToTheOfficialAsset() {
-        assertTrue(AppUpdatePolicy.trustedUrl("https://github.com/Boringchen-10/genzo/releases/download/v0.17.0/Genzo.apk", true))
-        for (url in listOf("http://github.com/Boringchen-10/genzo/releases/download/v1/a.apk", "https://github.com.evil.invalid/Boringchen-10/genzo/releases/download/v1/a.apk", "https://user@github.com/Boringchen-10/genzo/releases/download/v1/a.apk", "https://github.com/other/genzo/releases/download/v1/a.apk")) assertFalse(url, AppUpdatePolicy.trustedUrl(url, true))
+        assertTrue(AppUpdatePolicy.trustedUrl("https://github.com/Boringchen-10/Yuki/releases/download/v0.17.0/Genzo.apk", true))
+        for (url in listOf("http://github.com/Boringchen-10/Yuki/releases/download/v1/a.apk", "https://github.com.evil.invalid/Boringchen-10/Yuki/releases/download/v1/a.apk", "https://user@github.com/Boringchen-10/Yuki/releases/download/v1/a.apk", "https://github.com/other/genzo/releases/download/v1/a.apk")) assertFalse(url, AppUpdatePolicy.trustedUrl(url, true))
         assertTrue(AppUpdatePolicy.trustedUrl("https://release-assets.githubusercontent.com/github-production-release-asset/a?token=opaque", false))
         assertFalse(AppUpdatePolicy.trustedUrl("https://example.com/update.apk", false))
         val hash = "b".repeat(64)
@@ -50,6 +50,15 @@ class AppUpdatePolicyTest {
         assertEquals("Yuki_0.18.0_android_arm64-v8a.apk", AppUpdatePolicy.offer(JSONArray().put(legacy), "0.17.1", "arm64-v8a")?.name)
         val wrong = release("0.18.0", "x86_64", brand = "Yuki")
         assertNull(AppUpdatePolicy.offer(JSONArray().put(wrong), "0.17.1", "arm64-v8a"))
+    }
+    @Test fun updateChannelAcceptsOnlyTheNewAndroidRepository() {
+        assertEquals("Boringchen-10/Yuki", AppUpdatePolicy.REPOSITORY)
+        val old = release("0.18.0", brand = "Yuki")
+        val asset = old.getJSONArray("assets").getJSONObject(0)
+        asset.put("browser_download_url", asset.getString("browser_download_url").replace("/Yuki/", "/genzo/"))
+        assertNull(AppUpdatePolicy.offer(JSONArray().put(old), "0.17.2", "arm64-v8a"))
+        assertFalse(AppUpdatePolicy.trustedUrl(asset.getString("browser_download_url"), true))
+        assertNotNull(AppUpdatePolicy.offer(JSONArray().put(release("0.18.0", brand = "Yuki")), "0.17.2", "arm64-v8a"))
     }
     @Test fun identityRequiresTheSameApplicationAndSigningKeyAndAHigherCode() {
         AppUpdatePolicy.validateIdentity("com.genzo.android", 17001, setOf("key"), "com.genzo.android", 17000, setOf("key"))

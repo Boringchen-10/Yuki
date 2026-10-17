@@ -1310,7 +1310,7 @@ export default function AndroidApp() {
       {route === "sync" && syncSettingsPage}
       {route === "sync/bangumi" && bangumiSyncPage}
       {route === "sync/webdav" && webdavSyncPage}
-      {route === "diagnostics" && <><AppUpdatePanel />{import.meta.env.DEV ? <AndroidPrototype /> : <Section title={`Yuki v${buildInfo.version}`}><p className="gz-meta">本地优先的 ACGN 统一媒体库，管理你的作品、个人记录与阅读进度。</p><p className="gz-meta">本软件采用 GPLv3。源代码与第三方许可：github.com/Boringchen-10/genzo</p></Section>}</>}
+      {route === "diagnostics" && <><AppUpdatePanel />{import.meta.env.DEV ? <AndroidPrototype /> : <Section title={`Yuki v${buildInfo.version}`}><p className="gz-meta">本地优先的 ACGN 统一媒体库，管理你的作品、个人记录与阅读进度。</p><p className="gz-meta">本软件采用 GPLv3。源代码与第三方许可：github.com/Boringchen-10/Yuki</p></Section>}</>}
       </>}
       {(route === "explore" || visitedPanels.includes("explore")) && <div className="gz-kept-page" hidden={route !== "explore"}><ExplorePanel onOpenWork={id => navigate(`detail/${encodeURIComponent(id)}`)} active={route === "explore"} onToast={setToast} onLibraryChanged={() => void refresh(true).catch(reason => setError(String(reason)))} registerBack={registerSubviewBack} /></div>}
       {(route === "network" || visitedPanels.includes("network")) && <div className="gz-kept-page" hidden={route !== "network"}><NetworkPanel onToast={setToast} /></div>}

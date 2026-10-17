@@ -24,7 +24,7 @@ import java.util.concurrent.TimeUnit
 internal data class AppUpdateOffer(val version: String, val name: String, val url: String, val size: Long, val checksumUrl: String, val digest: String)
 
 internal object AppUpdatePolicy {
-    const val REPOSITORY = "Boringchen-10/genzo"
+    const val REPOSITORY = "Boringchen-10/Yuki"
     const val MAX_APK_BYTES = 512L * 1024 * 1024
     private fun version(value: String): List<Int>? {
         return Regex("^v?(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$").matchEntire(value)

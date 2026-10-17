@@ -14,7 +14,8 @@
     "test:e2e": "node scripts/e2e-visual.mjs",
     "test:visual": "node scripts/capture-theme-preview.mjs",
     "test:watch": "vitest",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "android:dev": "tauri android dev"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",
@@ -38,5 +39,14 @@
     "vite": "^7.1.4",
     "vitest": "^3.2.4"
   },
-  "packageManager": "pnpm@11.19.0"
+  "packageManager": "pnpm@11.19.0",
+  "description": "Yuki — Android anime, manga and light novel library",
+  "homepage": "https://github.com/Boringchen-10/Yuki",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Boringchen-10/Yuki.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Boringchen-10/Yuki/issues"
+  }
 }

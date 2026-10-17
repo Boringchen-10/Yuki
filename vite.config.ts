@@ -1,15 +1,10 @@
-import { defineConfig, loadEnv } from "vite";
+import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-export default defineConfig(({ mode }) => {
-  const android = loadEnv(mode, ".", "GENZO_ANDROID_").GENZO_ANDROID_FRONTEND === "1";
-  return {
-  define: { __GENZO_ANDROID__: android },
-  publicDir: android ? false : "public",
-  plugins: [react(), ...(android ? [{
-    name: "genzo-android-entry",
-    transformIndexHtml: { order: "pre" as const, handler: (html: string) => html.replace("/src/main.tsx", "/src/android/main.tsx").replace("/genzo-icon.svg", "/public/genzo-icon.svg") },
-  }] : [])],
+export default defineConfig({
+  define: { __GENZO_ANDROID__: true },
+  publicDir: false,
+  plugins: [react()],
   clearScreen: false,
   server: {
     port: 1420,
@@ -25,5 +20,4 @@ export default defineConfig(({ mode }) => {
     minify: "esbuild",
     sourcemap: false,
   },
-};
 });

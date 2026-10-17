@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Yuki",
   "version": "0.17.2",
-  "identifier": "com.genzo.desktop",
+  "identifier": "com.genzo.android",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://127.0.0.1:1420",
@@ -13,21 +13,12 @@
     "windows": [
       {
         "title": "Yuki",
-        "width": 1366,
-        "height": 768,
-        "minWidth": 1024,
-        "minHeight": 640,
+        "width": 390,
+        "height": 844,
         "resizable": true,
         "dragDropEnabled": false,
-        "center": true,
-        "decorations": false,
-        "transparent": true,
-        "shadow": false,
-        "windowEffects": {
-          "effects": [
-            "mica"
-          ]
-        }
+        "decorations": true,
+        "transparent": false
       }
     ],
     "security": {
@@ -46,12 +37,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": [
-      "nsis"
-    ],
     "category": "Entertainment",
-    "shortDescription": "本地优先的 ACGN 媒体库",
-    "longDescription": "Yuki 用于扫描、整理和打开用户自己的本地 ACGN 媒体文件。",
+    "shortDescription": "安卓动漫、漫画与轻小说媒体库",
+    "longDescription": "Yuki 将动漫观看、漫画阅读、轻小说与个人记录整合在安卓设备中。",
     "publisher": "Yuki contributors",
     "licenseFile": "../LICENSE",
     "icon": [
@@ -60,21 +48,8 @@
       "icons/128x128@2x.png",
       "icons/icon.ico"
     ],
-    "windows": {
-      "webviewInstallMode": {
-        "type": "offlineInstaller",
-        "silent": true
-      },
-      "nsis": {
-        "installMode": "currentUser",
-        "languages": [
-          "SimpChinese",
-          "English"
-        ],
-        "displayLanguageSelector": false,
-        "compression": "lzma",
-        "installerIcon": "icons/icon.ico"
-      }
+    "android": {
+      "minSdkVersion": 26
     }
   }
 }

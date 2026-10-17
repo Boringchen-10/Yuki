@@ -16,3 +16,19 @@ src-tauri/target/
 *.db-wal
 src-tauri/gen/schemas/android-schema.json
 src-tauri/gen/schemas/mobile-schema.json
+
+# Local previews, generated output, signing material and credentials
+.tmp/
+build/
+*.apk
+*.aab
+*.p12
+*.pfx
+*.jks
+*.keystore
+.env
+.env.*
+!.env.example
+store-password.txt
+key.properties
+keystore.properties

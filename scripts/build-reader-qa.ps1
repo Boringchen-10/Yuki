@@ -2,8 +2,8 @@ param([switch]$Install, [switch]$Optimize, [ValidateSet('x86_64','aarch64')][str
 if ($Install -and $Target -ne 'x86_64') { throw 'Only the x86_64 QA package can be installed on emulator-5554' }
 $ErrorActionPreference = 'Stop'
 $taskSource = Split-Path -Parent $PSScriptRoot
-$taskTools = 'D:\DevTools\Android'
-$taskCopy = Join-Path $taskTools 'Build\reader-source'
+$taskTools = if ($env:GENZO_ANDROID_TOOLS) { $env:GENZO_ANDROID_TOOLS } else { 'D:\DevTools\Android' }
+$taskCopy = Join-Path $taskTools 'Build\yuki-source'
 New-Item -ItemType Directory -Force -Path $taskCopy | Out-Null
 foreach ($taskFile in (& git -C $taskSource ls-files -co --exclude-standard)) {
     $taskOriginal = Join-Path $taskSource $taskFile
@@ -13,17 +13,11 @@ foreach ($taskFile in (& git -C $taskSource ls-files -co --exclude-standard)) {
         Copy-Item -LiteralPath $taskOriginal -Destination $taskDestination -Force
     }
 }
-foreach ($taskFile in @('src-tauri/gen/android/tauri.settings.gradle','src-tauri/gen/android/app/tauri.build.gradle.kts','src-tauri/gen/android/local.properties','src-tauri/gen/android/app/tauri.properties')) {
-    Copy-Item -LiteralPath (Join-Path $taskSource $taskFile) -Destination (Join-Path $taskCopy $taskFile) -Force
-}
 $taskVersion = [Version](Get-Content -LiteralPath (Join-Path $taskSource 'package.json') -Raw | ConvertFrom-Json).version
 $taskVersionCode = $taskVersion.Major * 1000000 + $taskVersion.Minor * 1000 + $taskVersion.Build
 @("tauri.android.versionName=$taskVersion", "tauri.android.versionCode=$taskVersionCode") | Set-Content -LiteralPath (Join-Path $taskCopy 'src-tauri/gen/android/app/tauri.properties') -Encoding ascii
 $taskGenerated = 'src-tauri/gen/android/app/src/main/java/com/genzo/android/generated'
 New-Item -ItemType Directory -Force -Path (Join-Path $taskCopy $taskGenerated) | Out-Null
-Get-ChildItem -LiteralPath (Join-Path $taskSource $taskGenerated) -File | ForEach-Object {
-    Copy-Item -LiteralPath $_.FullName -Destination (Join-Path (Join-Path $taskCopy $taskGenerated) $_.Name) -Force
-}
 if (!(Test-Path -LiteralPath (Join-Path $taskCopy 'node_modules'))) {
     New-Item -ItemType Junction -Path (Join-Path $taskCopy 'node_modules') -Target (Join-Path $taskSource 'node_modules') | Out-Null
 }
@@ -33,7 +27,7 @@ $env:NDK_HOME = Join-Path $taskTools 'Sdk\ndk\27.0.12077973'
 $env:CARGO_HOME = Join-Path $taskTools 'Cargo'
 $env:RUSTUP_HOME = Join-Path $taskTools 'Rustup'
 $env:GRADLE_USER_HOME = Join-Path $taskTools 'Gradle'
-$env:CARGO_TARGET_DIR = Join-Path $taskTools 'Build\genzo'
+$env:CARGO_TARGET_DIR = Join-Path $taskTools 'Build\yuki-native'
 $env:CARGO_PROFILE_DEV_DEBUG = '0'
 $env:CARGO_PROFILE_DEV_STRIP = 'symbols'
 $taskCargoProfile = if ($Optimize) { 'release' } else { 'debug' }
@@ -64,15 +58,34 @@ $env:TAURI_CONFIG = '{"identifier":"com.genzo.android","build":{"devUrl":null}}'
 $env:GENZO_READER_QA = '1'
 $env:GENZO_ANDROID_FRONTEND = '1'
 $env:GENZO_ANDROID_OPTIMIZE = if ($Optimize) { '1' } else { '0' }
-$env:GENZO_ANDROID_BUILD_DIR = Join-Path $taskTools $(if ($Optimize) { 'Build\reader-optimized-gradle' } else { 'Build\reader-gradle' })
+$env:GENZO_ANDROID_BUILD_DIR = Join-Path $taskTools $(if ($Optimize) { 'Build\yuki-reader-optimized-gradle' } else { 'Build\yuki-reader-gradle' })
 $env:TEMP = Join-Path $taskTools 'Temp'
 $env:TMP = $env:TEMP
 $env:JAVA_TOOL_OPTIONS = '-Djava.net.preferIPv4Stack=true'
 $env:PATH = "$taskNdkBin;$env:JAVA_HOME\bin;$env:CARGO_HOME\bin;$env:ANDROID_HOME\platform-tools;$env:PATH"
+# Resolve local Tauri module paths instead of copying ignored generated files from another checkout.
 Push-Location $taskSource
 try {
+    $taskMetadataJson = & cargo metadata --format-version 1 --locked --manifest-path src-tauri/Cargo.toml --filter-platform $taskRustTarget
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve Android Tauri modules' }
+    $taskMetadata = ($taskMetadataJson -join "`n") | ConvertFrom-Json
+    $taskSettings = @('// Generated locally; do not commit absolute toolchain paths.')
+    foreach ($taskModule in @('tauri', 'tauri-plugin-dialog')) {
+        $taskPackage = @($taskMetadata.packages | Where-Object { $_.name -eq $taskModule })
+        if ($taskPackage.Count -ne 1) { throw "Expected one locked package: $taskModule" }
+        $taskModulePath = Join-Path (Split-Path -Parent $taskPackage[0].manifest_path) $(if ($taskModule -eq 'tauri') { 'mobile/android' } else { 'android' })
+        $taskModuleName = if ($taskModule -eq 'tauri') { 'tauri-android' } else { $taskModule }
+        $taskQuotedPath = $taskModulePath | ConvertTo-Json -Compress
+        $taskSettings += "include ':$taskModuleName'"
+        $taskSettings += "project(':$taskModuleName').projectDir = new File($taskQuotedPath)"
+    }
+    $taskSettings | Set-Content -LiteralPath (Join-Path $taskCopy 'src-tauri/gen/android/tauri.settings.gradle') -Encoding utf8
+    @('val implementation by configurations', 'dependencies {', '  implementation(project(":tauri-android"))', '  implementation(project(":tauri-plugin-dialog"))', '}') |
+        Set-Content -LiteralPath (Join-Path $taskCopy 'src-tauri/gen/android/app/tauri.build.gradle.kts') -Encoding utf8
+    ('sdk.dir=' + $env:ANDROID_HOME.Replace('\', '/')) |
+        Set-Content -LiteralPath (Join-Path $taskCopy 'src-tauri/gen/android/local.properties') -Encoding ascii
     $taskDist = [IO.Path]::GetFullPath((Join-Path $taskCopy 'dist'))
-    if ($taskDist -ne 'D:\DevTools\Android\Build\reader-source\dist') { throw 'Unexpected generated frontend directory' }
+    if (!$taskDist.StartsWith([IO.Path]::GetFullPath($taskCopy) + [IO.Path]::DirectorySeparatorChar)) { throw 'Unexpected generated frontend directory' }
     & node (Join-Path $taskSource 'node_modules/vite/bin/vite.js') build --outDir $taskDist --emptyOutDir
     if ($LASTEXITCODE -ne 0) { throw 'Reader frontend build failed' }
 } finally { Pop-Location }

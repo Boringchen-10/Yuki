@@ -1,44 +1,28 @@
-# Genzo 贡献与版本管理
+# 参与 Yuki 安卓开发
 
-## 提交原则
+先阅读 [项目上下文](PROJECT_CONTEXT.md)、[路线图](ROADMAP.md)、[设计方向](DESIGN_DIRECTION.md) 和 [Agent 说明](AGENTS.md)。本仓库只维护安卓，桌面相关讨论请回到原项目。
 
-- 每个功能更新、Bug 修复或独立维护任务使用一个范围清晰的原子提交。
-- 提交前运行与改动风险相称的检查，不提交未验证的构建产物、数据库、测试媒体或本地工具。
-- 不覆盖或夹带他人的未提交修改；确实相互依赖时，在提交说明中明确记录。
-- `main` 保持可构建、可测试。较大工作使用功能分支和 Pull Request，紧凑且已验证的本地修改可以直接提交到 `main`。
+## 开始开发
 
-提交信息采用 Conventional Commits：
+1. 安装依赖并执行 `pnpm check`、`pnpm test`。
+2. 用 `pnpm dev` 预览安卓页面；原生功能需按 [构建指南](docs/BUILD_ANDROID.md) 构建 APK。
+3. 提交前检查已有修改，仅改任务相关内容；验证实际使用场景及受影响边界，不用静态截图代替功能验收。
+4. 提供问题复现步骤、系统 / 设备信息与脱敏错误，不上传个人媒体、数据库、网盘凭据或完整访问地址。
 
-```text
-feat(library): add metadata candidate confirmation
-fix(scanner): preserve missing-file state after rescan
-docs: clarify external player setup
-test(matcher): cover ambiguous title candidates
-refactor(db): isolate metadata cache queries
-build: update Tauri packaging configuration
-chore: refresh development tooling
-```
+## 代码与数据约定
 
-允许的主要类型为 `feat`、`fix`、`docs`、`test`、`refactor`、`build`、`perf`、`style`、`ci`、`revert` 和 `chore`。
+延续既有组件、主题 Token、桥接和数据模型，避免为单次使用引入新抽象。保留手动分集关联与用户进度；更名仓库不等于更改包名、签名、存储位置或同步格式。数据库只新增迁移，测试存量数据库升级。
 
-## 版本规则
+共享桌面代码暂时保留，因为安卓仍复用其中的模型、样式和后端；未经需求确认不大规模删除。历史交接 patch 已包含在独立项目基线中，不自动重新套用。
 
-Genzo 使用 Semantic Versioning，版本格式为 `MAJOR.MINOR.PATCH`：
+## 检查与提交
 
-- `PATCH`：向后兼容的 Bug 修复，例如 `0.2.0` 到 `0.2.1`。
-- `MINOR`：向后兼容的新功能，例如 `0.2.1` 到 `0.3.0`。
-- `MAJOR`：不兼容的公开接口、数据格式或产品行为变更。
+常规检查：`pnpm check`、`pnpm test`、`pnpm build`、`git diff --check`。Rust、Kotlin 或数据库改动还须运行相应测试；原生与 UI 风险按实际影响补充设备测试，并注明未覆盖范围。
 
-开发提交不要求每次都修改应用版本号。只有形成正式可分发版本时，才集中更新版本文件、变更日志并打标签。
+提交采用 Conventional Commits：`feat:`、`fix:`、`docs:`、`test:`、`refactor:`、`build:`、`chore:`。提交范围清晰，说明改变了什么、为何修改以及如何验证。不要纳入他人未提交工作。
 
-## 发布流程
+## 发布与许可
 
-1. 确认工作区只包含本次发布内容。
-2. 运行前端类型检查、测试与构建，以及 Rust 格式、测试和 Clippy 检查。
-3. 同步更新 `package.json`、`src-tauri/Cargo.toml` 和 `src-tauri/tauri.conf.json` 的版本。
-4. 将本版本用户可见变化写入 `CHANGELOG.md`，使用 `Added`、`Changed`、`Fixed`、`Security` 等分类。
-5. 创建发布提交：`chore(release): vX.Y.Z`。
-6. 创建带注释标签：`git tag -a vX.Y.Z -m "Genzo vX.Y.Z"`。
-7. 将提交和标签推送到 GitHub；确认远程标签指向发布提交。
+版本号沿用现有序列，不从 0.1.0 重新开始。[发布指南](docs/RELEASING.md) 定义版本、签名、APK 命名、校验和更新来源。推送源码不等于发布用户可获取的更新。
 
-紧急 Bug 修复同样走完整流程，不跳过测试、变更日志或标签。
+贡献代码按 GPL-3.0-only 提供，保留上游声明。引入第三方代码或依赖前核对许可兼容性，同步 THIRD_PARTY_NOTICES 与 licenses；不要上传密钥、测试账号或未经授权的第三方媒体素材。
