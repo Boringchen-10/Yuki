@@ -448,6 +448,8 @@ pub struct ExploreSaveInput {
     pub external_id: String,
     pub status: String,
     pub favorite: bool,
+    #[serde(default)]
+    pub for_playback: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

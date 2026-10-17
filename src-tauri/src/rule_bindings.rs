@@ -23,6 +23,8 @@ pub struct BindingInput {
     pub episode_offset: i64,
     #[serde(default)]
     pub replace_existing: bool,
+    #[serde(default)]
+    pub target_episode_external_id: Option<String>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -54,6 +56,9 @@ async fn context(state: &AppState, input: &BindingInput) -> AppResult<(Value, Ve
             != input.episode_indexes.len()
         || !(-9999..=9999).contains(&input.episode_offset)
         || input.title.chars().count() > 300
+        || input.target_episode_external_id.as_ref().is_some_and(|id| {
+            input.episode_indexes.len() != 1 || id.is_empty() || id.chars().count() > 200
+        })
     {
         return Err(AppError::Validation(
             "请选择 1–500 个不重复的剧集，并核对编号对应".into(),
@@ -77,7 +82,7 @@ type Official = (String, String, Option<i64>, Option<i64>, String);
 struct Target {
     key: String,
     id: Option<String>,
-    official: Option<(String, String)>,
+    official: Option<(String, String, i64)>,
     preserve: bool,
 }
 pub(crate) fn number(name: &str) -> Option<i64> {
@@ -116,6 +121,12 @@ async fn prepare(
     };
     let official:Vec<Official>=sqlx::query_as("SELECT provider,external_id,episode_number,episode_type,title FROM anime_episodes WHERE work_id=? AND provider=? ORDER BY external_id")
         .bind(&input.work_id).bind(provider).fetch_all(&mut **tx).await?;
+    let requested = if let Some(id) = &input.target_episode_external_id {
+        Some(official.iter().find(|episode| &episode.1 == id)
+            .ok_or_else(|| AppError::Validation("官方分集不属于当前作品，请更新剧集资料后重试".into()))?)
+    } else {
+        None
+    };
     let road = roads
         .get(input.road_index)
         .ok_or_else(|| AppError::Validation("播放线路已变化，请重新选择".into()))?;
@@ -151,6 +162,12 @@ async fn prepare(
             .as_ref()
             .is_some_and(|(_, owner)| owner.as_deref() == Some(&input.work_id))
             && !input.replace_existing;
+        if preserve && requested.is_some_and(|episode| {
+            !old_links.iter().any(|link| link.0 == episode.0 && link.1 == episode.1)
+                || old_links.iter().any(|link| link.0 != episode.0 || link.1 != episode.1)
+        }) {
+            return Err(AppError::Validation("此来源剧集已有不同的分集关联，请选择对应剧集或在媒体库核对原关联".into()));
+        }
         let original = number(&episode.name);
         let mapped = original
             .map(|n| n - input.episode_offset)
@@ -158,7 +175,9 @@ async fn prepare(
         let matches: Vec<_> = official
             .iter()
             .filter(|e| {
-                if preserve {
+                if let Some(requested) = requested {
+                    e.0 == requested.0 && e.1 == requested.1
+                } else if preserve {
                     old_links.iter().any(|l| l.0 == e.0 && l.1 == e.1)
                 } else {
                     e.2 == mapped && mapped.is_some() && e.3.unwrap_or(0) == 0
@@ -181,7 +200,7 @@ async fn prepare(
         targets.push(Target {
             key,
             id: old.map(|o| o.0),
-            official: matched.map(|e| (e.0.clone(), e.1.clone())),
+            official: matched.map(|e| (e.0.clone(), e.1.clone(), e.3.unwrap_or(0))),
             preserve,
         });
     }
@@ -239,7 +258,7 @@ pub async fn play_rule_episode(
     play_selection(state.inner().clone(), input).await
 }
 
-pub(crate) async fn play_selection(state: AppState, input: BindingInput) -> AppResult<Value> {
+pub(crate) async fn play_selection(state: AppState, mut input: BindingInput) -> AppResult<Value> {
     if input.episode_indexes.len() != 1 {
         return Err(AppError::Validation("请选择一集播放".into()));
     }
@@ -251,9 +270,15 @@ pub(crate) async fn play_selection(state: AppState, input: BindingInput) -> AppR
             let (rule, roads) = context(&state, &input).await?;
             crate::android_player::rule_loading_phase(&loading, "正在准备播放来源…", false).await?;
             let mut tx = state.pool.begin().await?;
-            let token = prepare(&mut tx, &rule, &roads, &input).await?.0.token;
+            let preview = prepare(&mut tx, &rule, &roads, &input).await?.0;
             tx.rollback().await?;
-            let ids = bind(&state, input, &token).await?;
+            let ids = bind(&state, input.clone(), &preview.token).await?;
+            if input.target_episode_external_id.is_some() {
+                if let Some((original, official)) = preview.rows.first().and_then(|row| Some((row.original_episode?, row.official_episode?))) {
+                    input.episode_offset = original - official;
+                }
+                crate::android_player_page::bound_origin(&loading.id, &input);
+            }
             crate::android_player::open_rule_player(ids[0].clone(), &state, &loading).await
         }
         .await;
@@ -314,9 +339,9 @@ async fn bind(state: &AppState, input: BindingInput, token: &str) -> AppResult<V
             .bind(id)
             .execute(&mut *tx)
             .await?;
-        sqlx::query("INSERT INTO media_episode_overrides(media_file_id,work_id,season,episode,episode_type,updated_at) VALUES(?,?,NULL,?,0,?) ON CONFLICT(media_file_id) DO UPDATE SET work_id=excluded.work_id,episode=excluded.episode,episode_type=0,updated_at=excluded.updated_at")
-            .bind(id).bind(&input.work_id).bind(row.official_episode).bind(&now).execute(&mut *tx).await?;
-        if let Some((provider, external)) = target.official {
+        sqlx::query("INSERT INTO media_episode_overrides(media_file_id,work_id,season,episode,episode_type,updated_at) VALUES(?,?,NULL,?,?,?) ON CONFLICT(media_file_id) DO UPDATE SET work_id=excluded.work_id,episode=excluded.episode,episode_type=excluded.episode_type,updated_at=excluded.updated_at")
+            .bind(id).bind(&input.work_id).bind(row.official_episode).bind(target.official.as_ref().map(|(_, _, kind)| *kind).unwrap_or(0)).bind(&now).execute(&mut *tx).await?;
+        if let Some((provider, external, _)) = target.official {
             sqlx::query("INSERT INTO media_episode_links(media_file_id,work_id,provider,episode_external_id,match_method,confidence,updated_at) VALUES(?,?,?,?,'manual',1,?)")
             .bind(id).bind(&input.work_id).bind(provider).bind(external).bind(&now).execute(&mut *tx).await?;
         }
@@ -382,6 +407,7 @@ mod tests {
             episode_indexes: vec![0, 1],
             episode_offset: 12,
             replace_existing: false,
+            target_episode_external_id: None,
         };
         (state, dir, rule, roads, input)
     }
@@ -480,5 +506,56 @@ mod tests {
             rule_sources::episode_key(&rule, "42", &roads[0], 0).unwrap(),
             key
         );
+    }
+    #[tokio::test]
+    async fn explicit_episode_identity_maps_the_selected_source_without_guessing_its_number() {
+        let (state, _dir, rule, roads, mut input) = fixture().await;
+        input.episode_indexes = vec![0];
+        input.episode_offset = 0;
+        input.target_episode_external_id = Some("ep2".into());
+        let p = preview(&state, &rule, &roads, &input).await;
+        assert_eq!(p.rows[0].original_episode, Some(13));
+        assert_eq!(p.rows[0].official_episode, Some(2));
+        let ids = bind(&state, input.clone(), &p.token).await.unwrap();
+        let link: (String, Option<i64>, i64) = sqlx::query_as("SELECT l.episode_external_id,o.episode,o.episode_type FROM media_episode_links l JOIN media_episode_overrides o ON o.media_file_id=l.media_file_id WHERE l.media_file_id=?")
+            .bind(&ids[0]).fetch_one(&state.pool).await.unwrap();
+        assert_eq!(link, ("ep2".into(), Some(2), 0));
+        sqlx::query("INSERT INTO playback_progress(media_file_id,position_ms,duration_ms,updated_at) VALUES(?,12345,40000,'now')").bind(&ids[0]).execute(&state.pool).await.unwrap();
+        let p = preview(&state, &rule, &roads, &input).await;
+        assert_eq!(bind(&state, input.clone(), &p.token).await.unwrap(), ids);
+        input.target_episode_external_id = Some("ep1".into());
+        let mut tx = state.pool.begin().await.unwrap();
+        assert!(prepare(&mut tx, &rule, &roads, &input).await.is_err());
+        tx.rollback().await.unwrap();
+        assert_eq!(crate::playback::resume_position(&state.pool, &ids[0], false).await.unwrap(), Some(12345));
+        let link: String = sqlx::query_scalar("SELECT episode_external_id FROM media_episode_links WHERE media_file_id=?").bind(&ids[0]).fetch_one(&state.pool).await.unwrap();
+        assert_eq!(link, "ep2");
+    }
+    #[tokio::test]
+    async fn explicit_special_episode_keeps_its_official_identity_and_type() {
+        let (state, _dir, rule, roads, mut input) = fixture().await;
+        sqlx::query("INSERT INTO anime_episodes(work_id,provider,external_id,episode_number,episode_type,sort_number,title,fetched_at) VALUES('w','bangumi','special',NULL,1,1,'特别篇','now')").execute(&state.pool).await.unwrap();
+        input.episode_indexes = vec![0];
+        input.target_episode_external_id = Some("special".into());
+        let p = preview(&state, &rule, &roads, &input).await;
+        assert_eq!(p.rows[0].official_title.as_deref(), Some("特别篇"));
+        let ids = bind(&state, input, &p.token).await.unwrap();
+        let link: (String, Option<i64>, i64) = sqlx::query_as("SELECT l.episode_external_id,o.episode,o.episode_type FROM media_episode_links l JOIN media_episode_overrides o ON o.media_file_id=l.media_file_id WHERE l.media_file_id=?")
+            .bind(&ids[0]).fetch_one(&state.pool).await.unwrap();
+        assert_eq!(link, ("special".into(), None, 1));
+    }
+    #[tokio::test]
+    async fn explicit_episode_from_another_work_or_a_batch_is_rejected_without_writes() {
+        let (state, _dir, rule, roads, mut input) = fixture().await;
+        sqlx::query("INSERT INTO works(id,title,type,created_at,updated_at) VALUES('other','其他作品','video','now','now')").execute(&state.pool).await.unwrap();
+        sqlx::query("INSERT INTO anime_episodes(work_id,provider,external_id,episode_number,episode_type,sort_number,title,fetched_at) VALUES('other','bangumi','other-ep',1,0,1,'其他第一集','now')").execute(&state.pool).await.unwrap();
+        input.target_episode_external_id = Some("ep1".into());
+        assert!(context(&state, &input).await.is_err());
+        input.episode_indexes = vec![0];
+        input.target_episode_external_id = Some("other-ep".into());
+        let mut tx = state.pool.begin().await.unwrap();
+        assert!(prepare(&mut tx, &rule, &roads, &input).await.is_err());
+        tx.rollback().await.unwrap();
+        assert_eq!(sqlx::query_scalar::<_, i64>("SELECT count(*) FROM rule_episodes").fetch_one(&state.pool).await.unwrap(), 0);
     }
 }

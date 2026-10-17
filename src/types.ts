@@ -332,6 +332,7 @@ export interface ExploreSaveInput {
   externalId: string;
   status: WorkStatus;
   favorite: boolean;
+  forPlayback?: boolean;
 }
 
 export interface WeeklyCalendarDay {

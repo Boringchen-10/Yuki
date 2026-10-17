@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::{FromRow, SqlitePool};
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration as StdDuration;
 use tauri::AppHandle;
@@ -928,6 +929,12 @@ pub async fn save_subject(
     if !WORK_STATUSES.contains(&input.status.as_str()) {
         return Err(AppError::Validation("无效的本地追番状态".to_string()));
     }
+    if input.for_playback {
+        let id = save_cached_playback_subject(state, &input).await?;
+        let paths: (Option<String>, Option<String>) = sqlx::query_as("SELECT cover_path,banner_path FROM works WHERE id=?").bind(&id).fetch_one(&state.pool).await?;
+        for path in [paths.0, paths.1].into_iter().flatten() { db::allow_cover_file(app, Path::new(&path))?; }
+        return Ok(id);
+    }
     let primary = load_subject_metadata(&state.pool, &input.external_id, false)
         .await?
         .value;
@@ -973,8 +980,35 @@ pub async fn save_subject(
         cover_path,
         banner_path,
         Some(&aggregated),
+        false,
     )
     .await
+}
+
+async fn save_cached_playback_subject(state: &AppState, input: &ExploreSaveInput) -> AppResult<String> {
+    if let Some(id) = sqlx::query_scalar::<_, String>("SELECT work_id FROM work_external_ids WHERE provider='bangumi' AND external_id=?")
+        .bind(&input.external_id).fetch_optional(&state.pool).await? {
+        return Ok(id);
+    }
+    let key = crate::bangumi_network::current().cache_key(&format!("detail:{}", input.external_id));
+    let metadata = load_cache::<Vec<WorkMetadata>>(&state.pool, BANGUMI_PROVIDER, &key).await?
+        .and_then(|cached| cached.value.into_iter().find(|metadata| metadata.external_id == input.external_id))
+        .ok_or_else(|| AppError::Validation("作品资料尚未载入，请返回发现重新打开作品后播放".into()))?;
+    let episode_key = BangumiProvider::new()?.structure_cache_key(&input.external_id, "episodes");
+    let episodes = load_cache::<Vec<crate::models::AnimeEpisodeMetadata>>(&state.pool, BANGUMI_PROVIDER, &episode_key).await?
+        .map(|cached| cached.value).unwrap_or_default();
+    let aggregate = crate::metadata_aggregator::AggregationResult {
+        records: vec![crate::metadata_aggregator::ProviderRecord { provider: "bangumi".into(), external_id: metadata.external_id.clone(), title: metadata.title.clone(), year: metadata.year, confidence: 1.0, metadata: metadata.clone() }],
+        metadata: metadata.clone(), episodes, warnings: vec![],
+    };
+    let cover_path = metadata.cover_url.as_deref().and_then(|url| {
+        [format!("bangumi:{}", input.external_id), format!("bangumi-{}", input.external_id)].into_iter()
+            .map(|anchor| crate::metadata_aggregator::artwork_cache_path(&state.cover_cache_path, &anchor, "cover", &normalize_trusted_image_url(url)))
+            .find(|path| path.is_file()).map(|path| path.to_string_lossy().into_owned())
+    });
+    let banner_path = state.cover_cache_path.join(format!("explore-bangumi-{}-banner.jpg", input.external_id));
+    let banner_path = banner_path.is_file().then(|| banner_path.to_string_lossy().into_owned());
+    persist_subject(state, &metadata, &input.status, input.favorite, cover_path, banner_path, Some(&aggregate), true).await
 }
 
 async fn persist_subject(
@@ -985,6 +1019,7 @@ async fn persist_subject(
     cover_path: Option<String>,
     banner_path: Option<String>,
     aggregation: Option<&crate::metadata_aggregator::AggregationResult>,
+    preserve_existing: bool,
 ) -> AppResult<String> {
     let now = Utc::now().to_rfc3339();
     let (_write_guard, mut transaction) = crate::db::begin_write(&state.pool).await?;
@@ -999,6 +1034,7 @@ async fn persist_subject(
         .bind(&work_id)
         .fetch_one(&mut *transaction)
         .await?;
+    if exists && preserve_existing { return Ok(work_id); }
     if !exists {
         sqlx::query("INSERT INTO works (id, title, original_title, type, description, cover_path, banner_path, status, favorite, notes, created_at, updated_at, metadata_status, metadata_year, last_recognized_at) VALUES (?, ?, ?, 'video', ?, ?, ?, ?, ?, '', ?, ?, 'matched', ?, ?)")
             .bind(&work_id)
@@ -2016,7 +2052,7 @@ mod tests {
             thumbnail_cache_path: directory.path().join("thumbnails"),
         };
         let metadata = sample_metadata();
-        let first = persist_subject(&state, &metadata, "planned", false, None, None, None)
+        let first = persist_subject(&state, &metadata, "planned", false, None, None, None, false)
             .await
             .expect("first save");
         let second = persist_subject(
@@ -2027,6 +2063,7 @@ mod tests {
             None,
             Some("C:\\cache\\banner.jpg".to_string()),
             None,
+            false,
         )
         .await
         .expect("second save");
@@ -2050,6 +2087,37 @@ mod tests {
                 Some("C:\\cache\\banner.jpg".to_string())
             )
         );
+    }
+
+    #[tokio::test]
+    async fn playback_save_uses_stale_disk_metadata_and_keeps_existing_personal_state() {
+        let directory = tempdir().unwrap();
+        let state = AppState { pool: db::test_pool().await.unwrap(), database_path: directory.path().join("qa.db"), data_directory: directory.path().into(), cover_cache_path: directory.path().into(), thumbnail_cache_path: directory.path().into() };
+        let metadata = sample_metadata();
+        let input: ExploreSaveInput = serde_json::from_value(serde_json::json!({"externalId":metadata.external_id,"status":"planned","favorite":false,"forPlayback":true})).unwrap();
+        let key = crate::bangumi_network::current().cache_key(&format!("detail:{}", input.external_id));
+        save_cache(&state.pool, BANGUMI_PROVIDER, &key, &vec![metadata.clone()], Duration::hours(-1)).await.unwrap();
+        let episode: crate::models::AnimeEpisodeMetadata = serde_json::from_value(serde_json::json!({"provider":"bangumi","externalId":"cached-ep","episodeNumber":3,"sortNumber":3,"episodeType":0,"title":"第三集","originalTitle":null,"description":"","airDate":null,"duration":null,"fetchedAt":"2026-10-16"})).unwrap();
+        let episode_key = BangumiProvider::new().unwrap().structure_cache_key(&input.external_id, "episodes");
+        save_cache(&state.pool, BANGUMI_PROVIDER, &episode_key, &vec![episode], Duration::hours(-1)).await.unwrap();
+        let id = save_cached_playback_subject(&state, &input).await.unwrap();
+        assert_eq!(sqlx::query_scalar::<_, String>("SELECT external_id FROM anime_episodes WHERE work_id=?").bind(&id).fetch_one(&state.pool).await.unwrap(), "cached-ep");
+        sqlx::query("UPDATE works SET status='completed',favorite=1,rating=9,notes='保留个人记录' WHERE id=?").bind(&id).execute(&state.pool).await.unwrap();
+        let again = save_cached_playback_subject(&state, &input).await.unwrap();
+        assert_eq!(id, again);
+        let personal: (String, bool, f64, String) = sqlx::query_as("SELECT status,favorite,rating,notes FROM works WHERE id=?").bind(&id).fetch_one(&state.pool).await.unwrap();
+        assert_eq!(personal, ("completed".into(), true, 9.0, "保留个人记录".into()));
+        assert_eq!(sqlx::query_scalar::<_, i64>("SELECT count(*) FROM works").fetch_one(&state.pool).await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn playback_save_without_loaded_metadata_does_not_create_a_work() {
+        let directory = tempdir().unwrap();
+        let state = AppState { pool: db::test_pool().await.unwrap(), database_path: directory.path().join("qa.db"), data_directory: directory.path().into(), cover_cache_path: directory.path().into(), thumbnail_cache_path: directory.path().into() };
+        let input: ExploreSaveInput = serde_json::from_value(serde_json::json!({"externalId":"400602","status":"planned","favorite":false})).unwrap();
+        assert!(!input.for_playback);
+        assert!(save_cached_playback_subject(&state, &input).await.is_err());
+        assert_eq!(sqlx::query_scalar::<_, i64>("SELECT count(*) FROM works").fetch_one(&state.pool).await.unwrap(), 0);
     }
 
     #[tokio::test]

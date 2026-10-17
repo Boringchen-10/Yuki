@@ -1,0 +1,221 @@
+--- a/src/android/ExplorePanel.tsx
++++ b/src/android/ExplorePanel.tsx
+@@ -5,7 +5,7 @@
+ import { ArrowLeft, BookOpen, CalendarDays, Check, ChevronDown, ChevronRight, Clock, Download, Heart, HeartCrack, MessageCircle, Play, RefreshCw, Search, Star, Users, X } from "lucide-react";
+ import { api } from "../api";
+ import { androidApi } from "./api";
+-import type { AnimeSeasonOption, AnimeWorkStructure, ExploreSubject, WeeklyCalendar, WeeklyCalendarDay, WorkStatus } from "../types";
++import type { AnimeEpisodeMetadata, AnimeSeasonOption, AnimeWorkStructure, ExploreSubject, WeeklyCalendar, WeeklyCalendarDay, WorkStatus } from "../types";
+ import { appendComicPage, comicExploreApi, novelExploreApi, type ComicDetail, type ComicFeedEntry, type ComicHome, type ComicItem, type ComicSection, type ComicSectionPage, type ComicSectionQuery, type ComicTheme, type RankPeriod } from "../comicExplore";
+ import { type SourceEntry } from "../bookContent";
+ import BookReader from "./BookReader";
+@@ -18,6 +18,7 @@
+ import TagDiscovery from "./TagDiscovery";
+ import { AnimeDetailHeader, BookDetailHeader } from "./DetailHeaders";
+ import EpisodeSources from "./EpisodeSources";
++import PlaySourceSheet from "./PlaySourceSheet";
+ import { useEpisodeArtwork } from "./useEpisodeArtwork";
+ import BangumiCommentFeed from "./BangumiCommentFeed";
+ import { useBangumiComments } from "./useBangumiComments";
+@@ -195,6 +196,7 @@
+   const [subjectTab, setSubjectTab] = useState<SubjectDetailTab>("overview");
+   const [descExpanded, setDescExpanded] = useState(false);
+   const [statusSheet, setStatusSheet] = useState(false);
++  const [playSource, setPlaySource] = useState<{ episode?: AnimeEpisodeMetadata } | null>(null);
+   const [saving, setSaving] = useState(false);
+   const [comicDetail, setComicDetail] = useState<ComicDetail | null>(null);
+   const [comicDetailKind, setComicDetailKind] = useState<"comic" | "novel">("comic");
+@@ -264,6 +266,7 @@
+     void transition.finished.then(cleanup, cleanup);
+   }, []);
+   backHandler.current = () => {
++    if (playSource) { setPlaySource(null); return true; }
+     if (comicCommentsOpen) { setComicCommentsOpen(false); return true; }
+     if (statusSheet) { setStatusSheet(false); return true; }
+     if (subject) { subjectRequest.current++; const id = exploreDetailId.current ?? subject.externalId; runExploreMorph(id, "back", () => setSubject(null)); return true; }
+@@ -545,6 +548,7 @@
+ 
+   const openSubjectRef = useRef<(item: ExploreSubject) => Promise<void>>(async () => {});
+   const openSubject = async (item: ExploreSubject) => {
++    setPlaySource(null);
+     if (item.localWorkId && onOpenWork) { onOpenWork(item.localWorkId); return; }
+     const request = ++subjectRequest.current;
+     exploreDetailId.current = item.externalId;
+@@ -697,6 +701,18 @@
+     catch (reason) { onToast(String(reason)); }
+   };
+ 
++  const resolvePlayWork = async () => {
++    if (!subject) throw new Error("作品资料暂不可用，请重试。");
++    const current = subject;
++    const id = current.localWorkId ?? await api.saveExploreSubject({ externalId: current.externalId, status: current.localStatus ?? "planned", favorite: current.favorite, forPlayback: true });
++    const work = await api.getWork(id);
++    const updated = { ...current, localWorkId: id, inLibrary: true, localStatus: work.status, favorite: work.favorite };
++    androidSession.set(`bangumi:subject:${current.externalId}`, updated);
++    setSubject(previous => previous?.externalId === current.externalId ? updated : previous);
++    onLibraryChanged?.();
++    return work;
++  };
++
+   const selectDay = (next: number) => { setSlideDir(next >= scheduleDay ? "right" : "left"); setScheduleDay(next); };
+ 
+   const animeCard = (item: ExploreSubject) => <button className="gz-cover" key={item.externalId} onClick={() => void openSubject(item)}>
+@@ -803,7 +819,7 @@
+       {structureState === "loading" ? <LoadingIndicator label="正在读取剧集…" compact />
+           : structure && structure.episodes.length ? <>
+             <div className="gz-section-head"><h2>剧集</h2><span className="gz-meta">{structure.episodes.length} 集</span><button type="button" className="gz-iconbtn" aria-label="更新分集剧照" disabled={subjectArtwork.refreshing} onClick={()=>void subjectArtwork.refresh()}><RefreshCw size={16}/></button></div>
+-            <EpisodeSources subjectId={subject.externalId} structure={structure} files={structure.episodes.flatMap(episode=>episode.localFiles)} sources={[]} progress={[]} artwork={subjectArtwork.artwork} busy={false} onPlay={id=>void playEpisode(id)}/>
++            <EpisodeSources subjectId={subject.externalId} structure={structure} files={structure.episodes.flatMap(episode=>episode.localFiles)} sources={[]} progress={[]} artwork={subjectArtwork.artwork} busy={false} onPlay={id=>void playEpisode(id)} onOpenPlaySource={episode=>setPlaySource({episode})}/>
+             {subjectArtwork.warning && <p className="gz-meta">剧照暂未更新，可稍后重试。</p>}
+           </> : structureState === "error" ? <div className="gz-error" role="alert"><span>Bangumi 分集资料读取失败。</span><button className="gz-iconbtn" aria-label="重试分集资料" onClick={() => setStructureAttempt(value=>value+1)}><RefreshCw size={16} /></button></div> : <div className="gz-empty"><BookOpen size={26} /><h2>暂无剧集资料</h2><p>Bangumi 未提供该条目的分集资料。</p></div>}
+     </section>}
+@@ -859,6 +875,7 @@
+         </button>)}
+       </div>
+     </section></div>}
++    {playSource && <PlaySourceSheet key={subject.externalId} title={subject.title} episode={playSource.episode} resolveWork={resolvePlayWork} onClose={() => setPlaySource(null)} onToast={onToast} />}
+   </div>;
+ 
+   const comicDetailView = comicDetail && <div className="gz-subject">
+--- a/src/android/EpisodeSources.tsx
++++ b/src/android/EpisodeSources.tsx
+@@ -3,7 +3,7 @@
+ import { downloadEntryApi } from "./downloadEntryApi";
+ import type { EpisodeArtwork } from "../episodeArtwork";
+ import EpisodeStill from "./EpisodeStill";
+-import type { AnimeWorkStructure, MediaFile } from "../types";
++import type { AnimeEpisodeMetadata, AnimeWorkStructure, MediaFile } from "../types";
+ import { playbackPercent, playbackTime, type PlaybackProgress } from "../playback";
+ import { pathBaseName, pathDirName } from "../mediaPaths";
+ import type { VideoSource } from "./api";
+@@ -22,7 +22,7 @@
+   workId?: string; subjectId?: string;
+   structure: AnimeWorkStructure | null; files: MediaFile[]; sources: VideoSource[];
+   progress: PlaybackProgress[]; artwork: EpisodeArtwork | null; warning?: string; busy: boolean; onPlay: (id: string) => void;
+-  onOpenPlaySource?: () => void;
++  onOpenPlaySource?: (episode?: AnimeEpisodeMetadata) => void;
+   onUnlinkEpisode?: (mediaFileId: string) => void; onDetachWork?: (mediaFileId: string) => void; onRecognizeOther?: (mediaFileId: string) => void;
+ }) {
+   const [scope, setScope] = useState("all"), [chosen, setChosen] = useState<Record<string, string>>({});
+@@ -33,8 +33,8 @@
+   const available = (file: MediaFile) => !file.missing && sources.find(source => source.id === file.libraryRootId)?.enabled !== false;
+   const linked = new Set(structure?.episodes.flatMap(episode => episode.localFiles.map(file => file.id)));
+   const rows = [
+-    ...(structure?.episodes ?? []).map(episode => ({ key: `${episode.provider}:${episode.externalId}`, episode: true, title: episode.title || episode.originalTitle || "暂无标题", label: episode.episodeType ? `${({ 1: "特别篇", 2: "OP", 3: "ED", 4: "预告", 5: "MAD", 6: "其他" } as Record<number, string>)[episode.episodeType] ?? "特别篇"} ${episode.sortNumber}` : `第 ${episode.episodeNumber ?? episode.sortNumber} 集`, files: episode.localFiles.filter(file => file.mediaType === "video") })),
+-    ...videos.filter(file => !linked.has(file.id)).map(file => ({ key: file.id, episode: false, title: file.fileName, label: structure?.episodes.length ? "未关联官方分集" : file.parsedEpisode ? `第 ${file.parsedEpisode} 集` : "视频文件", files: [file] })),
++    ...(structure?.episodes ?? []).map(episode => ({ key: `${episode.provider}:${episode.externalId}`, episode: true, target: episode, title: episode.title || episode.originalTitle || "暂无标题", label: episode.episodeType ? `${({ 1: "特别篇", 2: "OP", 3: "ED", 4: "预告", 5: "MAD", 6: "其他" } as Record<number, string>)[episode.episodeType] ?? "特别篇"} ${episode.sortNumber}` : `第 ${episode.episodeNumber ?? episode.sortNumber} 集`, files: episode.localFiles.filter(file => file.mediaType === "video") })),
++    ...videos.filter(file => !linked.has(file.id)).map(file => ({ key: file.id, episode: false, target: undefined, title: file.fileName, label: structure?.episodes.length ? "未关联官方分集" : file.parsedEpisode ? `第 ${file.parsedEpisode} 集` : "视频文件", files: [file] })),
+   ];
+   const visible = rows.filter(row => scope === "all" || row.files.some(file => episodeSource(file, sources) === scope));
+   const cards = visible.map(row => {
+@@ -60,9 +60,9 @@
+   return <>
+     {downloadMessage && <p className="gz-meta" role="status">{downloadMessage}</p>}
+     {warning && <p className="gz-meta" role="status">{warning}</p>}
+-    {(workId || videos.length > 0) && <div className="gz-chips" role="group" aria-label="剧集播放来源">{([["all", "全部来源"], ["local", "本地"], ["webdav", "WebDAV"], ["rule", "规则来源"]] as const).map(([id, label]) => <button className={`gz-chip${scope === id ? " active" : ""}`} aria-pressed={scope === id} key={id} onClick={() => { if (id === "rule") { onOpenPlaySource?.(); return; } setScope(id); if (id === "all" && !hasLocalOrWebdav) onOpenPlaySource?.(); }}>{label}</button>)}</div>}
++    {(workId || videos.length > 0 || onOpenPlaySource) && <div className="gz-chips" role="group" aria-label="剧集播放来源">{([["all", "全部来源"], ["local", "本地"], ["webdav", "WebDAV"], ["rule", "规则来源"]] as const).map(([id, label]) => <button className={`gz-chip${scope === id ? " active" : ""}`} aria-pressed={scope === id} key={id} onClick={() => { if (id === "rule") { onOpenPlaySource?.(); return; } setScope(id); if (id === "all" && !hasLocalOrWebdav) onOpenPlaySource?.(); }}>{label}</button>)}</div>}
+     <div className="gz-episodes" key={scope}>{cards.map(({ row, file, saved }) => <article className="gz-episode" key={row.key}>
+-      <button className="gz-episode-cover" disabled={busy || ((!file || !available(file)) && !onOpenPlaySource)} aria-label={`播放 ${row.label} ${row.title}`} onClick={() => { if (file && available(file)) onPlay(file.id); else onOpenPlaySource?.(); }}><EpisodeStill workId={workId} subjectId={subjectId} episodeKey={row.key} url={artwork?.images[row.key]} cached={artwork?.cachedImages[row.key]} /><span>{row.label}</span>{saved && <progress max={100} value={playbackPercent(saved)} />}</button>
++      <button className="gz-episode-cover" disabled={busy || ((!file || !available(file)) && !onOpenPlaySource)} aria-label={`播放 ${row.label} ${row.title}`} onClick={() => { if (file && available(file)) onPlay(file.id); else onOpenPlaySource?.(row.target); }}><EpisodeStill workId={workId} subjectId={subjectId} episodeKey={row.key} url={artwork?.images[row.key]} cached={artwork?.cachedImages[row.key]} /><span>{row.label}</span>{saved && <progress max={100} value={playbackPercent(saved)} />}</button>
+       <strong>{row.title}</strong>
+       <div className="gz-episode-foot">
+         <span className="gz-meta">{file ? episodeSourceLabel(file, sources) : "暂无文件"}{fileStatus(file, saved)}</span>
+--- a/src/android/PlaySourceSheet.tsx
++++ b/src/android/PlaySourceSheet.tsx
+@@ -1,6 +1,6 @@
+ import { useEffect, useMemo, useRef, useState } from "react";
+ import { ArrowLeft, ChevronDown, ChevronRight, ExternalLink, LoaderCircle, MoreHorizontal, Play, RefreshCw, X } from "lucide-react";
+-import type { WorkDetail } from "../types";
++import type { AnimeEpisodeMetadata, WorkDetail } from "../types";
+ import { usePreferences } from "../store";
+ import { rulesApi, type RuleChapters, type RuleItem, type RulePlugin, type RuleSearch } from "./rulesApi";
+ import "./rules.css";
+@@ -8,7 +8,7 @@
+ type Result = { plugin: RulePlugin; item: RuleItem };
+ type SourceState = { status: "searching" | "error" | "empty" | "ready"; data?: RuleSearch; error?: string };
+ 
+-export default function PlaySourceSheet({ work, onClose, onToast }: { work: WorkDetail; onClose: () => void; onToast?: (message: string) => void }) {
++export default function PlaySourceSheet({ work, title = work?.title ?? "", episode, resolveWork, onClose, onToast }: { work?: WorkDetail; title?: string; episode?: AnimeEpisodeMetadata; resolveWork?: () => Promise<WorkDetail>; onClose: () => void; onToast?: (message: string) => void }) {
+   const [plugins, setPlugins] = useState<RulePlugin[]>([]);
+   const [states, setStates] = useState<Record<string, SourceState>>({});
+   const [expanded, setExpanded] = useState<string | null>(null);
+@@ -21,6 +21,7 @@
+   const [error, setError] = useState("");
+   const generation = useRef(0);
+   const handedToPlayer = useRef(false);
++  const playPending = useRef(false);
+ 
+   useEffect(() => {
+     let active = true;
+@@ -29,7 +30,7 @@
+       const order = usePreferences.getState().ruleOrder, rank = new Map(order.map((id, index) => [id, index]));
+       const enabled = items.filter(item => item.enabled).sort((a, b) => (rank.get(a.id) ?? order.length) - (rank.get(b.id) ?? order.length));
+       setPlugins(enabled);
+-      if (enabled.length) void search(enabled, work.title);
++      if (enabled.length) void search(enabled, title);
+     }).catch(reason => { if (active) setError(String(reason)); });
+     return () => { active = false; generation.current++; if (!handedToPlayer.current) void rulesApi.cancelResolve().catch(() => {}); };
+     // eslint-disable-next-line react-hooks/exhaustive-deps
+@@ -61,23 +62,29 @@
+   }
+ 
+   async function play(index: number) {
+-    if (!subject) return;
++    if (!subject || playPending.current) return;
++    playPending.current = true;
+     const version = generation.current; setPlaying(true); setError("");
+     try {
+-      await rulesApi.play({ workId: work.id, pluginId: subject.plugin.id, source: subject.item.source, title: subject.item.name, roadIndex: road, episodeIndexes: [index], episodeOffset: 0 });
++      const target = work ?? await resolveWork?.();
++      if (version !== generation.current) return;
++      if (!target) throw new Error("作品资料暂不可用，请关闭后重试。");
++      const value = await rulesApi.play({ workId: target.id, pluginId: subject.plugin.id, source: subject.item.source, title: subject.item.name, roadIndex: road, episodeIndexes: [index], episodeOffset: 0, targetEpisodeExternalId: episode?.externalId });
++      if (value.error) throw new Error(value.error.message);
+       if (version !== generation.current) return;
+       handedToPlayer.current = true;
+       onToast?.("正在打开播放器…"); onClose();
+     } catch (reason) { if (version === generation.current) setError(String(reason)); }
+-    finally { if (version === generation.current) setPlaying(false); }
++    finally { playPending.current = false; if (version === generation.current) setPlaying(false); }
+   }
+ 
+-  function retry(plugin: RulePlugin) { void search([plugin], work.title); }
++  function retry(plugin: RulePlugin) { void search([plugin], title); }
+   function backToList() { generation.current++; setSubject(null); setChapters(null); setLoading(false); setError(""); }
+ 
+   const total = useMemo(() => plugins.reduce((sum, plugin) => sum + (states[plugin.id]?.data?.items.length ?? 0), 0), [plugins, states]);
+   const done = plugins.filter(plugin => { const state = states[plugin.id]; return !!state && state.status !== "searching"; }).length;
+   const episodes = chapters?.roads[road]?.episodes ?? [];
++  const episodeLabel = episode ? `${episode.episodeType ? ({ 1: "特别篇", 2: "OP", 3: "ED", 4: "预告", 5: "MAD", 6: "其他" } as Record<number, string>)[episode.episodeType] ?? "其他" : "第"} ${episode.episodeNumber ?? episode.sortNumber}${episode.episodeType ? "" : " 集"}${episode.title ? ` · ${episode.title}` : ""}` : "";
+   const statusLabel = (state?: SourceState) => {
+     if (!state || state.status === "searching") return "检索中…";
+     if (state.status === "error") return "检索失败";
+@@ -94,6 +101,8 @@
+     <div className="gz-play-source-view" key={subject ? `subject:${subject.plugin.id}:${subject.item.source}` : "list"}>
+     {!subject && <p className="gz-play-source-summary" role="status">{plugins.length ? `${done < plugins.length ? `检索中 ${done}/${plugins.length}` : "检索完成"} · ${total} 个结果` : "暂无已启用的规则来源"}</p>}
+     {error && <p className="gz-error" role="alert">{error}</p>}
++    {episode && <p className="gz-meta">正在选择：{episodeLabel}。请核对来源作品、线路与对应剧集后播放。</p>}
++    {!work && resolveWork && <p className="gz-meta">开始播放时会加入媒体库并保存观看记录。</p>}
+     {!subject && <>
+       {!plugins.length && <p className="gz-meta">请在“我的 → 规则设置”安装并启用规则。</p>}
+       <div className="gz-play-source-list">
+@@ -111,7 +120,7 @@
+               <button type="button" className="gz-iconbtn gz-play-source-more" aria-label={`${plugin.name} 更多操作`} aria-haspopup="menu" aria-expanded={menu === plugin.id} onClick={() => setMenu(menu === plugin.id ? null : plugin.id)}><MoreHorizontal size={18} /></button>
+               {menu === plugin.id && <div className="gz-rule-menu" role="menu">
+                 <button type="button" role="menuitem" disabled={state?.status === "searching"} onClick={() => { setMenu(null); retry(plugin); }}><RefreshCw size={16} />重新检索</button>
+-                <button type="button" role="menuitem" onClick={() => { setMenu(null); void rulesApi.verify(plugin.id, work.title, state?.data?.verificationUrl ?? null).catch(reason => setError(String(reason))); }}><ExternalLink size={16} />网页验证</button>
++                <button type="button" role="menuitem" onClick={() => { setMenu(null); void rulesApi.verify(plugin.id, title, state?.data?.verificationUrl ?? null).catch(reason => setError(String(reason))); }}><ExternalLink size={16} />网页验证</button>
+               </div>}
+             </div>
+             {isOpen && items.length ? <div className="gz-play-source-results">
+--- a/scripts/fixtures/android-organize.tsx
++++ b/scripts/fixtures/android-organize.tsx
+@@ -39,7 +39,7 @@
+   return <div className="android-app" data-theme="dark"><main className="gz-scroll"><div className="gz-actions">{["inbox", "organize", "episodes", "tasks"].map(value => <button className="gz-btn" key={value} onClick={() => setMode(value)}>{value}</button>)}</div>
+     {mode === "inbox" ? <InboxPanel groups={groups} sources={sources} busy={busy} onRun={run} onRefresh={async () => {}} registerBack={() => {}} onOpen={(group, remaining) => setOpened(`${group.key}:${remaining?.length ?? 0}`)} />
+       : mode === "organize" ? <Organize mediaId="a" initialTitle="作品甲" works={[]} busy={busy} onRun={run} onDone={async id => { calls.push({ type: "done", id }); }} />
+-      : mode === "episodes" ? <EpisodeSources workId="work" structure={{ episodes: [{ provider: "bangumi", externalId: "ep1", episodeNumber: 1, sortNumber: 1, title: "第一集", episodeType: 0, localFiles: [a, b] }] } as AnimeWorkStructure} files={[a, b]} sources={sources} progress={[]} busy={busy} onPlay={id => { calls.push({ type: "play", id }); }} onUnlinkEpisode={id => { calls.push({ type: "unlink-episode", id }); }} onDetachWork={id => { calls.push({ type: "detach-work", id }); }} onRecognizeOther={id => { calls.push({ type: "recognize-other", id }); }} />
++      : mode === "episodes" ? <EpisodeSources workId="work" structure={{ episodes: [{ provider: "bangumi", externalId: "ep1", episodeNumber: 1, sortNumber: 1, title: "第一集", episodeType: 0, localFiles: [a, b] }] } as AnimeWorkStructure} files={[a, b]} sources={sources} progress={[]} artwork={artwork} busy={busy} onPlay={id => { calls.push({ type: "play", id }); }} onUnlinkEpisode={id => { calls.push({ type: "unlink-episode", id }); }} onDetachWork={id => { calls.push({ type: "detach-work", id }); }} onRecognizeOther={id => { calls.push({ type: "recognize-other", id }); }} />
+       : <SourceImports tasks={[task]} sources={sources} onChange={async () => {}} />}
+     <output data-qa-opened>{opened}</output><button className="gz-btn" onClick={() => { (window as unknown as { __qaCalls: unknown[] }).__qaCalls = calls; }}>读取测试调用</button>
+     </main><nav className="gz-tabbar" aria-label="主导航">测试导航</nav></div>;

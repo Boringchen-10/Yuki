@@ -235,7 +235,7 @@ pub(crate) fn serve(state: AppState, session: String) {
                                 let rule=context.rule.ok_or_else(||AppError::Validation("线路资料已失效".into()))?;
                                 let road=row["ruleRoad"].as_u64().unwrap() as usize; let index=row["ruleIndex"].as_u64().unwrap() as usize;
                                 if let Some(work)=rule.work {
-                                    crate::rule_bindings::play_selection(state.clone(),BindingInput {work_id:work,plugin_id:rule.plugin,source:rule.source,title:rule.title,road_index:road,episode_indexes:vec![index],episode_offset:rule.offset,replace_existing:false}).await
+                                    crate::rule_bindings::play_selection(state.clone(),BindingInput {work_id:work,plugin_id:rule.plugin,source:rule.source,title:rule.title,road_index:road,episode_indexes:vec![index],episode_offset:rule.offset,replace_existing:false,target_episode_external_id:None}).await
                                 } else { crate::rule_sources::preview_selection(state.clone(),rule.plugin,rule.source,road,index).await }
                             }
                         },

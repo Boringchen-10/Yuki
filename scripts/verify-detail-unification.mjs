@@ -15,7 +15,7 @@ try{
  assert.equal(await page.locator('.gz-subject-topbar').evaluate(node=>getComputedStyle(node).zIndex),"3");
  await page.locator('.gz-episode-still:visible').waitFor();assert.equal(await page.getByText("尚未缓存动画扩展结构，请点击刷新元数据",{exact:true}).count(),0);
  assert.equal(await page.locator('.gz-episodes > .gz-episode').count(),2);assert.equal(await page.locator('.gz-episode-still:visible').count(),1);
- assert.equal(await page.locator('.gz-episode-cover').first().isDisabled(),true);assert.equal(await page.locator('.gz-episode-cover').first().evaluate(node=>getComputedStyle(node).opacity),"1");
+ assert.equal(await page.locator('.gz-episode-cover').first().isDisabled(),false);assert.equal(await page.locator('.gz-episode-cover').first().evaluate(node=>getComputedStyle(node).opacity),"1");
  assert.equal((await page.evaluate(()=>window.__calls.filter(call=>call.kind==="comments"))).length,0);cases.push("uncollected detail has real episode stills, neutral missing image and no internal warnings");
  const bounds=await page.locator('.gz-shared-anime-hero').boundingBox();await page.getByRole('tab',{name:'概览',exact:true}).click();await page.getByText('展开简介',{exact:true}).waitFor();
  assert.deepEqual(await page.locator('.gz-shared-anime-hero').boundingBox(),bounds);assert.ok((await page.locator('.gz-shared-anime-hero').innerText()).includes('2 集'));

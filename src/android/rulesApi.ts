@@ -8,7 +8,7 @@ export interface RuleEpisode { name: string; url: string }
 export interface RuleRoad { name: string; episodes: RuleEpisode[] }
 export interface RuleSearch { items: RuleItem[]; stale: boolean; warning: string | null; verificationRequired: boolean; verificationUrl: string | null }
 export interface RuleChapters { roads: RuleRoad[]; stale: boolean; warning: string | null; verificationRequired: boolean; verificationUrl: string | null }
-export interface RuleBinding { workId: string; pluginId: string; source: string; title: string; roadIndex: number; episodeIndexes: number[]; episodeOffset: number; replaceExisting?: boolean }
+export interface RuleBinding { workId: string; pluginId: string; source: string; title: string; roadIndex: number; episodeIndexes: number[]; episodeOffset: number; replaceExisting?: boolean; targetEpisodeExternalId?: string }
 export interface RuleBindingPreview { token: string; title: string; road: string; rows: { index: number; name: string; originalEpisode: number | null; officialEpisode: number | null; officialTitle: string | null; existing: boolean; conflict: boolean }[] }
 export interface WorkRuleSource { pluginId: string; name: string; source: string; title: string }
 export const rulesApi = {
