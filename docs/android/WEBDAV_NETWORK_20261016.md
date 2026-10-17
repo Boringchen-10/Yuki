@@ -39,7 +39,23 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib --locked webdav -- --nocap
 
 17 项通过、0 失败、0 忽略，包含 4 项新增网络测试及既有扫描、索引、剧照、下载中心 WebDAV 回归。保留已有 Windows 链接器提示。`git diff --check` 通过。
 
-未在本专项运行真实 Android libmpv 首帧、真实网盘、长时间播放、系统代理切换或其他机型测试；最终 APK 的原生验收应单独记录。初次受控运行误将 reqwest HEAD 的 `content_length()` 当作实体长度（其为空正文返回 0），修正为核对实际 `Content-Length` 头后重验通过；这是测试夹具断言修正。
+初次受控运行误将 reqwest HEAD 的 `content_length()` 当作实体长度（其为空正文返回 0），修正为核对实际 `Content-Length` 头后重验通过；这是测试夹具断言修正。
+
+## Android 原生短测（2026-10-17）
+
+脚本 `scripts/verify-webdav-latency-native.mjs` 在一加 PLK110 / Android 16 / 设备 `3B164M00Z0500000` 上通过。只允许 `com.genzo.android.organizeqa`，先核对 v0.17.0 与实际 QA 数据目录，拒绝已连接同步的 QA 资料；没有读取或启动普通包的媒体。使用 FFmpeg 自行生成 40 秒、640×360、10,860,281 字节 MP4，经两台 loopback 服务分别模拟带认证 WebDAV 与签名 CDN；每次网关解析增加 250 ms，并节流传输以保证定位确实读取未缓存字节。
+
+| 原生实际链路 | 结果 |
+| --- | --- |
+| `open_internal_player` 到首次 `playing`，已有视频尺寸与实际画面 | 1103 ms，时长 40000 ms；探测与首段读取共 1 次网关解析 |
+| 定位到 28 秒后的未缓存 Range 并继续解码 | 2101 ms 后播放位置 29000 ms；网关解析仍为 1 次 |
+| 使旧签名失效，定位到未缓存的 16 秒 | 旧地址 403 后只回源 1 次，2289 ms 后播放位置 17041 ms；网关解析共 2 次 |
+
+三项均为真实 libmpv / Rust relay / HTTP 路径，整个过程 `engineInstance` 相同，未重建内核；CDN 未收到 WebDAV 认证或 Cookie。首次与恢复后的截图均已查看，显示真实合成彩条与对应时间。耗时包含原生回调采样及脚本等待，只代表当前设备与受控服务，不作真实网盘速度保证。
+
+测试未创建作品。收尾只移除本轮来源及其合成凭据，在已停止的 QA 数据库副本中按随机 source / media ID 核对文件名及归属后删除 1 条合成媒体、其进度和任务，保留原有 0 条作品，SQLite 完整性为 `ok`；QA 原播放器偏好已恢复。只清理自己创建的 ADB 映射和服务，未修改普通包资料。数据库、合成视频与截图仅保存在私有 QA 证据目录，不纳入 Git。
+
+运行命令：`node scripts/verify-webdav-latency-native.mjs`。证据：`D:/DevTools/Android/Build/qa/webdav-latency-20261017/1792204995227/result.json`。真实网盘、长时间播放、系统代理切换和其他机型仍未在本专项验证。
 
 ## 开源参考与许可证
 

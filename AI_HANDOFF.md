@@ -1,5 +1,17 @@
 # Codex 与 DeepSeek Harness 项目交接记录
 
+## 安卓发现规则播放、应用更新与网络 v0.17.0（2026-10-17）
+
+- 用户明确本轮目标为安卓 v0.16.1，继续 `.tmp/android-first` / `codex/android-first` 当前 OpenDesign。Windows 根目录、原设计 WIP 和真实媒体保留。本轮不创建公开 Release / 标签 / 推送，也不替换日常已安装包。
+- 发现官方剧集复用 PlaySourceSheet；检索 / 关闭不写库，明确选择规则剧集播放才以缓存资料幂等加入，不等待 TMDB / AniList / 图片下载。可选单集 targetEpisodeExternalId 核对当前作品官方目录，支持 13→2 和特别篇，拒绝跨作品 / 批量 / 原关联冲突；保留个人状态、稳定媒体 ID 与进度。媒体库无文件卡片也传递当前官方身份。
+- “我的 → 关于”增加官方更高正式版 / ABI 选择、实际 APK 下载 / 取消、长度与 SHA-256、包名 / 更高 versionCode / 同签名检查、显式系统安装及首次来源授权。保持 com.genzo.android 与原签名，不卸载 / 清库；进程退出不恢复下载，重新检查后显式重下。当前无更高公开 APK，完整 GitHub 下载到系统升级链路尚不能实测；发布命名 / 校验附件契约见 docs/android/NETWORK_UPDATE_20261016.md。
+- Bangumi ECH 30分钟更新、后台单飞及失败冷却，官网吐槽 / 分集讨论 / 热门列表在传输故障后同URL同代理配置普通TLS回退；生产最多2次 / 单次6秒 / 总16秒不变，403 / 429 / 非法完整JSON不隐藏。连接测试增加P1两项，v0镜像不冒充官网评论。WebDAV共享连接池、同会话最终地址复用、签名失效回源一次，Range / 凭据隔离保留，准备15秒 / 探测正文5秒 / 视频空闲读60秒。
+- TypeScript、前端130项、真实React发现播放4场景 / 详情9场景 / 整理9场景和20布局主题组合、更新8组 / 12尺寸主题组合通过。完整Rust最终426通过 /19既有忽略；首次新增评论用例在全套并行争用全局限流超时，仅为测试加互斥后全套通过，未改生产预算。Windows真实ECH公开smoke1项通过；Android优化Rust / QA / 日常debug / 签名Release成功。
+- PLK110/Android16独立organizeqa0.17.0：更新策略原生4项通过；实际关于页GitHub检查约2099ms、真实Bangumi吐槽2条成功，QA作品/来源/进度哈希保持。首次CDP截图休眠超时，唤醒并用QA前台守卫原生截图后重跑通过。证据 `D:/DevTools/Android/Build/qa/network-update-20261016/native-update-1792205162061/result.json`，截图已看；QA已停止、9359映射清理。
+- 同QA真实40秒640×360合成MP4通过WebDAV→签名CDN→Rust relay→libmpv：首帧1103ms且1次网关解析、未缓存seek28s成功且仍1解析、签名403后seek16s恢复且只新增1解析，engineInstance不变，无认证 / Cookie泄露。严格清理自身source/media/任务/进度并恢复QA偏好，SQLite integrity ok、原0作品保留。证据 `D:/DevTools/Android/Build/qa/webdav-latency-20261017/1792204995227/result.json`，截图已看。此为受控服务样本，不保证真实网盘 / 长时 / 多机速度；外挂字幕仍可能影响首次准备。
+- 最终签名APK `D:/DevTools/Android/Build/previews/network-update-20261017/Genzo_0.17.0_android_arm64-v8a.apk`，50,060,485字节，SHA256 `bc0ce15fc5bc3a0fda8f019b09f63860e6aa86e2e7c995cdd6b1661cbeaf218f`；17000 / 原包名 / arm64 / min26 / target36 / 非debuggable / 原证书 / v2+v3 /16KiB通过，353生产输入与D副本一致，三库按Gradle合并与符号剥离阶段核对，无DB / 测试媒体。首次将剥离前库直接与包内库比较的断言错误已修正为真实链路核对。校验文件与build-manifest同目录。
+- 已提交网络 `bd4ec9a`、WebDAV `b6109b0`、发现播放 `cbcf8ef`；更新 / 版本 / 最终验收同轮另提交。原dirty/untracked文件本轮增量分别保存在 docs/android/NETWORK_UPDATE_SOURCE_HANDOFF.patch 和 DISCOVERY_PLAYBACK_SOURCE_HANDOFF.patch，当前已应用，reverse --check通过，不能整文件提交其他维护者WIP或重复应用。基线备份在D的network-update-20261016/baseline及忽略artifacts。
+
 ## 原生播放器主题同步 v0.16.1（2026-10-15）
 
 - 基线 `22ed135`，用户报告播放器主题未匹配设置。根因：appearance仅改MainActivity系统栏，PlayerPage / PlayerSettingsMenu / SeekBar硬编码深绿色。按bug-hunter增量修复，保留主目录及当前OpenDesign其他WIP，无新依赖 / 迁移 / 媒体或个人数据模型变更。

@@ -134,6 +134,8 @@ Genzo 使用 AniList 公共 GraphQL API 补全经过校验的国际评分、标�
 
 ## 识别架构参考核对
 
+2026-10-16 网络可靠性增量仅研究设计：Kazumi `11671bc0ec61727e99e34810f142a1b5e4121a8e`（GPLv3）的 Bangumi transport / ECH resolver，以及 rclone `99f904d7118a9e3ece300a47f26e173b4b3d707e`（MIT）的 WebDAV 客户端复用与跨主机认证隔离。未复制上游代码、品牌素材或凭据，未增加运行时依赖。具体文件、链接与取舍见 `docs/android/BANGUMI_NETWORK_RELIABILITY.md` 与 `docs/android/WEBDAV_NETWORK_20261016.md`。
+
 v0.4 的 WebDAV XML 解析使用 `quick-xml 0.42`（MIT），路径解码使用 `percent-encoding 2`（MIT OR Apache-2.0），与项目 GPLv3 兼容。凭据通过既有 `windows` crate 调用 Windows Credential Manager；HTTP 传输复用 `reqwest`，没有引入或复制 Alist 的源码、商标或网盘专有接口。
 
 - `Rapptz/anitomy-rs` 为 MPL-2.0，但没有适合本项目锁定的稳定 crates.io 发布；本项目改用同为 MPL-2.0、仍在维护的 `anitomy-ng 1.0.10`，没有复制其品牌资产。

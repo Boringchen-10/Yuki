@@ -1,0 +1,105 @@
+diff --git a/src/android/AndroidApp.tsx b/src/android/AndroidApp.tsx
+--- a/src/android/AndroidApp.tsx
++++ b/src/android/AndroidApp.tsx
+@@ -9,12 +9,13 @@
+ import { api, bookApi, remoteApi } from "../api";
+ import type { BookEntry } from "../bookData";
+ import { bookContentApi, type ReadingKind, type SourceEntry } from "../bookContent";
+-import type { AnimeWorkStructure, MediaFile, ThemeMode, UnassignedMediaGroup, WorkDetail, WorkInput, WorkListItem, WorkStatus } from "../types";
++import type { AnimeEpisodeMetadata, AnimeWorkStructure, MediaFile, ThemeMode, UnassignedMediaGroup, WorkDetail, WorkInput, WorkListItem, WorkStatus } from "../types";
+ import { activeScan, type ScanTask } from "../scanTasks";
+ import { playbackPercent, playbackTime, type PlaybackProgress } from "../playback";
+ import { usePreferences, type StartScreen, type ThemeStyle } from "../store";
+ import { androidApi, isDirectoryEntry, listenAndroidChanges, type DocumentEntry, type VideoSource } from "./api";
+ import AndroidPrototype from "./AndroidPrototype";
++import AppUpdatePanel from "./AppUpdatePanel";
+ import BookReader from "./BookReader";
+ import ReadingHistoryRow from "./ReadingHistoryRow";
+ import { nativeAppearance } from "./nativeAppearance";
+@@ -352,6 +353,7 @@
+   const [pickerOpen, setPickerOpen] = useState(false);
+   const [subjectMenu, setSubjectMenu] = useState(false);
+   const [playSourceOpen, setPlaySourceOpen] = useState(false);
++  const [playSourceEpisode, setPlaySourceEpisode] = useState<AnimeEpisodeMetadata | undefined>(undefined);
+   const [workRuleSources, setWorkRuleSources] = useState<WorkRuleSource[]>([]);
+   const [modal, setModal] = useState<{ kind: "rules"; work: WorkDetail; source?: WorkRuleSource } | { kind: "episodes"; work: WorkDetail } | { kind: "correct"; work: WorkDetail } | { kind: "match"; work: WorkDetail; mediaId: string } | { kind: "organize"; group: UnassignedMediaGroup; remaining?: UnassignedMediaGroup[] } | { kind: "remove-webdav"; source: VideoSource } | { kind: "webdav"; sourceId?: string } | null>(null);
+   const [modalBusy, setModalBusy] = useState(false);
+@@ -1087,7 +1089,7 @@
+   return <div ref={rootRef} className="android-app" data-theme={dark ? "dark" : "light"} data-amoled={amoled ? "true" : "false"} data-style={themeStyle}>
+     <div className="gz-rainbow-layer" aria-hidden="true" />
+     <main ref={main} inert={!!modal} className="gz-scroll" onScroll={() => { scrollPositions.current[route] = main.current?.scrollTop ?? 0; }}>
+-      {!top && (workId&&detail?(detail.type==="comic"||detail.type==="novel"?<div className="gz-book-detail-top"><button className="gz-iconbtn gz-back" aria-label="返回" onClick={()=>back()}><ArrowLeft/></button><BookDetailMenu workId={detail.id} onRemoved={()=>{navigate("bookshelf");setToast("已移出书架，原有数据已保留");}} onError={reason=>setError(String(reason))}/></div>:<div className="gz-book-detail-top"><button className="gz-iconbtn gz-back" aria-label="返回" onClick={()=>back()}><ArrowLeft/></button><div className="gz-subject-actions"><button type="button" className="gz-iconbtn" aria-label="剧集设置" aria-haspopup="menu" aria-expanded={subjectMenu} onClick={() => setSubjectMenu(value => !value)}><Settings /></button>{subjectMenu && <div className="gz-subject-menu" role="menu"><button type="button" role="menuitem" disabled={busy || !detail.mediaFiles.some(file => file.mediaType === "video")} onClick={() => { setSubjectMenu(false); setModal({ kind: "episodes", work: detail }); }}><Layers size={16} />批量匹配剧集</button><button type="button" role="menuitem" disabled={busy || episodeArtwork.refreshing || !episodeSignature} onClick={() => { setSubjectMenu(false); void episodeArtwork.refresh(); }}><Images size={16} />更新分集剧照</button><button type="button" role="menuitem" disabled={busy} onClick={() => { setSubjectMenu(false); setPlaySourceOpen(true); }}><Play size={16} />选择播放来源</button>{workRuleSources.length > 0 && <div className="gz-subject-menu-sep" role="separator" />}{workRuleSources.map(source => <button type="button" role="menuitem" key={`${source.pluginId}:${source.source}`} onClick={() => { setSubjectMenu(false); setModal({ kind: "rules", work: detail, source }); }}><ListTree size={16} />管理 {source.name} · {source.title}</button>)}</div>}</div></div>):<button className="gz-iconbtn gz-back" aria-label="返回" onClick={() => back()}><ArrowLeft /></button>)}
++      {!top && (workId&&detail?(detail.type==="comic"||detail.type==="novel"?<div className="gz-book-detail-top"><button className="gz-iconbtn gz-back" aria-label="返回" onClick={()=>back()}><ArrowLeft/></button><BookDetailMenu workId={detail.id} onRemoved={()=>{navigate("bookshelf");setToast("已移出书架，原有数据已保留");}} onError={reason=>setError(String(reason))}/></div>:<div className="gz-book-detail-top"><button className="gz-iconbtn gz-back" aria-label="返回" onClick={()=>back()}><ArrowLeft/></button><div className="gz-subject-actions"><button type="button" className="gz-iconbtn" aria-label="剧集设置" aria-haspopup="menu" aria-expanded={subjectMenu} onClick={() => setSubjectMenu(value => !value)}><Settings /></button>{subjectMenu && <div className="gz-subject-menu" role="menu"><button type="button" role="menuitem" disabled={busy || !detail.mediaFiles.some(file => file.mediaType === "video")} onClick={() => { setSubjectMenu(false); setModal({ kind: "episodes", work: detail }); }}><Layers size={16} />批量匹配剧集</button><button type="button" role="menuitem" disabled={busy || episodeArtwork.refreshing || !episodeSignature} onClick={() => { setSubjectMenu(false); void episodeArtwork.refresh(); }}><Images size={16} />更新分集剧照</button><button type="button" role="menuitem" disabled={busy} onClick={() => { setSubjectMenu(false); setPlaySourceEpisode(undefined); setPlaySourceOpen(true); }}><Play size={16} />选择播放来源</button>{workRuleSources.length > 0 && <div className="gz-subject-menu-sep" role="separator" />}{workRuleSources.map(source => <button type="button" role="menuitem" key={`${source.pluginId}:${source.source}`} onClick={() => { setSubjectMenu(false); setModal({ kind: "rules", work: detail, source }); }}><ListTree size={16} />管理 {source.name} · {source.title}</button>)}</div>}</div></div>):<button className="gz-iconbtn gz-back" aria-label="返回" onClick={() => back()}><ArrowLeft /></button>)}
+       {error && <div className="gz-error" role="alert"><span>{error}</span><button className="gz-iconbtn" aria-label="关闭错误提示" onClick={() => setError("")}><X size={18} /></button></div>}
+       {loading && ["home", "library", "favorites", "bookshelf"].includes(route) ? <><LoadingIndicator label="正在读取媒体库…" compact /><GridSkeleton count={9} /></> : <>
+       {route === "home" && <>
+@@ -1269,7 +1271,7 @@
+             : comments.items.length ? <><BangumiCommentFeed items={comments.items} />{comments.state === "loading" ? <LoadingIndicator label="正在更新吐槽…" compact /> : comments.state === "error" ? <div className="gz-error" role="alert"><span>刷新失败，保留已有内容。</span><button className="gz-iconbtn" aria-label="重试刷新吐槽" onClick={() => void comments.retry()}><RefreshCw size={16} /></button></div> : comments.moreError ? <div className="gz-error" role="alert"><span>更多吐槽读取失败，请重试。</span><button className="gz-iconbtn" aria-label="重试更多吐槽" onClick={() => void comments.retryMore()}><RefreshCw size={16} /></button></div> : comments.hasMore && <><div className="gz-sentinel" ref={subjectCommentsSentinelRef} aria-hidden="true" />{comments.loadingMore && <LoadingIndicator label="正在加载更多吐槽…" compact />}</>}</>
+             : <div className="gz-empty"><MessageCircle size={26} /><h2>暂无吐槽</h2><p>Bangumi 尚未提供该条目的公开吐槽。</p></div>}
+         </Section>}
+-        {detailTab === "episodes" && <Section title="剧集与播放来源"><EpisodeSources workId={detail.id} structure={structure} files={detail.mediaFiles} sources={sources} progress={progress} artwork={episodeArtwork.artwork} warning={episodeArtwork.warning} busy={busy} onPlay={id => void play(id)} onOpenPlaySource={() => setPlaySourceOpen(true)} onUnlinkEpisode={id => void run(async () => { await api.setMediaEpisode(id, null); await reloadDetail(detail.id); setToast("已解除分集关联"); })} onDetachWork={id => void run(async () => { await api.detachMedia(id); await reloadDetail(detail.id); setToast("已解除作品关联"); })} onRecognizeOther={id => setModal({ kind: "match", work: detail, mediaId: id })} /></Section>}
++        {detailTab === "episodes" && <Section title="剧集与播放来源"><EpisodeSources workId={detail.id} structure={structure} files={detail.mediaFiles} sources={sources} progress={progress} artwork={episodeArtwork.artwork} warning={episodeArtwork.warning} busy={busy} onPlay={id => void play(id)} onOpenPlaySource={episode => { setPlaySourceEpisode(episode); setPlaySourceOpen(true); }} onUnlinkEpisode={id => void run(async () => { await api.setMediaEpisode(id, null); await reloadDetail(detail.id); setToast("已解除分集关联"); })} onDetachWork={id => void run(async () => { await api.detachMedia(id); await reloadDetail(detail.id); setToast("已解除作品关联"); })} onRecognizeOther={id => setModal({ kind: "match", work: detail, mediaId: id })} /></Section>}
+         {detailTab === "characters" && <Section title="角色" action={structure ? <span className="gz-meta">{(structure?.characters.length??0)} 位</span> : undefined}>{structureState === "loading" || (detailSectionState === "loading" && !(structure?.characters.length??0)) ? <RowsSkeleton count={4} label="正在读取角色资料…" /> : detailSectionState === "error" ? <div className="gz-error" role="alert"><span>角色资料读取失败。</span><button className="gz-btn" onClick={()=>setDetailSectionAttempt(value=>value+1)}>重试</button></div> : !structure || structureState === "error" ? <p className="gz-panel gz-meta">暂无角色资料。匹配 Bangumi 资料后可显示。</p> : (structure?.characters.length??0) ? <AnimeCharacters characters={structure.characters} /> : <p className="gz-panel gz-meta">没有角色资料。</p>}</Section>}
+         {detailTab === "related" && <Section title="关联" action={structure ? <span className="gz-meta">{structure.seasons.length} 部</span> : undefined}>{structureState === "loading" || detailSectionState === "loading" ? <RowsSkeleton count={4} label="正在读取关联作品…" /> : detailSectionState === "error" ? <div className="gz-error" role="alert"><span>关联资料读取失败。</span><button className="gz-btn" onClick={()=>setDetailSectionAttempt(value=>value+1)}>重试</button></div> : !structure || structureState === "error" ? <p className="gz-panel gz-meta">暂无关联资料。</p> : structure.seasons.length ? <AnimeRelated seasons={structure.seasons} onOpen={season => { if (season.localWorkId) { navigate(`detail/${encodeURIComponent(season.localWorkId)}`); return; } navigate("explore"); requestExploreSubject(season.externalId); }} /> : <p className="gz-panel gz-meta">没有关联作品。</p>}</Section>}
+         {detailTab === "staff" && <Section title="制作人员" action={structure ? <span className="gz-meta">{structure.staff.length} 位</span> : undefined}>{structureState === "loading" || detailSectionState === "loading" ? <RowsSkeleton count={5} label="正在读取制作人员…" /> : detailSectionState === "error" ? <div className="gz-error" role="alert"><span>制作人员资料读取失败。</span><button className="gz-btn" onClick={()=>setDetailSectionAttempt(value=>value+1)}>重试</button></div> : !structure || structureState === "error" ? <p className="gz-panel gz-meta">暂无制作人员资料。</p> : structure.staff.length ? <AnimeStaff staff={structure.staff} /> : <p className="gz-panel gz-meta">没有制作人员资料。</p>}</Section>}
+@@ -1314,7 +1316,7 @@
+       {route === "sync" && syncSettingsPage}
+       {route === "sync/bangumi" && bangumiSyncPage}
+       {route === "sync/webdav" && webdavSyncPage}
+-      {route === "diagnostics" && (import.meta.env.DEV ? <AndroidPrototype /> : <Section title={`Genzo v${buildInfo.version}`}><p className="gz-meta">本地优先的 ACGN 统一媒体库，管理你的作品、个人记录与阅读进度。</p><p className="gz-meta">本软件采用 GPLv3。源代码与第三方许可：github.com/Boringchen-10/genzo</p></Section>)}
++      {route === "diagnostics" && <><AppUpdatePanel />{import.meta.env.DEV ? <AndroidPrototype /> : <Section title={`Genzo v${buildInfo.version}`}><p className="gz-meta">本地优先的 ACGN 统一媒体库，管理你的作品、个人记录与阅读进度。</p><p className="gz-meta">本软件采用 GPLv3。源代码与第三方许可：github.com/Boringchen-10/genzo</p></Section>}</>}
+       </>}
+       {(route === "explore" || visitedPanels.includes("explore")) && <div className="gz-kept-page" hidden={route !== "explore"}><ExplorePanel onOpenWork={id => navigate(`detail/${encodeURIComponent(id)}`)} active={route === "explore"} onToast={setToast} onLibraryChanged={() => void refresh(true).catch(reason => setError(String(reason)))} registerBack={registerSubviewBack} /></div>}
+       {(route === "network" || visitedPanels.includes("network")) && <div className="gz-kept-page" hidden={route !== "network"}><NetworkPanel onToast={setToast} /></div>}
+@@ -1337,7 +1339,7 @@
+         : <Organize key={modal.kind === "match" ? modal.mediaId : modal.group.key} mediaId={modal.kind === "match" ? modal.mediaId : modal.group.representative.id} initialTitle={modal.kind === "match" ? modal.work.title : modal.group.title} linkedWorkId={modal.kind === "match" ? modal.work.id : undefined} works={works} busy={busy} onRun={operation => void run(operation)} onSkip={modal.kind === "organize" && modal.remaining !== undefined ? () => { const [next, ...remaining] = modal.remaining ?? []; setModal(next ? { kind: "organize", group: next, remaining } : null); } : undefined} onDone={async id => { await refresh(true); if (modal.kind === "organize") { const [next, ...remaining] = modal.remaining ?? []; setModal(next ? { kind: "organize", group: next, remaining } : null); setToast(next ? "已整理，继续下一项" : "作品整理完成"); } else { const target = id ?? modal.work.id; if (routeRef.current === `detail/${target}`) await reloadDetail(target); setModal(null); navigate(`detail/${target}`); setToast("作品整理完成"); } }} />}
+     </section></div>}
+     {pickerOpen && <ColorPicker hue={accentHue} sat={accentSat} light={accentLight} onCancel={() => setPickerOpen(false)} onConfirm={value => { setAccentHue(Math.round(value.hue)); setAccentSat(Math.round(value.sat)); setAccentLight(Math.round(value.light)); setPickerOpen(false); }} />}
+-    {playSourceOpen && detail && <PlaySourceSheet work={detail} onClose={() => setPlaySourceOpen(false)} onToast={setToast} />}
++    {playSourceOpen && detail && <PlaySourceSheet work={detail} episode={playSourceEpisode} onClose={() => setPlaySourceOpen(false)} onToast={setToast} />}
+     {sortSheet && <div className="gz-scrim" onClick={() => setSortSheet(false)}><section ref={sortSheetRef} className="gz-sheet" role="dialog" aria-modal="true" aria-labelledby="gz-sort-title" onClick={event => event.stopPropagation()}>
+       <span className="gz-sheet-handle" {...sortDrag} aria-hidden="true" />
+       <h2 id="gz-sort-title" className="gz-sheet-title">{route==="bookshelf"?"筛选与排序":"排序方式"}</h2>
+diff --git a/src-tauri/src/android_bridge.rs b/src-tauri/src/android_bridge.rs
+--- a/src-tauri/src/android_bridge.rs
++++ b/src-tauri/src/android_bridge.rs
+@@ -60,6 +60,7 @@
+     if !matches!(
+         command.as_str(),
+         "pickTree" | "listTree" | "pickVideo" | "openPlayer" | "playerState" | "playerControl" | "readerState" | "readerControl" | "openComicFixture" | "safeArea"
++        | "appUpdateStatus" | "checkAppUpdate" | "downloadAppUpdate" | "cancelAppUpdate" | "installAppUpdate"
+     ) {
+         return Err(AppError::Validation("未知安卓原型命令".into()));
+     }
+diff --git a/src-tauri/gen/android/app/src/main/java/com/genzo/android/GenzoPlugin.kt b/src-tauri/gen/android/app/src/main/java/com/genzo/android/GenzoPlugin.kt
+--- a/src-tauri/gen/android/app/src/main/java/com/genzo/android/GenzoPlugin.kt
++++ b/src-tauri/gen/android/app/src/main/java/com/genzo/android/GenzoPlugin.kt
+@@ -86,6 +86,16 @@
+
+ @TauriPlugin
+ class GenzoPlugin(private val activity: Activity) : Plugin(activity) {
++    @Command
++    fun appUpdateStatus(invoke: Invoke) { invoke.resolve(AppUpdater.status(activity)) }
++    @Command
++    fun checkAppUpdate(invoke: Invoke) { invoke.resolve(AppUpdater.check(activity)) }
++    @Command
++    fun downloadAppUpdate(invoke: Invoke) { invoke.resolve(AppUpdater.download(activity)) }
++    @Command
++    fun cancelAppUpdate(invoke: Invoke) { invoke.resolve(AppUpdater.cancel(activity)) }
++    @Command
++    fun installAppUpdate(invoke: Invoke) { invoke.resolve(AppUpdater.install(activity)) }
+     @Command
+     fun parseRuleHtml(invoke: Invoke) {
+         val args = invoke.parseArgs(RuleArgs::class.java)
+diff --git a/src/android/NetworkPanel.tsx b/src/android/NetworkPanel.tsx
+--- a/src/android/NetworkPanel.tsx
++++ b/src/android/NetworkPanel.tsx
+@@ -100,7 +100,7 @@
+   return <div className="gz-network">
+     <section className="gz-net-card">
+       <div className="gz-net-head"><Globe size={16} /><h2>Bangumi 数据源</h2></div>
+-      <p className="gz-meta">发现页的热门番组、搜索和放送表会使用这里选择的接口。</p>
++      <p className="gz-meta">发现页的热门番组、搜索和放送表会使用这里选择的接口。连接测试同时检查作品吐槽与分集讨论；官网评论使用独立接口，不经过 v0 镜像。</p>
+       <label className="gz-field"><span>连接方式</span>
+         <select value={bangumi.mode} disabled={disabled} onChange={event => updateBangumi({ mode: event.target.value as BangumiNetwork["mode"] })}>
+           <option value="system">系统代理 · 官方 API</option>
