@@ -19,6 +19,7 @@ pub struct BangumiProvider {
     client: Client,
     api_root: String,
     background: bool,
+    network: crate::bangumi_network::BangumiNetwork,
 }
 
 impl BangumiProvider {
@@ -31,11 +32,11 @@ impl BangumiProvider {
     }
 
     pub fn with_transport(config: &crate::bangumi_network::BangumiNetwork, client: Client) -> Self {
-        Self { client, api_root: format!("{}/v0", config.base_url()), background:false }
+        Self { client, api_root: format!("{}/v0", config.base_url()), background:false, network:config.clone() }
     }
 
     pub fn configured(config: &crate::bangumi_network::BangumiNetwork) -> AppResult<Self> {
-        Ok(Self { client: config.client()?, api_root: format!("{}/v0", config.base_url()), background:false })
+        Ok(Self::with_transport(config, config.client()?))
     }
     pub fn background() -> AppResult<Self> { let mut provider = Self::new()?; provider.background = true; Ok(provider) }
 
@@ -122,21 +123,12 @@ impl BangumiProvider {
     }
 
     pub async fn popular(&self, page: u32) -> AppResult<PopularSubjects> {
-        // Do not queue interactive website reads behind v0 background detail hydration.
-        WEBSITE_RATE_LIMITER.get_or_init(|| ProviderRateLimiter::new(Duration::from_secs(2)))
-            .wait().await;
         // Website trends differs from v0 search heat (all-time collections).
         // P1 belongs to the official website; v0 mirrors do not promise this route.
-        let response = self.client.get("https://next.bgm.tv/p1/subjects")
+        let request = self.client.get("https://next.bgm.tv/p1/subjects")
             .query(&[("type", "2".to_string()), ("sort", "trends".to_string()),
-                ("page", page.to_string())])
-            .send().await.map_err(network_error)?;
-        if !response.status().is_success() {
-            return Err(AppError::Network(format!("Bangumi 热度列表读取失败（HTTP {}）", response.status().as_u16())));
-        }
-        let body = response.json().await.map_err(|error| {
-            AppError::Network(format!("Bangumi 返回了无法解析的热度数据：{error}"))
-        })?;
+                ("page", page.to_string())]);
+        let body = fetch_website_data(request, Some(&self.network), "热度列表").await?;
         parse_popular_subjects(body)
     }
 
@@ -322,7 +314,8 @@ impl BangumiProvider {
     pub async fn comments(&self, external_id: &str, offset: u32, limit: u32) -> AppResult<BangumiCommentPage> {
         let subject_id = external_id.trim().parse::<i64>().map_err(|_| AppError::Validation("Bangumi 条目 ID 无效".into()))?;
         if offset > 1_000_000 || !(1..=100).contains(&limit) { return Err(AppError::Validation("Bangumi 评论分页参数无效".into())); }
-        let page = fetch_comments(self.comments_request(subject_id, offset, limit), subject_id, offset, limit).await?;
+        let body = fetch_website_data(self.comments_request(subject_id, offset, limit), Some(&self.network), "吐槽").await?;
+        let page = parse_comments(body, subject_id, offset, limit)?;
         crate::bangumi_comment_images::remember_subject_comments(&page.items);
         Ok(page)
     }
@@ -331,7 +324,7 @@ impl BangumiProvider {
         let id = episode_id.parse::<u64>().ok().filter(|id| *id > 0)
             .ok_or_else(|| AppError::Validation("Bangumi 分集 ID 无效".into()))?;
         // Unlike subject comments, this endpoint returns all floors and replies in one array.
-        parse_episode_comments(fetch_comment_data(self.episode_comments_request(id)).await?)
+        parse_episode_comments(fetch_website_data(self.episode_comments_request(id), Some(&self.network), "分集讨论").await?)
     }
 
     fn episode_comments_request(&self, id: u64) -> reqwest::RequestBuilder {
@@ -376,39 +369,52 @@ impl BangumiProvider {
     }
 }
 
-async fn fetch_comments(request: reqwest::RequestBuilder, subject_id: i64, offset: u32, limit: u32) -> AppResult<BangumiCommentPage> {
-    parse_comments(fetch_comment_data(request).await?, subject_id, offset, limit)
-}
-
-async fn fetch_comment_data(request: reqwest::RequestBuilder) -> AppResult<Value> {
+async fn fetch_website_data(request: reqwest::RequestBuilder, config: Option<&crate::bangumi_network::BangumiNetwork>, label: &str) -> AppResult<Value> {
     let operation = async {
+        let (client, request) = request.timeout(Duration::from_secs(6)).build_split();
+        let request = request.map_err(network_error)?;
+        let mut alternate = None;
         for attempt in 0..2 {
             WEBSITE_RATE_LIMITER.get_or_init(|| ProviderRateLimiter::new(Duration::from_secs(2))).wait().await;
-            let request = request.try_clone().expect("public comments GET has no streaming body")
-                .timeout(Duration::from_secs(6));
-            let response = match request.send().await {
-                Err(error) if attempt == 0 && (error.is_timeout() || error.is_connect() || error.is_request()) => continue,
+            let response = match alternate.as_ref().unwrap_or(&client)
+                .execute(request.try_clone().expect("public website GET has no streaming body")).await {
+                Err(error) if attempt == 0 && (error.is_timeout() || error.is_connect() || error.is_request()) => {
+                    alternate = alternate_website_client(config)?;
+                    continue;
+                }
                 Err(error) => return Err(network_error(error)),
                 Ok(response) => response,
             };
             if response.status().is_server_error() && attempt == 0 { continue; }
             if !response.status().is_success() {
-                return Err(AppError::Network(format!("Bangumi 吐槽读取失败（HTTP {}）", response.status().as_u16())));
+                return Err(AppError::Network(format!("Bangumi {label}读取失败（HTTP {}）", response.status().as_u16())));
             }
             let bytes = match response.bytes().await {
-                Err(error) if attempt == 0 && (error.is_timeout() || error.is_body() || error.is_decode()) => continue,
+                Err(error) if attempt == 0 && (error.is_timeout() || error.is_body() || error.is_decode()) => {
+                    alternate = alternate_website_client(config)?;
+                    continue;
+                }
                 Err(error) => return Err(network_error(error)),
                 Ok(bytes) => bytes,
             };
             // A complete invalid response is a contract error, not a transient connection failure.
-            let body = serde_json::from_slice(&bytes).map_err(|error| AppError::Network(format!("Bangumi 返回了无法解析的吐槽数据：{error}")))?;
+            let body = serde_json::from_slice(&bytes).map_err(|error| AppError::Network(format!("Bangumi 返回了无法解析的{label}数据：{error}")))?;
             return Ok(body);
         }
-        unreachable!("the final comments attempt always returns")
+        unreachable!("the final website attempt always returns")
     };
     // Includes rate-limit queueing and both attempts, so a busy website queue cannot wait forever.
     tokio::time::timeout(Duration::from_secs(16), operation).await
         .map_err(|_| AppError::Network("连接 Bangumi 超时，请检查网络后重试".into()))?
+}
+
+fn alternate_website_client(config: Option<&crate::bangumi_network::BangumiNetwork>) -> AppResult<Option<Client>> {
+    config.map(|config| {
+        crate::bangumi_network::invalidate_encrypted(config);
+        // Retry the same official URL with normal certificate verification and the captured
+        // proxy choice. A failed ECH route must not pin both attempts to a stale connection.
+        config.plain_client()
+    }).transpose()
 }
 
 fn parse_episode_comments(body: Value) -> AppResult<Vec<BangumiEpisodeDiscussion>> {
@@ -755,6 +761,9 @@ fn extract_season(value: &Value) -> Option<i64> {
 
 #[cfg(test)]
 mod tests {
+    // These fixtures share the production website limiter. Acquire before starting
+    // their local server deadlines so unrelated tests cannot consume each other's budget.
+    static WEBSITE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     #[test]
     fn episode_discussion_keeps_floors_replies_and_hides_removed_content() {
         let post = |id, text, state| json!({"id":id,"content":text,"state":state,"createdAt":1660000000,"user":{"nickname":"合成用户","avatar":{"small":"https://lain.bgm.tv/pic/user/test.jpg"}},"replies":[]});
@@ -771,7 +780,7 @@ mod tests {
     }
     #[test]
     fn episode_endpoint_uses_official_episode_identity_without_subject_paging() {
-        let provider=BangumiProvider {client:Client::new(),api_root:"https://mirror.invalid/v0".into(),background:false};
+        let provider=BangumiProvider {client:Client::new(),api_root:"https://mirror.invalid/v0".into(),background:false,network:Default::default()};
         let request=provider.episode_comments_request(1212094).build().unwrap();
         assert_eq!(request.url().as_str(),"https://next.bgm.tv/p1/episodes/1212094/comments");
     }
@@ -791,7 +800,7 @@ mod tests {
         let server = tokio::spawn(async move {
             let mut requests = Vec::new();
             for (status, body) in responses {
-                let (mut stream, _) = tokio::time::timeout(std::time::Duration::from_secs(4), listener.accept()).await.unwrap().unwrap();
+                let (mut stream, _) = tokio::time::timeout(std::time::Duration::from_secs(8), listener.accept()).await.unwrap().unwrap();
                 let mut bytes = [0; 2048];
                 let count = stream.read(&mut bytes).await.unwrap();
                 requests.push(String::from_utf8_lossy(&bytes[..count]).lines().next().unwrap().to_string());
@@ -805,7 +814,7 @@ mod tests {
         let client = reqwest::Client::builder().no_proxy().build().unwrap();
         let request = client.get(format!("http://{address}/p1/subjects/400602/comments"))
             .query(&[("limit", "10"), ("offset", "20")]);
-        let result = super::fetch_comments(request, 400602, 20, 10).await;
+        let result = super::fetch_website_data(request, None, "吐槽").await.and_then(|body| super::parse_comments(body, 400602, 20, 10));
         let (requests, listener) = server.await.unwrap();
         assert!(tokio::time::timeout(std::time::Duration::from_millis(100), listener.accept()).await.is_err(), "unexpected additional retry");
         (result, requests)
@@ -813,6 +822,7 @@ mod tests {
 
     #[tokio::test]
     async fn comments_recover_transient_reads_without_hiding_persistent_or_invalid_responses() {
+        let _guard = WEBSITE_TEST_LOCK.lock().await;
         const PAGE: &str = r#"{"data":[{"user":{"id":42,"nickname":"Reader"},"comment":"test","rate":8}],"total":123}"#;
         for response in [(0, ""), (502, "gateway unavailable"), (503, "unavailable"), (999, "{\"data\":")] {
             let (result, requests) = comments_http_fixture(vec![response, (200, PAGE)]).await;
@@ -849,6 +859,59 @@ mod tests {
         let server=tokio::spawn(async move {let (mut stream,_)=listener.accept().await.unwrap();stream.read(&mut [0;1024]).await.unwrap();stream.write_all(b"HTTP/1.1 429 Too Many Requests\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok").await.unwrap();assert!(tokio::time::timeout(std::time::Duration::from_millis(100),listener.accept()).await.is_err());});
         assert_eq!(super::retry_public_get(client.get(format!("http://{address}/episodes"))).await.unwrap().status().as_u16(),429);server.await.unwrap();
     }
+    #[tokio::test]
+    async fn comments_retry_a_failed_transport_with_the_same_url_and_captured_direct_mode() {
+        let _guard = WEBSITE_TEST_LOCK.lock().await;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let proxy = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy_address = proxy.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = tokio::time::timeout(Duration::from_secs(10), listener.accept()).await.unwrap().unwrap();
+            let mut bytes = [0; 2048];
+            let length = stream.read(&mut bytes).await.unwrap();
+            let request = String::from_utf8_lossy(&bytes[..length]);
+            assert!(request.starts_with("GET /p1/subjects/400602/comments?limit=1&offset=0 HTTP/1.1\r\n"));
+            assert!(!request.to_ascii_lowercase().contains("authorization:"));
+            let body = r#"{"data":[{"user":{"id":42},"comment":"same official resource"}],"total":1}"#;
+            stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+        });
+        let failed_route = tokio::spawn(async move {
+            let (mut stream, _) = tokio::time::timeout(Duration::from_secs(8), proxy.accept()).await.unwrap().unwrap();
+            stream.read(&mut [0; 2048]).await.unwrap();
+            drop(stream);
+            assert!(tokio::time::timeout(Duration::from_secs(3), proxy.accept()).await.is_err(), "the retry must leave the failed transport");
+        });
+        let client = Client::builder().proxy(reqwest::Proxy::all(format!("http://{proxy_address}")).unwrap()).build().unwrap();
+        let request = client.get(format!("http://{address}/p1/subjects/400602/comments"))
+            .query(&[("limit", "1"), ("offset", "0")]);
+        let config = crate::bangumi_network::BangumiNetwork { mode: "direct".into(), mirror_url: String::new() };
+        let body = fetch_website_data(request, Some(&config), "吐槽").await.unwrap();
+        assert_eq!(parse_comments(body, 400602, 0, 1).unwrap().items[0].comment, "same official resource");
+        server.await.unwrap();
+        failed_route.await.unwrap();
+    }
+    #[tokio::test]
+    async fn episode_comments_recover_from_a_dead_pinned_address_without_changing_the_resource() {
+        let _guard = WEBSITE_TEST_LOCK.lock().await;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = tokio::time::timeout(Duration::from_secs(12), listener.accept()).await.unwrap().unwrap();
+            let mut bytes = [0; 1024];
+            let count = stream.read(&mut bytes).await.unwrap();
+            assert!(String::from_utf8_lossy(&bytes[..count]).starts_with("GET /p1/episodes/1212094/comments HTTP/1.1\r\n"));
+            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n[]").await.unwrap();
+        });
+        let config = crate::bangumi_network::BangumiNetwork { mode: "direct".into(), mirror_url: String::new() };
+        let client = Client::builder().no_proxy().connect_timeout(Duration::from_secs(1))
+            .resolve("localhost", format!("127.0.0.2:{port}").parse().unwrap()).build().unwrap();
+        let body = fetch_website_data(client.get(format!("http://localhost:{port}/p1/episodes/1212094/comments")), Some(&config), "分集讨论").await.unwrap();
+        assert!(parse_episode_comments(body).unwrap().is_empty());
+        server.await.unwrap();
+    }
     #[test]
     fn parses_p1_comments_without_a_comment_id_and_keeps_pagination() {
         let page = super::parse_comments(serde_json::json!({"data":[{"user":{"id":42,"nickname":"读者"},"comment":"测试吐槽","rate":8,"updatedAt":1700000000}],"total":123}),400602,0,20).unwrap();
@@ -863,7 +926,7 @@ mod tests {
 
     #[test]
     fn tag_discovery_uses_source_filter_and_keeps_total_and_offset() {
-        let provider=BangumiProvider {client:Client::new(),api_root:"https://example.invalid/v0".into(),background:false};
+        let provider=BangumiProvider {client:Client::new(),api_root:"https://example.invalid/v0".into(),background:false,network:Default::default()};
         let request=provider.tag_request("异世界",24,24).build().unwrap();
         assert_eq!(request.url().as_str(),"https://example.invalid/v0/search/subjects?limit=24&offset=24");
         let body:Value=serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();

@@ -3,13 +3,27 @@ use crate::{db::AppState, error::{AppError, AppResult}};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
-use std::{sync::Mutex, time::Duration};
+use std::{sync::Mutex, time::{Duration, Instant}};
 use tauri::State;
 
 const KEY: &str = "bangumi.network";
 static TRANSPORT: Mutex<Option<(BangumiNetwork, Client)>> = Mutex::new(None);
 static SETTINGS_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-static ECH_TRANSPORT: Mutex<Option<(BangumiNetwork, Client)>> = Mutex::new(None);
+static ECH_TRANSPORT: Mutex<Option<EncryptedTransport>> = Mutex::new(None);
+#[cfg(target_os="android")]
+static ECH_REFRESH: Mutex<(bool, Option<Instant>)> = Mutex::new((false, None));
+
+struct EncryptedTransport {
+    config: BangumiNetwork,
+    client: Client,
+    expires_at: Instant,
+}
+
+impl EncryptedTransport {
+    fn matches(&self, config: &BangumiNetwork) -> bool {
+        &self.config == config && Instant::now() < self.expires_at
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -66,11 +80,16 @@ impl BangumiNetwork {
     }
 
     pub fn client(&self) -> AppResult<Client> {
-        if let Some((config,client)) = ECH_TRANSPORT.lock().map_err(|_| AppError::System("Bangumi 加密连接不可用".into()))?.as_ref() {
-            if config == self { return Ok(client.clone()); }
+        if let Some(transport) = ECH_TRANSPORT.lock().map_err(|_| AppError::System("Bangumi 加密连接不可用".into()))?.as_ref() {
+            if transport.matches(self) { return Ok(transport.client.clone()); }
         }
+        self.plain_client()
+    }
+
+    pub(crate) fn plain_client(&self) -> AppResult<Client> {
         let mut builder = Client::builder()
             .timeout(Duration::from_secs(12))
+            .connect_timeout(Duration::from_secs(4))
             .user_agent(concat!("Genzo/", env!("CARGO_PKG_VERSION"), " (local media library)"))
             .redirect(reqwest::redirect::Policy::none());
         if self.mode != "system" { builder = builder.no_proxy(); }
@@ -87,12 +106,32 @@ pub fn transport() -> AppResult<(BangumiNetwork, Client)> {
     let mut state = TRANSPORT.lock().expect("Bangumi transport lock");
     if state.is_none() {
         let config = BangumiNetwork::default();
-        let client = config.client()?;
+        let client = config.plain_client()?;
         *state = Some((config, client));
     }
     let (config,client) = state.as_ref().expect("initialized transport");
-    let encrypted = ECH_TRANSPORT.lock().expect("Bangumi ECH transport lock");
-    Ok((config.clone(),encrypted.as_ref().filter(|(stored,_)|stored == config).map(|(_,client)|client.clone()).unwrap_or_else(||client.clone())))
+    let result = {
+        let encrypted = ECH_TRANSPORT.lock().expect("Bangumi ECH transport lock");
+        (config.clone(), encrypted.as_ref().filter(|stored| stored.matches(config))
+            .map(|stored| stored.client.clone()).unwrap_or_else(|| client.clone()))
+    };
+    drop(state);
+    #[cfg(target_os="android")]
+    prepare_encrypted(result.0.clone());
+    Ok(result)
+}
+
+pub(crate) fn invalidate_encrypted(config: &BangumiNetwork) {
+    if &current() != config { return; }
+    let mut encrypted = ECH_TRANSPORT.lock().expect("Bangumi ECH transport lock");
+    if encrypted.as_ref().is_some_and(|stored| &stored.config == config) { *encrypted = None; }
+    drop(encrypted);
+    #[cfg(target_os="android")]
+    {
+        // Keep subsequent reads on ordinary TLS briefly instead of repeatedly selecting
+        // the same unhealthy pinned route while the network is changing.
+        ECH_REFRESH.lock().expect("Bangumi ECH refresh lock").1 = Some(Instant::now() + Duration::from_secs(60));
+    }
 }
 
 /// Kazumi reference for the public Bangumi domains: authenticated DoH, Cloudflare ECH and
@@ -100,7 +139,10 @@ pub fn transport() -> AppResult<(BangumiNetwork, Client)> {
 #[cfg(any(target_os="android",test))]
 async fn ech_client(config: &BangumiNetwork) -> AppResult<Client> {
     use base64::Engine;
-    let bootstrap = Client::builder().timeout(Duration::from_secs(8)).user_agent("Genzo/0.5.0").build()
+    let mut bootstrap = Client::builder().timeout(Duration::from_secs(8)).connect_timeout(Duration::from_secs(4))
+        .user_agent(concat!("Genzo/", env!("CARGO_PKG_VERSION")));
+    if config.mode != "system" { bootstrap = bootstrap.no_proxy(); }
+    let bootstrap = bootstrap.build()
         .map_err(|error|AppError::Network(error.to_string()))?;
     let records: serde_json::Value = bootstrap.get("https://dns.alidns.com/resolve")
         .query(&[("name","crypto.cloudflare.com"),("type","HTTPS")]).send().await
@@ -119,18 +161,37 @@ async fn ech_client(config: &BangumiNetwork) -> AppResult<Client> {
     let addresses: Vec<std::net::SocketAddr> = ["172.67.134.140:443","104.21.6.61:443","172.67.73.67:443"].iter().map(|value|value.parse().expect("pinned public address")).collect();
     let mut builder = Client::builder().use_preconfigured_tls(tls).timeout(Duration::from_secs(12)).connect_timeout(Duration::from_secs(6))
         .user_agent(concat!("Genzo/",env!("CARGO_PKG_VERSION"))).redirect(reqwest::redirect::Policy::none());
-    if config.mode == "direct" { builder = builder.no_proxy(); }
+    if config.mode != "system" { builder = builder.no_proxy(); }
     for host in ["api.bgm.tv","next.bgm.tv","lain.bgm.tv"] { builder = builder.resolve_to_addrs(host,&addresses); }
     builder.build().map_err(|error|AppError::Network(error.to_string()))
 }
 
 #[cfg(target_os="android")]
 fn prepare_encrypted(config: BangumiNetwork) {
-    if config.mode == "mirror" { return; }
+    if ECH_TRANSPORT.lock().expect("Bangumi ECH transport lock").as_ref().is_some_and(|stored| stored.matches(&config)) { return; }
+    let mut refresh = ECH_REFRESH.lock().expect("Bangumi ECH refresh lock");
+    if refresh.0 || refresh.1.is_some_and(|next| Instant::now() < next) { return; }
+    refresh.0 = true;
+    drop(refresh);
     tauri::async_runtime::spawn(async move {
         match ech_client(&config).await {
-            Ok(client) => { *ECH_TRANSPORT.lock().expect("Bangumi ECH transport lock") = Some((config,client)); }
-            Err(error) => eprintln!("Bangumi encrypted connection unavailable: {error}"),
+            Ok(client) => {
+                // A completed preparation must not replace a newer connection setting.
+                let mut refresh = ECH_REFRESH.lock().expect("Bangumi ECH refresh lock");
+                if current() == config && !refresh.1.is_some_and(|next| Instant::now() < next) {
+                    *ECH_TRANSPORT.lock().expect("Bangumi ECH transport lock") = Some(EncryptedTransport {
+                        config, client, expires_at: Instant::now() + Duration::from_secs(30 * 60),
+                    });
+                }
+                refresh.0 = false;
+                if refresh.1.is_some_and(|next| Instant::now() >= next) { refresh.1 = None; }
+            }
+            Err(_) => {
+                // A failed bootstrap should neither block reads nor start a DNS request per card.
+                let mut refresh = ECH_REFRESH.lock().expect("Bangumi ECH refresh lock");
+                refresh.0 = false;
+                refresh.1 = Some(refresh.1.unwrap_or_else(Instant::now).max(Instant::now() + Duration::from_secs(30)));
+            }
         }
     });
 }
@@ -147,7 +208,7 @@ pub async fn load(pool: &SqlitePool) -> AppResult<BangumiNetwork> {
 
 pub async fn initialize(pool: &SqlitePool) -> AppResult<()> {
     let config = load(pool).await?;
-    let client = config.client()?;
+    let client = config.plain_client()?;
     *TRANSPORT.lock().expect("Bangumi transport lock") = Some((config.clone(), client));
     #[cfg(target_os="android")]
     prepare_encrypted(config);
@@ -163,7 +224,7 @@ pub async fn get_bangumi_network(state: State<'_, AppState>) -> AppResult<Bangum
 pub async fn save_bangumi_network(config: BangumiNetwork, state: State<'_, AppState>) -> AppResult<()> {
     let _guard = SETTINGS_LOCK.lock().await;
     let config = config.normalized()?;
-    let client = config.client()?;
+    let client = config.plain_client()?;
     sqlx::query("INSERT INTO app_settings(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at")
         .bind(KEY).bind(serde_json::to_string(&config)?).bind(chrono::Utc::now().to_rfc3339())
         .execute(&state.pool).await?;
@@ -186,11 +247,13 @@ pub async fn test_bangumi_network(config: BangumiNetwork) -> AppResult<Vec<Bangu
     let config = config.normalized()?;
     let provider = crate::bangumi::BangumiProvider::configured(&config)?;
     let mut probes = vec![];
-    for name in ["目录 / 搜索", "条目详情", "每周时间表"] {
+    for name in ["目录 / 搜索", "条目详情", "每周时间表", "作品吐槽 / 官网", "本集讨论 / 官网"] {
         let start = std::time::Instant::now();
         let result = match name {
             "目录 / 搜索" => provider.ranking(1, 0).await.map(|_| ()),
             "条目详情" => provider.get_details("326").await.map(|_| ()),
+            "作品吐槽 / 官网" => provider.comments("400602", 0, 1).await.map(|_| ()),
+            "本集讨论 / 官网" => provider.episode_comments("1212094").await.map(|_| ()),
             _ => provider.calendar_by_weekday().await.map(|_| ()),
         };
         probes.push(BangumiProbe {
@@ -205,6 +268,16 @@ pub async fn test_bangumi_network(config: BangumiNetwork) -> AppResult<Vec<Bangu
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn encrypted_transport_expires_and_never_crosses_connection_settings() {
+        let config = BangumiNetwork { mode: "direct".into(), mirror_url: String::new() };
+        let mut transport = EncryptedTransport { config: config.clone(), client: config.plain_client().unwrap(), expires_at: Instant::now() + Duration::from_secs(60) };
+        assert!(transport.matches(&config));
+        assert!(!transport.matches(&BangumiNetwork::default()));
+        assert!(!transport.matches(&BangumiNetwork { mode: "mirror".into(), mirror_url: "https://example.com".into() }));
+        transport.expires_at = Instant::now() - Duration::from_secs(1);
+        assert!(!transport.matches(&config));
+    }
     #[tokio::test]
     #[ignore = "explicit public Bangumi encrypted transport smoke test"]
     async fn live_bangumi_ech() {
