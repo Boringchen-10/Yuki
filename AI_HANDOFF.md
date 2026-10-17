@@ -4,6 +4,8 @@
 
 用户确认发布 **v1.0.0** 到 [Yuki Releases](https://github.com/Boringchen-10/Yuki/releases/tag/v1.0.0)，说明仅用四条更新，当前主文档已精简。正式包 `com.genzo.android`，versionCode `1000000`；原证书、资料与同步格式不变。
 
+正式 Release 已公开；发布提交 `48f4f89`、带注释标签 `v1.0.0` 和 main 已推送。APK 与校验文件公开回下载通过，哈希与 GitHub 资产记录一致。
+
 ## 本版变化
 
 - 首次使用协议确认和规则配置；支持稍后添加、仓库及自定义导入。
@@ -18,6 +20,7 @@
 - Android 16 / PLK110 新建测试安装：0.16.1 覆盖至 1.0.0 成功，SQLite 浅色模式与 WebView AMOLED 设置保留；协议、规则仓库 17 项加载、系统返回、中途重启恢复及完成后跳过引导通过。全新 1.0.0 显示蓝白主题和未勾选协议。
 - 产物在 `D:/DevTools/Android/Build/releases/yuki/v1.0.0/`；实测、公开资产核对及测试安装清理记录在 `D:/DevTools/Android/Build/qa/release-1.0.0-20261017/`。测试前正式包不存在，现有 readerqa 与真实媒体不参与测试。
 - 本轮未做真实媒体库播放 / 阅读或多机型全面回归，不将上述测试扩大为所有使用场景保证。
+- 设备内检查更新遇 GitHub 限流，准确显示重试提示；未宣称更高版本下载链路实机通过。本轮创建的测试安装已移除，原 readerqa 保留；完整结果见上述 QA 目录 `verification.json`。
 
 ## 维护边界
 
