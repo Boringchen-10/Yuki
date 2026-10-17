@@ -60,6 +60,7 @@ pub async fn android_native(
     if !matches!(
         command.as_str(),
         "pickTree" | "listTree" | "pickVideo" | "openPlayer" | "playerState" | "playerControl" | "readerState" | "readerControl" | "openComicFixture"
+        | "getAppIcon" | "setAppIcon"
     ) {
         return Err(AppError::Validation("未知安卓原型命令".into()));
     }

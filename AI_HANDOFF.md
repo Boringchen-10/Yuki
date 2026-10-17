@@ -1,5 +1,15 @@
 # Codex 与 DeepSeek Harness 项目交接记录
 
+## 安卓三款雪乃图标与通用设置（2026-10-17）
+
+- 用户确认最后一轮三张全身 Q 版原图，经典校服默认，贝雷帽约会 / 围巾冬装可选。继续 `.tmp/android-first` / `codex/android-first` 当前 OpenDesign；原图保存 `design/app-icons/yukino`，只等比缩放和白底留边，不重画服装。Android adaptive / 五种密度位图 / 设置预览由脚本生成，原图 SHA-256 和 66dp 安全圆检查通过；圆形与圆角裁切图已看。
+- 「我的 → 通用 → 应用图标」接通真实 PackageManager 状态。三个稳定 activity-alias 指向保持启用的 MainActivity，仅经典入口默认启用；Android 13+ 批量切换，旧系统先启用新入口再关闭其他入口，失败尝试恢复原入口，均使用 DONT_KILL_APP。状态由系统持久化，不新增数据库迁移 / 同步字段，保存成功后更新选中项，连续点击与同项重复写受控。
+- TypeScript、前端 31 文件 / 130 项、Android 优化 Rust / Kotlin / R8 与签名 Release 构建通过。真实 React 6 场景及 360 / 412 / 915 / 1024 / 1366 / 1920 深浅主题共 12 布局通过。最初设备截图发现预览图漏包：Android 的 publicDir=false，因此改为 src 内 PNG 导入随 Vite 打包，并重建全部原生包；最终实机验收等待三张 naturalWidth=256，正确截图已看，不沿用之前缺图的通过记录。
+- PLK110 / Android16 独立 `com.genzo.android.iconqa`：原生 instrumentation 1 项通过，覆盖三款 / 同项切换、始终唯一可启动入口、MainActivity 保持可用、adaptive drawable 与非法 ID 拒绝。最终优化包真实设置页切换三款、非法 ID 不改状态、强制停止后从选中入口启动、同包覆盖重装保留选择全部通过，证据 `D:/DevTools/Android/Build/qa/app-icons-20261017/native-1792215914209/result.json`。Android 8–12 顺序切换分支已编译，未做对应系统实机测试；不同桌面的固定快捷方式刷新行为尚未逐一验收。
+- 最终签名预览 `D:/DevTools/Android/Build/previews/app-icons-20261017/Genzo_0.17.1_icons_android_arm64-v8a.apk`，50,700,357 字节，SHA256 `e64f6826060b536e38d460324b7cab30158023973ecc9ba94de05bd6e44a3205`。com.genzo.android / code17001 / arm64 / min26 / target36 / 非 debuggable / 原证书 / v2+v3 / 16KiB 对齐通过；406 份生产输入与 D 构建副本一致，三个库按 Gradle 剥离结果核对，内嵌三张预览资产名检查通过，无数据库。源清单与 SHA256SUMS 同目录。本轮沿用现有 0.17.1 开发版本，不发布新 Release / 标签 / 推送。
+- 构建期间其他维护者提交 `22ccbdb` 动漫封面修复，已保留。AndroidApp / GenzoPlugin / android_bridge 原已 dirty，本轮只从 HEAD 构造并暂存图标自身插入，逐项核对去掉本轮插入后仍等于开始备份；其余未提交界面 / 规则 / 整理代码不混入本轮提交。备份和仅暂存脚本在上述 QA 目录。Windows 主工作区与图标未改，普通 / readerqa 包未覆盖安装，未访问或更改真实媒体 / 用户资料。
+- 使用与复跑说明 `docs/android/APP_ICONS.md`。本轮只在新建 iconqa 包测试，最终已停止并清理测试包和 9368 转发；签名普通包作为可安装预览交付，尚未替换手机日常版本。本轮没有重跑完整 Rust 单元套件，以安卓完整优化构建及本轮前端 / 原生检查为验证依据。
+
 ## 安卓动漫详情封面修复 v0.17.1（2026-10-17）
 
 - 用户报告“青之箱 第二季”发现列表有图，从发现 / 媒体库进入详情都没有。Bangumi548156的公开v0/P1封面一致、JPEG459141B /1938×2744可读；已入库发现条目复用媒体库详情，详情只读works.cover_path而未使用已有发现图片缓存，隔离React及原生0.17.0均复现。

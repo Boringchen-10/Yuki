@@ -1,0 +1,17 @@
+{
+  "classic": {
+    "sourceSha256": "db0fac243fbb7e2ed25e84e965975f735b4dd8644e1631a6a7d7db25a90bb701",
+    "foregroundPixels": 432,
+    "artworkMaxRadiusDp": 32
+  },
+  "beret": {
+    "sourceSha256": "1ed2d9d68921b6fa16b1f9445e8d336acd00b7abf0eb1370b4af812995078fc4",
+    "foregroundPixels": 432,
+    "artworkMaxRadiusDp": 32
+  },
+  "winter": {
+    "sourceSha256": "7bd6f038c5204a6c07ac983a7a7e301947c6f5f8d1d2cff3b3659e5cdd5208ba",
+    "foregroundPixels": 432,
+    "artworkMaxRadiusDp": 32
+  }
+}

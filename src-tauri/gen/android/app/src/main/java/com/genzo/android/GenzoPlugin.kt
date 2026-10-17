@@ -72,6 +72,19 @@ class RuleArgs { var html: String = ""; var rule: String = "{}"; var operation: 
 @TauriPlugin
 class GenzoPlugin(private val activity: Activity) : Plugin(activity) {
     @Command
+    fun getAppIcon(invoke: Invoke) {
+        try { invoke.resolve(JSObject().put("id", LauncherIcons.current(activity))) }
+        catch (_: Exception) { invoke.reject("无法读取应用图标，请重试") }
+    }
+    @Command
+    fun setAppIcon(invoke: Invoke) {
+        val args = invoke.parseArgs(AppIconArgs::class.java)
+        activity.runOnUiThread {
+            try { invoke.resolve(JSObject().put("id", LauncherIcons.select(activity, args.id))) }
+            catch (_: Exception) { invoke.reject("图标切换失败，请重试") }
+        }
+    }
+    @Command
     fun parseRuleHtml(invoke: Invoke) {
         val args = invoke.parseArgs(RuleArgs::class.java)
         worker.execute { try { invoke.resolve(JSObject(RuleHtml.parse(args.html, org.json.JSONObject(args.rule), args.operation).toString())) }

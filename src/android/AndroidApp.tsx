@@ -15,6 +15,7 @@ import { playbackPercent, playbackTime, type PlaybackProgress } from "../playbac
 import { usePreferences, type StartScreen, type ThemeStyle } from "../store";
 import { androidApi, isDirectoryEntry, listenAndroidChanges, type DocumentEntry, type VideoSource } from "./api";
 import AndroidPrototype from "./AndroidPrototype";
+import AppIconPicker from "./AppIconPicker";
 import BookReader from "./BookReader";
 import BookDescription from "./BookDescription";
 import ComicComments from "./ComicComments";
@@ -1072,6 +1073,7 @@ export default function AndroidApp() {
           </SettingRow>
         </SettingBlock>
         <p className="gz-footer">当前选择：{startScreens.find(item => item.id === startScreen)?.label}</p>
+        <AppIconPicker />
       </>}
       {route === "sources" && <>
         {sourceManager}

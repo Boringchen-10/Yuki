@@ -1,5 +1,6 @@
 # Add project specific ProGuard rules here.
 -keep class com.genzo.android.GenzoPlugin { *; }
+-keep class com.genzo.android.AppIconArgs { *; }
 -keep class com.genzo.android.TreeArgs { *; }
 -keep class com.genzo.android.PlayerArgs { *; }
 -keep class com.genzo.android.CredentialArgs { *; }

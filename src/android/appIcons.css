@@ -1,0 +1,10 @@
+.android-app .gz-app-icon-body { padding: 16px; }
+.android-app .gz-app-icons { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.android-app .gz-app-icon { display: flex; min-width: 0; flex-direction: column; align-items: center; gap: 6px; padding: 10px 4px; border: 1px solid transparent; border-radius: var(--radius); background: transparent; color: inherit; cursor: pointer; }
+.android-app .gz-app-icon.active { border-color: var(--accent); background: hsl(var(--accent-h) var(--accent-s) var(--accent-l) / .1); }
+.android-app .gz-app-icon:disabled { cursor: default; }
+.android-app .gz-app-icon-art { position: relative; width: min(100%, 88px); aspect-ratio: 1; }
+.android-app .gz-app-icon-art img { display: block; width: 100%; height: 100%; border-radius: 22%; }
+.android-app .gz-app-icon-check { position: absolute; right: -2px; bottom: -2px; box-sizing: content-box; padding: 3px; border-radius: 50%; color: var(--bg); background: var(--accent); }
+.android-app .gz-app-icon strong { font-size: 13px; text-align: center; overflow-wrap: anywhere; }
+.android-app .gz-app-icon .gz-meta { margin: 0; font-size: 11px; }
