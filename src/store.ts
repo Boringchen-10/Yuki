@@ -22,6 +22,7 @@ interface PreferencesState {
   cornerRadius: number;
   topbarOpacity: number;
   shelfColumns: number;
+  ruleOrder: string[];
   setTheme: (theme: ThemeMode) => void;
   setLibraryView: (view: LibraryView) => void;
   setStartScreen: (startScreen: StartScreen) => void;
@@ -38,6 +39,7 @@ interface PreferencesState {
   setCornerRadius: (cornerRadius: number) => void;
   setTopbarOpacity: (topbarOpacity: number) => void;
   setShelfColumns: (shelfColumns: number) => void;
+  setRuleOrder: (ruleOrder: string[]) => void;
   resetAppearance: () => void;
 }
 
@@ -60,6 +62,7 @@ export const usePreferences = create<PreferencesState>()(
       cornerRadius: 8,
       topbarOpacity: 0,
       shelfColumns: 7,
+      ruleOrder: [],
       setTheme: (theme) => set({ theme }),
       setLibraryView: (libraryView) => set({ libraryView }),
       setStartScreen: (startScreen) => set({ startScreen }),
@@ -76,6 +79,7 @@ export const usePreferences = create<PreferencesState>()(
       setCornerRadius: (cornerRadius) => set({ cornerRadius }),
       setTopbarOpacity: (topbarOpacity) => set({ topbarOpacity }),
       setShelfColumns: (shelfColumns) => set({ shelfColumns }),
+      setRuleOrder: (ruleOrder) => set({ ruleOrder }),
       resetAppearance: () => set({ theme: "system", accentHue: 158, accentSat: 55, accentLight: 55, themeStyle: "soft", coverBrightness: 100, amoled: false, dynamicColor: false, fontScale: 100, shadowScale: 1, glassBlur: 24, cornerRadius: 8, topbarOpacity: 0, shelfColumns: 7 }),
     }),
     { name: "genzo-preferences" },

@@ -66,7 +66,8 @@ export const androidApi = {
   pickSubtitle: (sessionId: string) => invoke<{ status: "selected" | "cancelled" | "permission_denied" | "subtitle_error"; track?: SubtitleTrack }>("pick_external_subtitle", { sessionId }),
   subtitleCandidates: (mediaFileId: string) => invoke<SubtitleTrack[]>("list_subtitle_candidates", { mediaFileId }),
   progress: async (): Promise<PlaybackOverview> => { await androidApi.state(); return api.playbackProgress(); },
-  appearance: (dark: boolean) => invoke<void>("set_android_appearance", { dark }),
+  appearance: (dark: boolean, appearance?: import("./nativeAppearance").NativeAppearance) => invoke<void>("set_android_appearance", { dark, appearance }),
+  safeArea: () => invoke<{ top: number; right: number; bottom: number; left: number }>("android_native", { command: "safeArea", payload: {} }),
 };
 
 /** Subscribe first, then read snapshots. Each stream/entity owns its revision. */

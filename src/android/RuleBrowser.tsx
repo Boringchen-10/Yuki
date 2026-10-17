@@ -1,15 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, Check, Play, RefreshCw, Search } from "lucide-react";
+import { ArrowLeft, Check, Download, Play, RefreshCw, Search } from "lucide-react";
+import { downloadEntryApi } from "./downloadEntryApi";
 import type { WorkDetail } from "../types";
+import { usePreferences } from "../store";
 import { rulesApi, type RuleBinding, type RuleBindingPreview, type RuleChapters, type RuleItem, type RulePlugin, type RuleSearch, type WorkRuleSource } from "./rulesApi";
 import "./rules.css";
 
 type Result = { plugin: RulePlugin; item: RuleItem };
-export function WorkRuleSources({ workId, revision, onOpen }: { workId: string; revision: number; onOpen: (source: WorkRuleSource) => void }) {
-  const [sources, setSources] = useState<WorkRuleSource[]>([]);
-  useEffect(() => { let active = true; void rulesApi.workSources(workId).then(value => { if (active) setSources(value); }).catch(() => {}); return () => { active = false; }; }, [workId, revision]);
-  return sources.length ? <div className="gz-rule-work-sources">{sources.map(source => <button className="gz-link" key={`${source.pluginId}:${source.source}`} onClick={() => onOpen(source)}>管理 {source.name} · {source.title}</button>)}</div> : null;
-}
 export default function RuleBrowser({ work, pluginId, initialSource, registerBack, onSaved, onBusyChange }: {
   work?: WorkDetail; pluginId?: string; initialSource?: WorkRuleSource;
   registerBack: (handler: (() => boolean) | null) => void;
@@ -24,12 +21,15 @@ export default function RuleBrowser({ work, pluginId, initialSource, registerBac
   const [preview, setPreview] = useState<RuleBindingPreview | null>(null), [acknowledged, setAcknowledged] = useState(false);
   const [loading, setLoading] = useState(false), [parsing, setParsing] = useState(false), [saving, setSaving] = useState(false), [error, setError] = useState("");
   const generation = useRef(0), resolving = useRef(false);
+  const [queuing, setQueuing] = useState(false), [downloadMessage, setDownloadMessage] = useState("");
+  const queuePending = useRef(false);
   useEffect(() => { onBusyChange?.(saving); return () => onBusyChange?.(false); }, [saving, onBusyChange]);
   useEffect(() => {
     let active = true;
     void rulesApi.plugins().then(items => {
       if (!active) return;
-      const enabled = items.filter(item => item.enabled); setPlugins(enabled);
+      const order = usePreferences.getState().ruleOrder, rank = new Map(order.map((id, index) => [id, index]));
+      const enabled = items.filter(item => item.enabled).sort((a, b) => (rank.get(a.id) ?? order.length) - (rank.get(b.id) ?? order.length)); setPlugins(enabled);
       if (initialSource) {
         const plugin = enabled.find(item => item.id === initialSource.pluginId);
         if (plugin) void open({ plugin, item: { name: initialSource.title, source: initialSource.source } });
@@ -98,9 +98,19 @@ export default function RuleBrowser({ work, pluginId, initialSource, registerBac
     catch (reason) { if (version === generation.current) setError(String(reason)); }
     finally { if (version === generation.current) { resolving.current = false; setParsing(false); } }
   }
+  async function queueDownloads(indexes: number[]) {
+    if (!subject || !indexes.length || queuePending.current) return;
+    const version = generation.current; queuePending.current=true; setQueuing(true); setDownloadMessage("");
+    try {
+      await downloadEntryApi.rules({pluginId:subject.plugin.id,source:subject.item.source,title:work?.title || subject.item.name,roadIndex:road,episodeIndexes:indexes,workId:work?.id});
+      if (version===generation.current) setDownloadMessage(`已加入下载中心（${indexes.length} 集）`);
+    } catch (reason) { if (version===generation.current) setError(String(reason)); }
+    finally { queuePending.current=false; setQueuing(false); }
+  }
   return <div className="gz-rule-browser">
     {error && <p className="gz-error" role="alert">{error}</p>}
-    {!plugins.length && <p className="gz-meta">请先在“来源 → 规则视频来源”安装并启用规则。</p>}
+    {downloadMessage && <p className="gz-meta" role="status">{downloadMessage}</p>}
+    {!plugins.length && <p className="gz-meta">请先在“我的 → 规则设置”安装并启用规则。</p>}
     {!subject ? <>
       <form onSubmit={event => { event.preventDefault(); void search(); }} className="gz-form-fields">
         <label>搜索规则来源<input required maxLength={200} value={query} onChange={event => setQuery(event.target.value)} placeholder="输入作品名称" /></label>
@@ -122,8 +132,9 @@ export default function RuleBrowser({ work, pluginId, initialSource, registerBac
       {loading && <p role="status" className="gz-meta">正在读取线路与剧集…</p>}
       {!!chapters?.roads.length && <>
         <label>播放线路<select disabled={saving || parsing || loading} value={road} onChange={event => { setRoad(Number(event.target.value)); setEpisodePage(1); setSelected([]); invalidate(); }}>{chapters.roads.map((item, index) => <option key={index} value={index}>{item.name} · {item.episodes.length} 集</option>)}</select></label>
+        <div className="gz-actions"><button type="button" className="gz-btn" disabled={queuing || loading || saving || !selected.length} onClick={() => void queueDownloads(selected)}><Download size={16} />下载所选（{selected.length} 集）</button>{!work && <button type="button" className="gz-link" disabled={queuing || loading} onClick={() => setSelected(previous => pageSelected ? previous.filter(index => !pageIndexes.includes(index)) : [...new Set([...previous, ...pageIndexes])].slice(0,500))}>{pageSelected ? "取消当前页选择" : "选择当前页剧集"}</button>}</div>
         {work && <><div className="gz-actions"><button className="gz-link" disabled={saving || loading || parsing} onClick={() => { invalidate(); setSelected(previous => pageSelected ? previous.filter(index => !pageIndexes.includes(index)) : [...new Set([...previous, ...pageIndexes])].slice(0, 500)); }}>{pageSelected ? "取消当前页选择" : "选择当前页剧集"}</button><span className="gz-meta">已选 {selected.length} / {episodes.length}</span></div><div className="gz-rule-offset"><label>来源起始集号<input type="number" min={0} max={9999} value={fileStart} disabled={saving || loading || parsing} onChange={event => { setFileStart(event.target.value); invalidate(); }} /></label><label>官方起始集号<input type="number" min={0} max={9999} value={officialStart} disabled={saving || loading || parsing} onChange={event => { setOfficialStart(event.target.value); invalidate(); }} /></label></div><p className="gz-meta">例如来源第 13 集对应官方第 1 集。播放会关联当前这一集并保存进度，也可先预览关联多集，再到剧集页选择规则、本地或 WebDAV 来源。</p><label className="gz-file-choice"><input type="checkbox" checked={replaceExisting} disabled={saving || loading || parsing} onChange={event => { setReplaceExisting(event.target.checked); invalidate(); }} />重新设置已关联剧集的编号</label></>}
-        <div className="gz-rule-episodes">{pageEpisodes.map((episode, pageIndex) => { const index = pageStart + pageIndex; return <div className="gz-rule-episode" key={`${episode.url}:${index}`}>{work && <input aria-label={`关联 ${episode.name}`} type="checkbox" disabled={saving || loading || parsing || (!selected.includes(index) && selected.length >= 500)} checked={selected.includes(index)} onChange={event => { invalidate(); setSelected(previous => event.target.checked ? [...previous, index] : previous.filter(value => value !== index)); }} />}<span className="gz-file-name">{episode.name}</span><button className="gz-btn" aria-label={`${work ? "播放" : "试播"} ${episode.name}`} disabled={parsing || saving || loading || (!!work && !validOffset)} onClick={() => void trial(index)}><Play size={18} />{work ? "播放" : "试播"}</button></div>; })}</div>
+        <div className="gz-rule-episodes">{pageEpisodes.map((episode, pageIndex) => { const index = pageStart + pageIndex; return <div className="gz-rule-episode" key={`${episode.url}:${index}`}><input aria-label={`${work ? "关联" : "选择"} ${episode.name}`} type="checkbox" disabled={saving || loading || parsing || (!selected.includes(index) && selected.length >= 500)} checked={selected.includes(index)} onChange={event => { invalidate(); setSelected(previous => event.target.checked ? [...previous, index] : previous.filter(value => value !== index)); }} /><span className="gz-file-name">{episode.name}</span><button type="button" className="gz-iconbtn" aria-label={`下载 ${episode.name}`} title={`下载 ${episode.name}`} disabled={queuing || saving || loading} onClick={() => void queueDownloads([index])}><Download size={18} /></button><button className="gz-btn" aria-label={`${work ? "播放" : "试播"} ${episode.name}`} disabled={parsing || saving || loading || (!!work && !validOffset)} onClick={() => void trial(index)}><Play size={18} />{work ? "播放" : "试播"}</button></div>; })}</div>
         {pageCount > 1 && <div className="gz-actions"><button className="gz-btn" disabled={page <= 1} onClick={() => setEpisodePage(page - 1)}>上一页</button><label>选集页<select aria-label="规则选集页" value={page} onChange={event => setEpisodePage(Number(event.target.value))}>{Array.from({ length: pageCount }, (_, index) => <option key={index} value={index + 1}>{index + 1} / {pageCount}</option>)}</select></label><button className="gz-btn" disabled={page >= pageCount} onClick={() => setEpisodePage(page + 1)}>下一页</button></div>}
         {input && <button className="gz-btn" disabled={!selected.length || !validOffset || saving || loading || parsing} onClick={() => void inspect()}>预览关联（{selected.length} 集）</button>}
       </>}

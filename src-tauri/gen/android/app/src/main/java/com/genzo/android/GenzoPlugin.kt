@@ -17,6 +17,8 @@ import app.tauri.plugin.Plugin
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 
 @InvokeArg
 class TreeArgs { var uri: String? = null; var rootUri: String? = null }
@@ -57,7 +59,7 @@ class PlaybackPreferencesArgs {
     var videoRenderer: String = "auto"; var superResolution: Int = 0
 }
 @InvokeArg
-class AppearanceArgs { var dark: Boolean = true }
+class AppearanceArgs { var dark: Boolean = true; var appearance: Map<String, Any?>? = null }
 @InvokeArg
 class ReaderArgs { lateinit var sessionId: String; lateinit var baseUrl: String; lateinit var kind: String; lateinit var entryId: String }
 @InvokeArg
@@ -68,6 +70,19 @@ class DataPackageArgs { lateinit var data: String }
 class ImportServiceArgs { var text: String = "正在整理目录" }
 @InvokeArg
 class RuleArgs { var html: String = ""; var rule: String = "{}"; var operation: String = "search"; var resolveOperation: Long = 0; var url: String = ""; var legacy: Boolean = false; var method: String = "GET"; var body: String = "" }
+@InvokeArg
+class OfflineVideoArgs {
+    lateinit var id: String; var uri: String = ""; var headers: HashMap<String, String> = hashMapOf(); var title: String = ""
+    var mediaFileId: String? = null; var workId: String? = null; var episodeTitle: String? = null; var action: String = ""
+    var recipe: Any? = null
+    var forceRefresh: Boolean = false
+}
+@InvokeArg
+class OfflinePrepareTicketArgs { lateinit var ticket: String; var id: String? = null }
+@InvokeArg
+class BookDownloadActivityArgs { var running: Boolean = false; var count: Int = 0 }
+@InvokeArg
+class OfflineFileArgs { lateinit var path: String; var mediaFileId: String? = null; var title: String? = null }
 
 @TauriPlugin
 class GenzoPlugin(private val activity: Activity) : Plugin(activity) {
@@ -85,6 +100,16 @@ class GenzoPlugin(private val activity: Activity) : Plugin(activity) {
         }
     }
     @Command
+    fun appUpdateStatus(invoke: Invoke) { invoke.resolve(AppUpdater.status(activity)) }
+    @Command
+    fun checkAppUpdate(invoke: Invoke) { invoke.resolve(AppUpdater.check(activity)) }
+    @Command
+    fun downloadAppUpdate(invoke: Invoke) { invoke.resolve(AppUpdater.download(activity)) }
+    @Command
+    fun cancelAppUpdate(invoke: Invoke) { invoke.resolve(AppUpdater.cancel(activity)) }
+    @Command
+    fun installAppUpdate(invoke: Invoke) { invoke.resolve(AppUpdater.install(activity)) }
+    @Command
     fun parseRuleHtml(invoke: Invoke) {
         val args = invoke.parseArgs(RuleArgs::class.java)
         worker.execute { try { invoke.resolve(JSObject(RuleHtml.parse(args.html, org.json.JSONObject(args.rule), args.operation).toString())) }
@@ -100,6 +125,128 @@ class GenzoPlugin(private val activity: Activity) : Plugin(activity) {
     fun resolveRuleVideo(invoke: Invoke) {
         val args = invoke.parseArgs(RuleArgs::class.java)
         RuleResolver.resolve(activity, args.url, args.legacy, args.resolveOperation) { invoke.resolve(JSObject(it.toString())) }
+    }
+    @Command
+    fun resolveDownloadVideo(invoke: Invoke) {
+        val args = invoke.parseArgs(RuleArgs::class.java)
+        try { checkedHttpUri(args.url) } catch (_: Exception) { invoke.reject("invalid_download_source"); return }
+        RuleResolver.resolveDownload(activity, args.url, args.legacy) { invoke.resolve(JSObject(it.toString())) }
+    }
+    @Command
+    fun addOfflineVideo(invoke: Invoke) {
+        val args = invoke.parseArgs(OfflineVideoArgs::class.java)
+        activity.runOnUiThread {
+            val downloads = try { OfflineVideoDownloads.get(activity) } catch (_: Exception) { invoke.reject("offline_download_storage_unavailable"); return@runOnUiThread }
+            downloadPrepareWorker.execute { try {
+                val prepared = prepareDownloadArgs(downloads, args)
+                downloadControlWorker.execute { try {
+                    val request = downloads.commit(prepared)
+                    activity.runOnUiThread { try {
+                        requestDownloadNotifications(); val state = downloads.add(request)
+                        invoke.resolve(JSObject().put("id", request.id).put("state", state))
+                    } catch (_: Exception) { invoke.reject("offline_download_service_unavailable") } }
+                } catch (error: Exception) { invoke.reject(offlineErrorCode(error, "offline_download_prepare_failed")) } }
+            } catch (error: Exception) { invoke.reject((error as? OfflineDownloadException)?.reason ?: "offline_download_prepare_failed") } }
+        }
+    }
+    private fun prepareDownloadArgs(downloads: OfflineVideoDownloads, args: OfflineVideoArgs): OfflineVideoPreparation {
+        val recipe = when (val raw = args.recipe) {
+            is String -> org.json.JSONObject(raw)
+            is Map<*, *> -> org.json.JSONObject(raw)
+            null -> org.json.JSONObject()
+            else -> throw IllegalArgumentException("invalid_download_recipe")
+        }
+        return downloads.prepare(args.id, args.uri, args.headers, args.title, args.mediaFileId, args.workId, args.episodeTitle, recipe, args.forceRefresh)
+    }
+    @Command
+    fun prepareOfflineVideo(invoke: Invoke) {
+        val args = invoke.parseArgs(OfflineVideoArgs::class.java)
+        activity.runOnUiThread {
+            val downloads = try { OfflineVideoDownloads.get(activity) } catch (_: Exception) { invoke.resolve(JSObject().put("errorCode", "offline_download_storage_unavailable")); return@runOnUiThread }
+            downloadPrepareWorker.execute { try {
+                val ticket = downloads.stage { prepareDownloadArgs(downloads, args) }
+                invoke.resolve(JSObject().put("ticket", ticket))
+            } catch (error: Exception) { invoke.resolve(JSObject().put("errorCode", offlineErrorCode(error, "offline_download_prepare_failed"))) } }
+        }
+    }
+    @Command
+    fun commitOfflineVideo(invoke: Invoke) {
+        val args = invoke.parseArgs(OfflinePrepareTicketArgs::class.java)
+        activity.runOnUiThread {
+            val downloads = try { OfflineVideoDownloads.get(activity) } catch (_: Exception) { invoke.resolve(JSObject().put("errorCode", "offline_download_storage_unavailable")); return@runOnUiThread }
+            downloadControlWorker.execute { try {
+                val request = downloads.commitTicket(args.ticket, args.id)
+                activity.runOnUiThread { try {
+                    requestDownloadNotifications(); val state = downloads.add(request)
+                    invoke.resolve(JSObject().put("id", request.id).put("state", state))
+                } catch (_: Exception) { invoke.resolve(JSObject().put("errorCode", "offline_download_service_unavailable")) } }
+            } catch (error: Exception) { invoke.resolve(JSObject().put("errorCode", offlineErrorCode(error, "offline_download_prepare_failed"))) } }
+        }
+    }
+    @Command
+    fun discardOfflineVideoPrepare(invoke: Invoke) {
+        val args = invoke.parseArgs(OfflinePrepareTicketArgs::class.java)
+        activity.runOnUiThread {
+            try { OfflineVideoDownloads.get(activity).discard(args.ticket); invoke.resolve(JSObject().put("discarded", true)) }
+            catch (_: Exception) { invoke.resolve(JSObject().put("errorCode", "offline_download_storage_unavailable")) }
+        }
+    }
+    @Command
+    fun listOfflineVideos(invoke: Invoke) {
+        activity.runOnUiThread {
+            val downloads = try { OfflineVideoDownloads.get(activity) } catch (_: Exception) { invoke.reject("offline_download_storage_unavailable"); return@runOnUiThread }
+            val active = downloads.manager.currentDownloads.toList()
+            downloadReadWorker.execute { try { invoke.resolve(JSObject().put("downloads", downloads.list(active))) }
+                catch (_: Exception) { invoke.reject("offline_download_list_failed") } }
+        }
+    }
+    @Command
+    fun controlOfflineVideo(invoke: Invoke) {
+        val args = invoke.parseArgs(OfflineVideoArgs::class.java)
+        activity.runOnUiThread { try {
+            if (args.action in listOf("resume", "retry")) requestDownloadNotifications()
+            OfflineVideoDownloads.get(activity).control(args.id, args.action)
+            invoke.resolve(JSObject().put("id", args.id).put("action", args.action))
+        } catch (error: Exception) { invoke.reject((error as? OfflineDownloadException)?.reason ?: "offline_download_control_failed") } }
+    }
+    @Command
+    fun offlineVideoLocator(invoke: Invoke) {
+        val args = invoke.parseArgs(OfflineVideoArgs::class.java)
+        activity.runOnUiThread {
+            val downloads = try { OfflineVideoDownloads.get(activity) } catch (_: Exception) { invoke.reject("offline_download_storage_unavailable"); return@runOnUiThread }
+            downloadReadWorker.execute { try { invoke.resolve(JSObject(downloads.locator(args.id).toString())) }
+                catch (error: Exception) { invoke.reject((error as? OfflineDownloadException)?.reason ?: "offline_download_read_failed") } }
+        }
+    }
+    @Command
+    fun offlineFileLocator(invoke: Invoke) {
+        val args = invoke.parseArgs(OfflineFileArgs::class.java)
+        activity.runOnUiThread {
+            val downloads = try { OfflineVideoDownloads.get(activity) } catch (_: Exception) { invoke.reject("offline_download_storage_unavailable"); return@runOnUiThread }
+            downloadReadWorker.execute { try { invoke.resolve(JSObject().put("uri", downloads.fileLocator(args.path)).put("mediaFileId", args.mediaFileId).put("title", args.title)) }
+                catch (_: Exception) { invoke.reject("offline_file_unavailable") } }
+        }
+    }
+    @Command
+    fun setBookDownloadActivity(invoke: Invoke) {
+        val args = invoke.parseArgs(BookDownloadActivityArgs::class.java)
+        activity.runOnUiThread { try {
+            if (args.running) {
+                requestDownloadNotifications()
+                BookDownloadService.stopped = false
+                androidx.core.content.ContextCompat.startForegroundService(activity, Intent(activity, BookDownloadService::class.java).putExtra("count", args.count))
+            } else activity.stopService(Intent(activity, BookDownloadService::class.java))
+            invoke.resolve(JSObject().put("running", args.running))
+        } catch (_: Exception) { BookDownloadService.stopped = true; invoke.reject("book_download_service_unavailable") } }
+    }
+    @Command
+    fun bookDownloadActivityState(invoke: Invoke) { invoke.resolve(JSObject().put("stopped", BookDownloadService.stopped)) }
+    private var askedDownloadNotifications = false
+    private fun requestDownloadNotifications() {
+        if (!askedDownloadNotifications && android.os.Build.VERSION.SDK_INT >= 33 && activity.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            askedDownloadNotifications = true
+            activity.requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 5407)
+        }
     }
     @Command
     fun cancelRuleVideo(invoke: Invoke) {
@@ -209,6 +356,9 @@ class GenzoPlugin(private val activity: Activity) : Plugin(activity) {
     }
     private val preferences = activity.getSharedPreferences("genzo-prototype", 0)
     private val worker = Executors.newSingleThreadExecutor()
+    private val downloadPrepareWorker = Executors.newSingleThreadExecutor()
+    private val downloadControlWorker = Executors.newSingleThreadExecutor()
+    private val downloadReadWorker = Executors.newSingleThreadExecutor()
     private val timeouts = Executors.newSingleThreadScheduledExecutor()
     private val credentials = CredentialStore(activity)
 
@@ -252,12 +402,30 @@ class GenzoPlugin(private val activity: Activity) : Plugin(activity) {
     fun appearance(invoke: Invoke) {
         val args = invoke.parseArgs(AppearanceArgs::class.java)
         activity.runOnUiThread {
+            try { PlayerAppearance.save(activity, args.dark, args.appearance?.let { org.json.JSONObject(it) }) }
+            catch (_: Exception) { invoke.reject("invalid_player_appearance"); return@runOnUiThread }
             WindowInsetsControllerCompat(activity.window, activity.window.decorView).apply {
                 isAppearanceLightStatusBars = !args.dark
                 isAppearanceLightNavigationBars = !args.dark
             }
-            activity.window.decorView.setBackgroundColor(if (args.dark) 0xff090d0f.toInt() else 0xfff3f6f5.toInt())
+            activity.window.decorView.setBackgroundColor(PlayerAppearance.read(activity).background)
+            PlayerActivity.current?.get()?.applyAppearance()
             invoke.resolve(JSObject())
+        }
+    }
+
+    @Command
+    fun safeArea(invoke: Invoke) {
+        activity.runOnUiThread {
+            val density = activity.resources.displayMetrics.density
+            val insets = ViewCompat.getRootWindowInsets(activity.window.decorView)
+            val bars = insets?.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            invoke.resolve(JSObject().apply {
+                put("top", ((bars?.top ?: 0) / density).toDouble())
+                put("right", ((bars?.right ?: 0) / density).toDouble())
+                put("bottom", ((bars?.bottom ?: 0) / density).toDouble())
+                put("left", ((bars?.left ?: 0) / density).toDouble())
+            })
         }
     }
 
@@ -378,15 +546,18 @@ class GenzoPlugin(private val activity: Activity) : Plugin(activity) {
         val args = invoke.parseArgs(PlayerArgs::class.java)
         activity.runOnUiThread {
             if (args.ruleOperation > 0 && !RuleResolver.claim(args.ruleOperation)) { invoke.reject("播放解析已取消"); return@runOnUiThread }
-            if (args.ruleOperation > 0 && !args.loading) {
+            if (args.ruleOperation > 0 && !args.loading && args.sourceKind != "offline") {
                 try { val current = PlayerActivity.current?.get() ?: error("expired_player_session"); current.acceptRuleMedia(args); invoke.resolve(JSObject().put("status", "opening")) }
                 catch (_: Exception) { invoke.reject("播放解析已取消") }
                 return@runOnUiThread
             }
             val uri = Uri.parse(args.uri)
             if (!args.loading && uri.scheme !in listOf("content", "https", "http")) { invoke.reject("Unsupported locator"); return@runOnUiThread }
+            val landscape = PlayerActivity.current?.get()?.takeUnless { it.isFinishing || it.isDestroyed }?.resources?.configuration?.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
             PlayerActivity.current?.get()?.closeForReplacement()
             activity.startActivity(Intent(activity, PlayerActivity::class.java).putExtra("uri", args.uri)
+                .putExtra("sourceKind", args.sourceKind)
+                .putExtra("landscape", landscape)
                 .putExtra("ruleOperation", args.ruleOperation).putExtra("loading", args.loading).putExtra("loadingMessage", args.loadingMessage)
                 .putExtra("restart", args.restart).putExtra("mediaFileId", args.mediaFileId)
                 .putExtra("sessionId", args.sessionId).putExtra("resumeMs", args.resumeMs ?: -1L)

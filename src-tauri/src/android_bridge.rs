@@ -59,8 +59,9 @@ pub async fn android_native(
 ) -> AppResult<Value> {
     if !matches!(
         command.as_str(),
-        "pickTree" | "listTree" | "pickVideo" | "openPlayer" | "playerState" | "playerControl" | "readerState" | "readerControl" | "openComicFixture"
+        "pickTree" | "listTree" | "pickVideo" | "openPlayer" | "playerState" | "playerControl" | "readerState" | "readerControl" | "openComicFixture" | "safeArea"
         | "getAppIcon" | "setAppIcon"
+        | "appUpdateStatus" | "checkAppUpdate" | "downloadAppUpdate" | "cancelAppUpdate" | "installAppUpdate"
     ) {
         return Err(AppError::Validation("未知安卓原型命令".into()));
     }

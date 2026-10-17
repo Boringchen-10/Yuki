@@ -12,6 +12,9 @@ import android.webkit.WebView
 import android.view.View
 
 class MainActivity : TauriActivity() {
+  private var webView: WebView? = null
+  private var lastInsets: WindowInsetsCompat? = null
+
   override fun onCreate(savedInstanceState: Bundle?) {
     val splashScreen = installSplashScreen()
     val splashStart = SystemClock.uptimeMillis()
@@ -23,14 +26,27 @@ class MainActivity : TauriActivity() {
     ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
         val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
         val keyboard = insets.getInsets(WindowInsetsCompat.Type.ime())
-        view.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, keyboard.bottom))
+        // Web backgrounds extend under the status bar; CSS keeps interactive content inside its inset.
+        view.setPadding(bars.left, 0, bars.right, keyboard.bottom)
+        lastInsets = insets
+        publishSafeInsets(insets)
         insets
     }
     ViewCompat.requestApplyInsets(content)
   }
 
+  private fun publishSafeInsets(insets: WindowInsetsCompat) {
+    val view = webView ?: return
+    val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+    val bottom = bars.bottom / resources.displayMetrics.density
+    val top = bars.top / resources.displayMetrics.density
+    view.post { view.evaluateJavascript("document.documentElement.style.setProperty('--safe-top','${top}px');document.documentElement.style.setProperty('--safe-bottom','${bottom}px')", null) }
+  }
+
   override fun onWebViewCreate(webView: WebView) {
     super.onWebViewCreate(webView)
+    this.webView = webView
+    lastInsets?.let { publishSafeInsets(it) }
     webView.setBackgroundColor(ContextCompat.getColor(this, R.color.genzo_splash_background))
     WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
     onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {

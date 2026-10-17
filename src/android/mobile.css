@@ -1,6 +1,6 @@
 /* OpenDesign Android v1 tokens and layout. Scoped to the Android app. */
 html[data-platform="android"], html[data-platform="android"] body, html[data-platform="android"] #root { min-width: 0; min-height: 0; width: 100%; height: 100%; overflow: hidden; }
-.android-app { --accent-h: 158; --accent-s: 55%; --accent-l: 55%; --n-s: 30; --n-lift: 0; --cover-brightness: 1; --shadow-scale: 1; --radius: 8px; --ui-blur: 0px; --gz-ease: cubic-bezier(.22,.61,.36,1); --gz-ease-spring: cubic-bezier(.34,1.32,.5,1); --gz-dur-fast: 150ms; --gz-dur: 260ms; --bg: hsl(var(--accent-h) calc(var(--n-s) * 1%) calc(5% + var(--n-lift) * .8%)); --bg-raised: hsl(var(--accent-h) calc(var(--n-s) * .87%) calc(9% + var(--n-lift) * 1%)); --surface: hsl(var(--accent-h) calc(var(--n-s) * .8%) calc(12% + var(--n-lift) * 1%) / .72); --surface-strong: hsl(var(--accent-h) calc(var(--n-s) * .87%) calc(10% + var(--n-lift) * 1%)); --line: hsl(var(--accent-h) calc(var(--n-s) * .6%) 92% / .1); --text: #f4f7f6; --muted: #a8b0af; --quiet: #77817f; --accent: hsl(var(--accent-h) var(--accent-s) var(--accent-l)); --accent-ink: #07120e; --danger: #ff8e8e; --warn: #e9c46a; color-scheme: dark; color: var(--text); background: var(--bg); font: 16px/1.65 "Roboto","Segoe UI Variable Text","Noto Sans SC",system-ui,sans-serif; display: grid; grid-template-rows: minmax(0,1fr) 56px; width: 100%; height: 100dvh; isolation: isolate; }
+.android-app { --accent-h: 158; --accent-s: 55%; --accent-l: 55%; --n-s: 30; --n-lift: 0; --cover-brightness: 1; --shadow-scale: 1; --radius: 8px; --ui-blur: 0px; --gz-ease: cubic-bezier(.22,.61,.36,1); --gz-ease-spring: cubic-bezier(.34,1.32,.5,1); --gz-dur-fast: 150ms; --gz-dur: 260ms; --bg: hsl(var(--accent-h) calc(var(--n-s) * 1%) calc(5% + var(--n-lift) * .8%)); --bg-raised: hsl(var(--accent-h) calc(var(--n-s) * .87%) calc(9% + var(--n-lift) * 1%)); --surface: hsl(var(--accent-h) calc(var(--n-s) * .8%) calc(12% + var(--n-lift) * 1%) / .72); --surface-strong: hsl(var(--accent-h) calc(var(--n-s) * .87%) calc(10% + var(--n-lift) * 1%)); --line: hsl(var(--accent-h) calc(var(--n-s) * .6%) 92% / .1); --text: #f4f7f6; --muted: #a8b0af; --quiet: #77817f; --accent: hsl(var(--accent-h) var(--accent-s) var(--accent-l)); --accent-ink: #07120e; --danger: #ff8e8e; --warn: #e9c46a; color-scheme: dark; color: var(--text); background: var(--bg); font: 16px/1.65 "Roboto","Segoe UI Variable Text","Noto Sans SC",system-ui,sans-serif; display: grid; grid-template-rows: minmax(0,1fr) calc(56px + var(--safe-bottom, 0px)); width: 100%; height: 100dvh; isolation: isolate; }
 .android-app[data-theme="light"] { --bg: hsl(var(--accent-h) calc(var(--n-s) * 1%) 96%); --bg-raised: hsl(var(--accent-h) calc(var(--n-s) * .8%) 91%); --surface: hsl(0 0% 100% / .78); --surface-strong: #fff; --line: hsl(var(--accent-h) calc(var(--n-s) * .67%) 12% / .14); --text: #16201e; --muted: #53625e; --quiet: #71807b; --accent: hsl(var(--accent-h) var(--accent-s) var(--accent-l)); --accent-ink: #fff; --danger: #b64242; --warn: #9a7508; color-scheme: light; }
 .android-app[data-theme="dark"][data-amoled="true"] { --bg: #000; --bg-raised: #050607; --surface: rgba(0,0,0,.78); --surface-strong: #000; }
 .android-app .gz-rainbow-layer { position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: 0; transition: opacity 300ms ease; background: conic-gradient(from 210deg at 50% -10%, #ff5f6d, #ffc371, #8bc34a, #14b8c4, #3b6cf6, #b23bd6, #ff5f6d); }
@@ -17,7 +17,8 @@ html[data-platform="android"], html[data-platform="android"] body, html[data-pla
 .android-app .gz-back { margin-bottom: 4px; color: var(--text); }
 .android-app .gz-iconbtn { width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
 .android-app .gz-scroll { overflow-y: auto; overscroll-behavior: contain; padding: 12px 16px 24px; scrollbar-width: none; }
-.android-app .gz-tabbar { display: flex; align-items: stretch; border-top: 1px solid var(--line); background: var(--surface-strong); }
+.android-app .gz-scroll::-webkit-scrollbar { width: 0; height: 0; }
+.android-app .gz-tabbar { display: flex; align-items: stretch; border-top: 1px solid var(--line); background: var(--surface-strong); padding-bottom: var(--safe-bottom, 0px); }
 .android-app .gz-tabbar button { flex: 1; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 0; color: var(--quiet); border-radius: 0; font-size: 11px; font-weight: 600; }
 .android-app .gz-tabbar button.active { color: var(--accent); }
 .android-app .gz-tabbar .gz-tab-label { max-height: 0; opacity: 0; overflow: hidden; }
@@ -126,6 +127,24 @@ html[data-platform="android"], html[data-platform="android"] body, html[data-pla
 .android-app .gz-episode-cover, .android-app .gz-continue-cover { position: relative; display: flex; align-items: center; justify-content: center; aspect-ratio: 16/9; width: 100%; border-radius: var(--radius); background: var(--bg-raised); border: 1px solid var(--line); color: var(--accent); }
 .android-app .gz-episode-cover span, .android-app .gz-continue-cover span { position: absolute; bottom: 10px; left: 8px; font-size: 11px; color: var(--muted); }
 .android-app .gz-episode-cover progress, .android-app .gz-continue-cover progress { position: absolute; bottom: 0; left: 0; margin: 0; }
+.android-app .gz-episode-foot { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.android-app .gz-episode-foot .gz-meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.android-app .gz-episode-more { flex: none; width: 32px; height: 32px; margin: -6px -8px -6px 0; display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; color: var(--muted); background: transparent; }
+.android-app .gz-episode-more:active { background: var(--bg-raised); }
+.android-app .gz-episode-sheet { position: relative; }
+.android-app .gz-source-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 4px; }
+.android-app .gz-source-row { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); color: var(--text); background: var(--surface); }
+.android-app .gz-source-row.active { border-color: var(--accent); }
+.android-app .gz-source-row:disabled { opacity: .5; }
+.android-app .gz-source-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.android-app .gz-source-main strong { font-size: 13px; }
+.android-app .gz-source-file { white-space: normal; overflow-wrap: anywhere; }
+.android-app .gz-source-folder { white-space: normal; overflow-wrap: anywhere; }
+.android-app .gz-source-check { flex: none; color: var(--accent); }
+.android-app .gz-episode-actions { display: flex; flex-direction: column; margin-top: 14px; border-top: 1px solid var(--line); }
+.android-app .gz-episode-actions button { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 48px; padding: 12px 4px; text-align: left; color: var(--text); border-bottom: 1px solid var(--line); }
+.android-app .gz-episode-actions button:last-child { border-bottom: 0; }
+.android-app .gz-episode-actions button:disabled { color: var(--quiet); }
 .android-app .gz-rail { display: flex; gap: 12px; overflow-x: auto; }
 .android-app .gz-cover-rail { margin-top: 4px; padding-bottom: 4px; scroll-snap-type: x proximity; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
 .android-app .gz-cover-rail::-webkit-scrollbar { display: none; }
@@ -169,7 +188,7 @@ html[data-platform="android"], html[data-platform="android"] body, html[data-pla
 .android-app .gz-comments-header .gz-iconbtn { flex: none; min-width: 44px; min-height: 44px; }
 .android-app .gz-comments-sort { padding: 8px 16px; display: grid; gap: var(--comment-gap); }
 .android-app .gz-comments-sort .gz-seg button { min-height: 44px; }
-.android-app .gz-comments-list { grid-row: 4; overflow-y: auto; overscroll-behavior: contain; min-height: 0; padding: 8px 16px calc(72px + env(safe-area-inset-bottom)); }
+.android-app .gz-comments-list { grid-row: 4; overflow-y: auto; overscroll-behavior: contain; min-height: 0; padding: 8px 16px calc(72px + var(--safe-bottom, 0px)); }
 .android-app .gz-comment-card { padding: 12px; margin-bottom: 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
 .android-app .gz-comment-byline { display: flex; align-items: center; gap: var(--comment-gap); }
 .android-app .gz-comment-name { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 14px; }
@@ -179,12 +198,25 @@ html[data-platform="android"], html[data-platform="android"] body, html[data-pla
 .android-app .gz-comment-body { margin: 12px 0 0; font-size: 16px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 .android-app .gz-comment-body.is-collapsed { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
 .android-app .gz-comment-expand { display: flex; align-items: center; justify-content: center; gap: var(--comment-gap); margin: 4px auto 0; min-height: 44px; border: 0; background: transparent; color: var(--accent); font: inherit; cursor: pointer; }
-.android-app .gz-comments-top { position: absolute; z-index: 1; right: 16px; bottom: calc(8px + env(safe-area-inset-bottom)); width: 56px; height: 56px; background: var(--accent); color: var(--accent-ink); box-shadow: 0 4px 12px rgba(0,0,0,.2); }
+.android-app .gz-comments-top { position: absolute; z-index: 1; right: 16px; bottom: calc(8px + var(--safe-bottom, 0px)); width: 56px; height: 56px; background: var(--accent); color: var(--accent-ink); box-shadow: 0 4px 12px rgba(0,0,0,.2); }
 .android-app .gz-comments-more { margin: 8px auto; }
 .android-app .gz-comments-end { text-align: center; padding: 16px 0; }
 .android-app .gz-comments-error { overflow-wrap: anywhere; font-size: 16px; line-height: 1.6; }
 .android-app .gz-comments-dialog button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 @media (prefers-reduced-motion: no-preference) { .android-app .gz-comments-dialog[open] { animation: gz-sheet-in 300ms var(--gz-ease-spring); } }
+.android-app .gz-comment-feed { display: grid; }
+.android-app .gz-comment-item { padding: 14px 0; border-bottom: 1px solid var(--line); }
+.android-app .gz-comment-item:first-child { padding-top: 4px; }
+.android-app .gz-comment-item:last-child { border-bottom: 0; padding-bottom: 4px; }
+.android-app .gz-comment-item-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; }
+.android-app .gz-comment-feed .gz-comment-avatar { width: 40px; height: 40px; font-size: 16px; }
+.android-app .gz-comment-identity { display: grid; gap: 2px; min-width: 0; }
+.android-app .gz-comment-identity strong { font-size: 14px; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.android-app .gz-comment-identity time { font-size: 12px; line-height: 1.3; color: var(--muted); }
+.android-app .gz-comment-rate { display: inline-flex; gap: 1px; flex: none; font-size: 13px; line-height: 1; color: var(--line); }
+.android-app .gz-comment-rate i { font-style: normal; }
+.android-app .gz-comment-rate i.is-on { color: var(--warn); }
+.android-app .gz-comment-feed .gz-comment-body { margin: 8px 0 0; }
 .android-app .gz-sheet { background: var(--surface-strong); color: var(--text); border-radius: calc(var(--radius) + 8px) calc(var(--radius) + 8px) 0 0; border: 1px solid var(--line); padding: 16px; width: 100%; max-height: 90dvh; overflow-y: auto; box-shadow: 0 20px 60px rgba(0,0,0,.34); }
 .android-app .gz-sheet form { margin: 16px 0; }
 .android-app .gz-sheet-handle { display: block; width: 36px; height: 4px; margin: 0 auto 14px; border-radius: 999px; background: var(--line); }
@@ -196,10 +228,10 @@ html[data-platform="android"], html[data-platform="android"] body, html[data-pla
 .android-app .gz-sort-main strong { font-size: 15px; }
 .android-app .gz-sort-main .gz-meta { font-size: 12px; }
 .android-app .gz-sort-check { color: var(--accent); flex: none; }
-.android-app label:not(.gz-search) { display: flex; flex-direction: column; gap: 6px; font-size: 13px; margin-bottom: 12px; }
+.android-app label:not(.gz-search):not(.gz-rule-search) { display: flex; flex-direction: column; gap: 6px; font-size: 13px; margin-bottom: 12px; }
 .android-app input, .android-app select, .android-app textarea { width: 100%; min-height: 44px; border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; background: var(--bg-raised); font-size: 16px; }
 .android-app textarea { resize: vertical; }
-.android-app .gz-candidates { display: grid; gap: 12px; margin: 16px 0; }
+.android-app .gz-candidates { display: grid; gap: 10px; margin: 12px 0; }
 @media (max-width: 374px) { .android-app .gz-detail-head { grid-template-columns: 100px minmax(0,1fr); gap: 12px; } }
 @media (min-width: 700px) { .android-app .gz-grid { grid-template-columns: repeat(6,minmax(0,1fr)); } .android-app .gz-scroll { padding-inline: 24px; } .android-app .gz-sheet { max-width: 560px; } }
 @media (hover:hover) { .android-app button:hover:not(:disabled) { filter: brightness(1.12); } }
@@ -309,7 +341,7 @@ html[data-platform="android"], html[data-platform="android"] body, html[data-pla
 .android-app .gz-book-description-clamped { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
 .android-app .gz-book-description .gz-link { min-height: 44px; }
 .android-app .gz-online-chapters { margin-top: 18px; }
-.android-app .gz-reading-resume { position: fixed; right: max(16px, env(safe-area-inset-right)); bottom: max(76px, calc(16px + env(safe-area-inset-bottom))); z-index: 40; min-height: 48px; max-width: min(220px, calc(100% - 32px)); padding: 12px 18px; border: 0; border-radius: 999px; background: var(--accent); color: var(--accent-ink); box-shadow: 0 6px 20px rgba(0,0,0, calc(.26 * var(--shadow-scale, 1))); }
+.android-app .gz-reading-resume { position: fixed; right: max(16px, env(safe-area-inset-right)); bottom: max(76px, calc(16px + var(--safe-bottom, 0px))); z-index: 40; min-height: 48px; max-width: min(220px, calc(100% - 32px)); padding: 12px 18px; border: 0; border-radius: 999px; background: var(--accent); color: var(--accent-ink); box-shadow: 0 6px 20px rgba(0,0,0, calc(.26 * var(--shadow-scale, 1))); }
 .android-app .gz-reading-resume span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .android-app .gz-scroll:has(.gz-reading-resume) { padding-bottom: 88px; }
 .android-app .gz-online-chapters .gz-book-tabs { overflow-x: auto; }
@@ -340,19 +372,30 @@ html[data-platform="android"], html[data-platform="android"] body, html[data-pla
 .android-app .gz-detail-tabs button.active { color: var(--accent); font-weight: 600; }
 .android-app .gz-detail-tabs button.active::after { content: ""; position: absolute; left: 50%; bottom: -1px; transform: translateX(-50%); width: 22px; height: 3px; border-radius: 999px; background: var(--accent); }
 .android-app .gz-detail-tabs button:active { background: var(--bg-raised); border-radius: 8px; }
-.android-app .gz-credit-list { display: grid; gap: 8px; }
-.android-app .gz-credit { display: grid; grid-template-columns: 40px minmax(0,1fr); align-items: center; gap: 10px; padding: 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
-.android-app .gz-credit-avatar { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 10px; overflow: hidden; background: var(--bg-raised); color: var(--muted); font-size: 15px; font-weight: 600; }
-.android-app .gz-credit-avatar img { width: 100%; height: 100%; object-fit: cover; }
-.android-app .gz-credit-main { min-width: 0; }
-.android-app .gz-credit-main strong { display: block; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.android-app .gz-credit-main span { display: block; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.android-app .gz-related-list { display: grid; gap: 8px; }
-.android-app .gz-related { display: flex; align-items: center; gap: 10px; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); text-align: left; color: var(--text); }
-.android-app .gz-related.is-current { border-color: var(--accent); }
-.android-app .gz-related-main { flex: 1 1 0; min-width: 0; }
-.android-app .gz-related-main strong { display: block; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.android-app .gz-related-main span { display: block; font-size: 12px; color: var(--muted); }
+.android-app .gz-staff-list { display: grid; }
+.android-app .gz-staff { display: grid; grid-template-columns: 44px minmax(0,1fr) auto; align-items: center; gap: 12px; padding: 10px 4px; border-bottom: 1px solid var(--line); }
+.android-app .gz-staff:last-child { border-bottom: 0; }
+.android-app .gz-staff-avatar { position: relative; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; overflow: hidden; background: var(--bg-raised); color: var(--muted); font-size: 16px; font-weight: 600; }
+.android-app .gz-staff-avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 50% 12%; }
+.android-app .gz-staff-name { min-width: 0; font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.android-app .gz-staff-role { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.android-app .gz-char-list { display: grid; }
+.android-app .gz-char { display: grid; grid-template-columns: 44px minmax(0,1fr) auto; align-items: center; gap: 12px; padding: 10px 4px; border-bottom: 1px solid var(--line); }
+.android-app .gz-char:last-child { border-bottom: 0; }
+.android-app .gz-char-avatar { position: relative; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; overflow: hidden; background: var(--bg-raised); color: var(--muted); font-size: 16px; font-weight: 600; }
+.android-app .gz-char-avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 50% 12%; }
+.android-app .gz-char-main { min-width: 0; }
+.android-app .gz-char-main strong { display: block; font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.android-app .gz-char-main span { display: block; margin-top: 2px; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.android-app .gz-char-role { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.android-app .gz-related-list { display: grid; }
+.android-app .gz-related { display: grid; grid-template-columns: 104px minmax(0,1fr); align-items: center; gap: 12px; padding: 10px 4px; border: 0; border-bottom: 1px solid var(--line); text-align: left; color: var(--text); background: none; font: inherit; }
+.android-app .gz-related:last-child { border-bottom: 0; }
+.android-app .gz-related-cover { display: grid; place-items: center; width: 104px; aspect-ratio: 16 / 10; border-radius: 8px; overflow: hidden; background: var(--bg-raised); color: var(--muted); font-size: 18px; font-weight: 600; }
+.android-app .gz-related-cover img { width: 100%; height: 100%; object-fit: cover; }
+.android-app .gz-related-main { min-width: 0; }
+.android-app .gz-related-main strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 14px; font-weight: 600; line-height: 1.35; }
+.android-app .gz-related-relation { display: block; margin-top: 4px; font-size: 12px; color: var(--accent); }
 @media (max-width: 374px) { .android-app .gz-book-head { grid-template-columns: 100px minmax(0,1fr); gap: 12px; } .android-app .gz-chapter-grid { grid-template-columns: repeat(2, minmax(0,1fr)); } }
 @media (min-width: 700px) { .android-app .gz-chapter-grid { grid-template-columns: repeat(6, minmax(0,1fr)); } .android-app .gz-book-head { grid-template-columns: 148px minmax(0,1fr); } }
 
@@ -449,6 +492,14 @@ html[data-platform="android"], html[data-platform="android"] body, html[data-pla
 .android-app .gz-net-save { display: grid; gap: 8px; }
 .android-app .gz-probe-list { display: grid; gap: 4px; padding-top: 2px; }
 .android-app .gz-probe-list p { margin: 0; font-size: 12px; overflow-wrap: anywhere; }
+.android-app .gz-provider-list { display: grid; }
+.android-app .gz-provider-row { display: grid; gap: 2px; padding: 12px 0; }
+.android-app .gz-provider-row + .gz-provider-row { border-top: 1px solid var(--line); }
+.android-app .gz-provider-row strong { font-size: 14px; }
+.android-app .gz-provider-status { margin: 0; font-size: 12px; color: var(--muted); }
+.android-app .gz-provider-status.is-on { color: var(--accent); }
+.android-app .gz-provider-row .gz-meta { margin: 0; }
+.android-app .gz-provider-form { display: grid; gap: 10px; margin-top: 2px; padding-top: 14px; border-top: 1px solid var(--line); }
 @media (prefers-reduced-motion: no-preference) { .android-app .gz-spin { animation: gz-spin 1s linear infinite; } }
 
 /* View Transitions: page slides between primary tabs, shared-element morphs from a cover into the detail header. */
@@ -459,42 +510,52 @@ html[data-platform="android"], html[data-platform="android"] body, html[data-pla
 @keyframes gz-page-fallback-forward { from { opacity: .35; transform: translateX(20px); } to { opacity: 1; transform: none; } }
 @keyframes gz-page-fallback-back { from { opacity: .35; transform: translateX(-20px); } to { opacity: 1; transform: none; } }
 html::view-transition-old(root), html::view-transition-new(root) { animation-duration: 240ms; animation-timing-function: cubic-bezier(.22,1,.36,1); }
-html[data-trans="page"]::view-transition-old(root), html[data-trans="page"]::view-transition-new(root) { animation: none; }
+html[data-trans="page"]::view-transition-old(root) { animation: none; opacity: 0; }
+html[data-trans="page"]::view-transition-new(root) { animation: none; opacity: 1; }
 html[data-trans="page"][data-nav="forward"]::view-transition-old(gz-page) { animation: gz-vt-out-left 320ms cubic-bezier(.22,1,.36,1) both; }
 html[data-trans="page"][data-nav="forward"]::view-transition-new(gz-page) { animation: gz-vt-in-right 360ms cubic-bezier(.22,1,.36,1) both; }
 html[data-trans="page"][data-nav="back"]::view-transition-old(gz-page) { animation: gz-vt-out-right 320ms cubic-bezier(.22,1,.36,1) both; }
 html[data-trans="page"][data-nav="back"]::view-transition-new(gz-page) { animation: gz-vt-in-left 360ms cubic-bezier(.22,1,.36,1) both; }
-html[data-trans="shelf"]::view-transition-old(root), html[data-trans="shelf"]::view-transition-new(root) { animation: none; }
-html[data-trans="shelf"][data-nav="forward"]::view-transition-old(gz-shelf) { animation: gz-vt-out-left 240ms cubic-bezier(.22,1,.36,1) both; }
-html[data-trans="shelf"][data-nav="forward"]::view-transition-new(gz-shelf) { animation: gz-vt-in-right 280ms cubic-bezier(.22,1,.36,1) both; }
-html[data-trans="shelf"][data-nav="back"]::view-transition-old(gz-shelf) { animation: gz-vt-out-right 240ms cubic-bezier(.22,1,.36,1) both; }
-html[data-trans="shelf"][data-nav="back"]::view-transition-new(gz-shelf) { animation: gz-vt-in-left 280ms cubic-bezier(.22,1,.36,1) both; }
+/* Section switch inside a page: one shared rule set for bookshelf, library and discovery,
+   so only the body region slides and the chrome (tab bar, header) never repaints. */
+/* Keep the page chrome still. Old and new snapshots blend with plus-lighter, so the
+   outgoing root must be hidden instead of merely paused or it doubles the tab row. */
+html[data-trans="panel"]::view-transition-old(root) { animation: none; opacity: 0; }
+html[data-trans="panel"]::view-transition-new(root) { animation: none; opacity: 1; }
+html[data-trans="panel"][data-nav="forward"]::view-transition-old(gz-panel) { animation: gz-vt-out-left 240ms cubic-bezier(.22,1,.36,1) both; }
+html[data-trans="panel"][data-nav="forward"]::view-transition-new(gz-panel) { animation: gz-vt-in-right 280ms cubic-bezier(.22,1,.36,1) both; }
+html[data-trans="panel"][data-nav="back"]::view-transition-old(gz-panel) { animation: gz-vt-out-right 240ms cubic-bezier(.22,1,.36,1) both; }
+html[data-trans="panel"][data-nav="back"]::view-transition-new(gz-panel) { animation: gz-vt-in-left 280ms cubic-bezier(.22,1,.36,1) both; }
+/* The bar keeps a frozen snapshot above the body snapshot so it never disappears. */
+html[data-trans="panel"]::view-transition-group(gz-tabbar) { animation: none; }
+html[data-trans="panel"]::view-transition-old(gz-tabbar) { animation: none; opacity: 0; }
+html[data-trans="panel"]::view-transition-new(gz-tabbar) { animation: none; opacity: 1; }
 html[data-trans="morph"]::view-transition-group(*) { animation-duration: 400ms; animation-timing-function: cubic-bezier(.22,1,.36,1); }
 .android-app .gz-scroll.gz-page-fallback-forward { animation: gz-page-fallback-forward 360ms cubic-bezier(.22,1,.36,1) both; }
 .android-app .gz-scroll.gz-page-fallback-back { animation: gz-page-fallback-back 360ms cubic-bezier(.22,1,.36,1) both; }
-@keyframes gz-shelf-fallback-forward { from { opacity: .3; transform: translateX(16px); } to { opacity: 1; transform: none; } }
-@keyframes gz-shelf-fallback-back { from { opacity: .3; transform: translateX(-16px); } to { opacity: 1; transform: none; } }
-.android-app .gz-shelf-body.gz-shelf-fallback-forward { animation: gz-shelf-fallback-forward 300ms cubic-bezier(.22,1,.36,1) both; }
-.android-app .gz-shelf-body.gz-shelf-fallback-back { animation: gz-shelf-fallback-back 300ms cubic-bezier(.22,1,.36,1) both; }
+@keyframes gz-panel-fallback-forward { from { opacity: .3; transform: translateX(16px); } to { opacity: 1; transform: none; } }
+@keyframes gz-panel-fallback-back { from { opacity: .3; transform: translateX(-16px); } to { opacity: 1; transform: none; } }
+.android-app .gz-panel-fallback-forward { animation: gz-panel-fallback-forward 280ms cubic-bezier(.22,1,.36,1) both; }
+.android-app .gz-panel-fallback-back { animation: gz-panel-fallback-back 280ms cubic-bezier(.22,1,.36,1) both; }
 @media (prefers-reduced-motion: reduce) {
   ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
   .android-app .gz-scroll.gz-page-fallback-forward, .android-app .gz-scroll.gz-page-fallback-back { animation: none; }
-  .android-app .gz-shelf-body.gz-shelf-fallback-forward, .android-app .gz-shelf-body.gz-shelf-fallback-back { animation: none; }
+  .android-app .gz-panel-fallback-forward, .android-app .gz-panel-fallback-back { animation: none; }
 }
 
 /* Motion & polish layer: entrance staggers, skeletons, sheet drag, toast, tab indicator. */
 .android-app .gz-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 @keyframes gz-rise { from { opacity: 0; transform: translateY(9px); } to { opacity: 1; transform: none; } }
 @keyframes gz-fade-in { from { opacity: 0; } to { opacity: 1; } }
-.android-app :is(.gz-chapter-grid, .gz-credit-list, .gz-related-list, .gz-episodes, .gz-explore-grid, .gz-candidates) > * { animation: gz-rise var(--gz-dur) var(--gz-ease) both; }
-.android-app :is(.gz-chapter-grid, .gz-credit-list, .gz-related-list, .gz-episodes, .gz-explore-grid, .gz-candidates) > *:nth-child(2) { animation-delay: 24ms; }
-.android-app :is(.gz-chapter-grid, .gz-credit-list, .gz-related-list, .gz-episodes, .gz-explore-grid, .gz-candidates) > *:nth-child(3) { animation-delay: 48ms; }
-.android-app :is(.gz-chapter-grid, .gz-credit-list, .gz-related-list, .gz-episodes, .gz-explore-grid, .gz-candidates) > *:nth-child(4) { animation-delay: 72ms; }
-.android-app :is(.gz-chapter-grid, .gz-credit-list, .gz-related-list, .gz-episodes, .gz-explore-grid, .gz-candidates) > *:nth-child(5) { animation-delay: 96ms; }
-.android-app :is(.gz-chapter-grid, .gz-credit-list, .gz-related-list, .gz-episodes, .gz-explore-grid, .gz-candidates) > *:nth-child(6) { animation-delay: 120ms; }
-.android-app :is(.gz-chapter-grid, .gz-credit-list, .gz-related-list, .gz-episodes, .gz-explore-grid, .gz-candidates) > *:nth-child(7) { animation-delay: 144ms; }
-.android-app :is(.gz-chapter-grid, .gz-credit-list, .gz-related-list, .gz-episodes, .gz-explore-grid, .gz-candidates) > *:nth-child(8) { animation-delay: 168ms; }
-.android-app :is(.gz-chapter-grid, .gz-credit-list, .gz-related-list, .gz-episodes, .gz-explore-grid, .gz-candidates) > *:nth-child(n+9) { animation-delay: 192ms; }
+.android-app :is(.gz-chapter-grid, .gz-staff-list, .gz-char-list, .gz-related-list, .gz-episodes, .gz-explore-grid, .gz-candidates) > * { animation: gz-rise var(--gz-dur) var(--gz-ease) both; }
+.android-app :is(.gz-chapter-grid, .gz-staff-list, .gz-char-list, .gz-related-list, .gz-episodes, .gz-explore-grid, .gz-candidates) > *:nth-child(2) { animation-delay: 24ms; }
+.android-app :is(.gz-chapter-grid, .gz-staff-list, .gz-char-list, .gz-related-list, .gz-episodes, .gz-explore-grid, .gz-candidates) > *:nth-child(3) { animation-delay: 48ms; }
+.android-app :is(.gz-chapter-grid, .gz-staff-list, .gz-char-list, .gz-related-list, .gz-episodes, .gz-explore-grid, .gz-candidates) > *:nth-child(4) { animation-delay: 72ms; }
+.android-app :is(.gz-chapter-grid, .gz-staff-list, .gz-char-list, .gz-related-list, .gz-episodes, .gz-explore-grid, .gz-candidates) > *:nth-child(5) { animation-delay: 96ms; }
+.android-app :is(.gz-chapter-grid, .gz-staff-list, .gz-char-list, .gz-related-list, .gz-episodes, .gz-explore-grid, .gz-candidates) > *:nth-child(6) { animation-delay: 120ms; }
+.android-app :is(.gz-chapter-grid, .gz-staff-list, .gz-char-list, .gz-related-list, .gz-episodes, .gz-explore-grid, .gz-candidates) > *:nth-child(7) { animation-delay: 144ms; }
+.android-app :is(.gz-chapter-grid, .gz-staff-list, .gz-char-list, .gz-related-list, .gz-episodes, .gz-explore-grid, .gz-candidates) > *:nth-child(8) { animation-delay: 168ms; }
+.android-app :is(.gz-chapter-grid, .gz-staff-list, .gz-char-list, .gz-related-list, .gz-episodes, .gz-explore-grid, .gz-candidates) > *:nth-child(n+9) { animation-delay: 192ms; }
 .android-app :is(.gz-detail-head, .gz-book-head, .gz-detail-tabs, .gz-book-tabs, .gz-description, .gz-book-actions) { animation: gz-rise var(--gz-dur) var(--gz-ease) both; }
 .android-app .gz-profile-page > * { animation: gz-rise var(--gz-dur) var(--gz-ease) both; }
 .android-app .gz-profile-page > *:nth-child(2) { animation-delay: 40ms; }
@@ -509,7 +570,7 @@ html[data-trans="morph"]::view-transition-group(*) { animation-duration: 400ms; 
   .android-app .gz-tabbar button::before { will-change: transform, opacity; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .android-app :is(.gz-chapter-grid, .gz-credit-list, .gz-related-list, .gz-episodes, .gz-explore-grid, .gz-candidates) > *,
+  .android-app :is(.gz-chapter-grid, .gz-staff-list, .gz-char-list, .gz-related-list, .gz-episodes, .gz-explore-grid, .gz-candidates) > *,
   .android-app :is(.gz-detail-head, .gz-book-head, .gz-detail-tabs, .gz-book-tabs, .gz-description, .gz-book-actions),
   .android-app .gz-profile-page > * { animation: none; }
 }
@@ -590,15 +651,40 @@ html[data-trans="morph"]::view-transition-group(*) { animation-duration: 400ms; 
 .android-app .gz-subject-body { display: grid; grid-template-columns: minmax(118px, 36%) minmax(0, 1fr); gap: 16px; align-items: start; margin-top: 10px; }
 .android-app .gz-subject-cover { display: grid; place-items: center; aspect-ratio: 2 / 3; overflow: hidden; border-radius: var(--radius); background: var(--bg-raised); color: var(--quiet); }
 .android-app .gz-subject-cover img { width: 100%; height: 100%; object-fit: cover; }
-.android-app .gz-subject-cover:has(> .comic-explore-cover) { aspect-ratio: auto; }
+.android-app .gz-subject-cover:has(> .comic-explore-cover) { aspect-ratio: 2 / 3; }
+.android-app .gz-subject-cover > .comic-explore-cover img { width: 100%; height: 100%; object-fit: cover; }
+.android-app .gz-subject-hero.is-comic { position: relative; isolation: isolate; overflow: hidden; border-radius: var(--radius); padding: 8px 0 0; }
+.android-app .gz-subject-backdrop { position: absolute; inset: -20px; z-index: -1; pointer-events: none; overflow: hidden; }
+.android-app .gz-subject-backdrop .comic-explore-cover { width: 100%; height: 100%; border: 0; border-radius: 0; filter: blur(28px) saturate(1.1) brightness(.45); transform: scale(1.15); }
+.android-app .gz-subject-backdrop .comic-explore-cover img { width: 100%; height: 100%; object-fit: cover; }
 .android-app .gz-subject-stats { display: grid; gap: 10px; align-content: start; }
 .android-app .gz-subject-stat { display: grid; gap: 2px; min-width: 0; }
 .android-app .gz-subject-stat > span { font-size: 12px; color: var(--muted); }
 .android-app .gz-subject-stat strong { font-size: 18px; color: var(--text); overflow-wrap: anywhere; }
 .android-app .gz-subject-score { color: var(--accent); display: inline-flex; align-items: baseline; gap: 6px; }
 .android-app .gz-subject-score em { font-style: normal; font-size: 13px; color: var(--warn); letter-spacing: 1px; }
-.android-app .gz-detail-head.gz-anime-hero { display: block; }
+.android-app .gz-detail-head.gz-anime-hero { display: block; position: relative; isolation: isolate; margin-top: 0; }
+.android-app .gz-anime-hero > .gz-subject-head, .android-app .gz-anime-hero > .gz-subject-body { position: relative; z-index: 1; }
+.android-app .gz-anime-hero > .gz-subject-body { grid-template-columns: minmax(140px, 47%) minmax(0, 1fr); align-items: stretch; }
+.android-app .gz-anime-hero > .gz-subject-body .gz-poster { height: auto; aspect-ratio: auto; align-self: stretch; }
+/* 动漫 hero 背景封面（模糊玻璃）统一定义在 detailHeaders.css，避免叠加压暗。 */
+.android-app .gz-scroll > .gz-back, .android-app .gz-scroll > .gz-error { position: relative; z-index: 3; }
 .android-app .gz-detail-head.gz-anime-hero .gz-subject-title { font-size: 24px; margin: 0 0 4px; }
+.android-app .gz-detail-head.gz-anime-hero .gz-subject-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.android-app .gz-detail-head.gz-anime-hero .gz-subject-heading { flex: 1; min-width: 0; }
+.android-app .gz-detail-head.gz-anime-hero .gz-subject-actions { position: relative; display: flex; align-items: center; gap: 2px; flex: none; margin: -10px -10px 0 0; }
+.android-app .gz-book-detail-top .gz-subject-actions { position: relative; display: flex; align-items: center; gap: 2px; flex: none; margin: 0; }
+.android-app .gz-subject-menu { position: absolute; top: calc(100% + 6px); right: 0; z-index: 90; min-width: 208px; padding: 6px; display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--line); border-radius: calc(var(--radius) + 4px); background: var(--surface-strong); box-shadow: 0 16px 40px rgba(0,0,0,.42); }
+.android-app .gz-subject-menu button { display: flex; align-items: center; gap: 10px; padding: 0 12px; min-height: 46px; border-radius: 10px; color: var(--text); font-size: 14px; text-align: left; }
+.android-app .gz-subject-menu button:active { background: var(--bg-raised); }
+.android-app .gz-subject-menu button:disabled { opacity: .45; }
+@media (prefers-reduced-motion: no-preference) { .android-app .gz-subject-menu { animation: gz-menu-in 160ms var(--gz-ease); } }
+.android-app .gz-subject-menu { max-width: min(320px, 82vw); }
+.android-app .gz-subject-menu button { max-width: 100%; line-height: 1.35; }
+.android-app .gz-subject-menu button > svg { flex: none; }
+.android-app .gz-subject-menu button > span, .android-app .gz-subject-menu button { white-space: normal; }
+.android-app .gz-subject-menu-sep { flex: none; height: 1px; margin: 4px 8px; background: var(--line); }
+@keyframes gz-menu-in { from { opacity: 0; transform: translateY(-6px) scale(.98); } to { opacity: 1; transform: none; } }
 
 .android-app .gz-status-pill { display: inline-flex; align-items: center; justify-content: center; gap: 8px; justify-self: start; align-self: start; min-height: 44px; padding: 10px 20px; border: 1px solid transparent; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-size: 14px; font-weight: 600; }
 .android-app .gz-status-pill:active { transform: scale(.97); }
@@ -657,10 +743,10 @@ html[data-trans="morph"]::view-transition-group(*) { animation-duration: 400ms; 
 .android-app .gz-history-when { color: var(--text); }
 .android-app .gz-history-src { color: var(--quiet); }
 .android-app .gz-history-actions { display: flex; flex-direction: column; align-items: center; gap: 2px; }
-.android-app .gz-history-play { display: grid; place-items: center; width: 40px; height: 40px; min-height: 40px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); }
+.android-app .gz-history-play { display: grid; place-items: center; width: 44px; height: 44px; min-height: 44px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); }
 .android-app .gz-history-play:disabled { background: var(--bg-raised); color: var(--quiet); }
 .android-app .gz-history-more { color: var(--muted); }
-.android-app .gz-history-del { display: grid; place-items: center; width: 40px; height: 40px; min-height: 40px; border-radius: 50%; background: #e5484d; color: #fff; }
+.android-app .gz-history-del { display: grid; place-items: center; width: 44px; height: 44px; min-height: 44px; border-radius: 50%; background: #e5484d; color: #fff; }
 .android-app .gz-history-hint { margin-top: 6px; text-align: center; }
 @media (hover: none) {
   .android-app :is(.gz-history-play, .gz-history-del, .gz-choice-row, .gz-stats-tile, .gz-setting-danger, .gz-history-done, .gz-history-thumbbtn) { transition: transform 190ms var(--gz-ease-spring); -webkit-tap-highlight-color: transparent; }

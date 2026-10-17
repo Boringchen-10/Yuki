@@ -4,6 +4,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { bangumiNetworkApi, BANGUMI_NETWORK_CHANGED, defaultBangumiNetwork, type BangumiNetwork, type BangumiProbe } from "../bangumiNetwork";
 import { readingNetworkApi, readingRoutes, type NodeProbe, type ReadingNetwork } from "../readingNetwork";
 import LoadingIndicator from "./LoadingIndicator";
+import MetadataSettings from "./MetadataSettings";
 import { androidSession, READING_NETWORK_CHANGED } from "./sessionCache";
 
 type Props = { onToast: (message: string) => void };
@@ -99,7 +100,7 @@ export default function NetworkPanel({ onToast }: Props) {
   return <div className="gz-network">
     <section className="gz-net-card">
       <div className="gz-net-head"><Globe size={16} /><h2>Bangumi 数据源</h2></div>
-      <p className="gz-meta">发现页的热门番组、搜索和放送表会使用这里选择的接口。</p>
+      <p className="gz-meta">发现页的热门番组、搜索和放送表会使用这里选择的接口。连接测试同时检查作品吐槽与分集讨论；官网评论使用独立接口，不经过 v0 镜像。</p>
       <label className="gz-field"><span>连接方式</span>
         <select value={bangumi.mode} disabled={disabled} onChange={event => updateBangumi({ mode: event.target.value as BangumiNetwork["mode"] })}>
           <option value="system">系统代理 · 官方 API</option>
@@ -158,5 +159,7 @@ export default function NetworkPanel({ onToast }: Props) {
       <button type="button" className="gz-btn primary" disabled={disabled} onClick={() => void save()}>{busy === "save" ? <LoaderCircle className="gz-spin" size={16} /> : <Save size={16} />}保存网络配置</button>
       <p className="gz-meta">Bangumi 镜像和 COPY 设置仅保存在本机，不会同步到其他设备。</p>
     </div>
+
+    <MetadataSettings />
   </div>;
 }

@@ -1,4 +1,4 @@
-.android-app .gz-import-status { position: fixed; right: 16px; bottom: calc(84px + env(safe-area-inset-bottom)); z-index: 45; display: flex; align-items: center; gap: 8px; max-width: calc(100% - 32px); min-height: 44px; padding: 8px 14px; color: var(--text); background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 2px 12px #0002; }
+.android-app .gz-import-status { position: fixed; right: 16px; bottom: calc(84px + var(--safe-bottom, 0px)); z-index: 45; display: flex; align-items: center; gap: 8px; max-width: calc(100% - 32px); min-height: 44px; padding: 8px 14px; color: var(--text); background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 2px 12px #0002; }
 .android-app .gz-import-status.is-active { color: var(--accent); }
 .android-app .gz-import-dialog { width: min(560px, calc(100% - 24px)); max-height: calc(100dvh - 48px); overflow: auto; padding: 16px; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); }
 .android-app .gz-import-dialog::backdrop { background: #0008; }

@@ -29,7 +29,7 @@ export function BookDetailHeader({ title, originalTitle, poster, kind, year, sta
   year?: number | null; status?: string; authors?: string[]; tags: string[]; count: number | string;
   rating?: number | null; files?: number; onTag: (tag: string) => void; action?: ReactNode;
 }) {
-  const size=useDetailPosterSize();
+  const size=useDetailPosterSize(132);
   return <section className="gz-book-head gz-shared-book-hero" ref={size.body}>
     <div className="gz-detail-poster" ref={size.poster}>{poster}</div><div className="gz-book-info" ref={size.info}>
       <h2>{title}</h2>{originalTitle && originalTitle !== title && <p className="gz-meta">{originalTitle}</p>}
