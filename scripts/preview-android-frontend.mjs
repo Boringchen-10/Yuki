@@ -54,7 +54,7 @@ async function refresh() {
     // Preserve the native reader/player while it is foreground; refresh after returning.
     const activity = await command("shell", "dumpsys", "activity", "activities");
     const resumed = activity.split("\n").find(line => /topResumedActivity=|mResumedActivity:/.test(line));
-    if (!resumed?.includes(`${app}/.MainActivity`) && !resumed?.includes(`${app}/com.genzo.android.MainActivity`)) return;
+    if (![".MainActivity", "com.genzo.android.MainActivity", "com.genzo.android.LauncherClassic", "com.genzo.android.LauncherBeret", "com.genzo.android.LauncherWinter"].some(activity => resumed?.includes(`${app}/${activity}`))) return;
     const reconnect = pid !== currentPid || !browser?.isConnected() || page?.isClosed();
     if (reconnect) {
       await browser?.close().catch(() => {});
