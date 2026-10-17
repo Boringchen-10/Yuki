@@ -120,6 +120,8 @@ pub struct WorkListItem {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkDetail {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cover_fallback_path: Option<String>,
     pub category: String,
     #[serde(flatten)]
     pub work: Work,

@@ -143,7 +143,7 @@ pub async fn list_works(state: State<'_, AppState>) -> AppResult<Vec<WorkListIte
 }
 
 #[tauri::command]
-pub async fn get_work(id: String, state: State<'_, AppState>) -> AppResult<WorkDetail> {
+pub async fn get_work(id: String, state: State<'_, AppState>, _app: AppHandle) -> AppResult<WorkDetail> {
     // Browsing must not compete with scans for the SQLite write lock.
     let work = sqlx::query_as::<_, Work>(
         "SELECT id, title, original_title, type, description, cover_path, banner_path, status, favorite, rating, notes, created_at, updated_at, metadata_status, metadata_year, last_recognized_at FROM works WHERE id = ?",
@@ -179,7 +179,16 @@ pub async fn get_work(id: String, state: State<'_, AppState>) -> AppResult<WorkD
         .bind(&id).fetch_all(&state.pool).await?;
     let category = crate::work_category::load(&state.pool, Some(&id)).await?
         .remove(&id).unwrap_or_else(|| work.work_type.clone());
+    #[cfg(target_os = "android")]
+    let cover_fallback_path = {
+        let path = explore::cached_work_cover(&state, &work, &field_locks).await?;
+        if let Some(path) = &path { db::allow_cover_file(&_app, Path::new(path))?; }
+        path
+    };
+    #[cfg(not(target_os = "android"))]
+    let cover_fallback_path = None;
     Ok(WorkDetail {
+        cover_fallback_path,
         category,
         work,
         tags,
@@ -198,6 +207,7 @@ pub async fn get_work(id: String, state: State<'_, AppState>) -> AppResult<WorkD
 pub async fn create_work(
     mut input: WorkInput,
     state: State<'_, AppState>,
+    app: AppHandle,
 ) -> AppResult<WorkDetail> {
     validate_work(&mut input)?;
     let id = Uuid::new_v4().to_string();
@@ -222,7 +232,7 @@ pub async fn create_work(
     .await?;
     replace_tags(&mut transaction, &id, &input.tags).await?;
     transaction.commit().await?;
-    get_work(id, state).await
+    get_work(id, state, app).await
 }
 
 async fn create_work_from_media_in_pool(
@@ -306,9 +316,10 @@ pub async fn create_work_from_media(
     input: WorkInput,
     selected_media_ids: Option<Vec<String>>,
     state: State<'_, AppState>,
+    app: AppHandle,
 ) -> AppResult<WorkDetail> {
     let id = create_work_from_media_in_pool(&state.pool, media_file_id, input, selected_media_ids).await?;
-    get_work(id, state).await
+    get_work(id, state, app).await
 }
 
 #[tauri::command]
@@ -316,6 +327,7 @@ pub async fn update_work(
     id: String,
     mut input: WorkInput,
     state: State<'_, AppState>,
+    app: AppHandle,
 ) -> AppResult<WorkDetail> {
     validate_work(&mut input)?;
     let (_write_guard, mut transaction) = crate::db::begin_write(&state.pool).await?;
@@ -340,7 +352,7 @@ pub async fn update_work(
     }
     replace_tags(&mut transaction, &id, &input.tags).await?;
     transaction.commit().await?;
-    get_work(id, state).await
+    get_work(id, state, app).await
 }
 
 #[tauri::command]

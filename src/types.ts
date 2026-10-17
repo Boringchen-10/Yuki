@@ -33,6 +33,8 @@ export type MetadataStatus = "unmatched" | "candidate_pending" | "matched" | "ma
 export type RecognitionStatus = "unmatched" | "candidate_pending" | "matched" | "error";
 
 export interface WorkListItem extends Work {
+  /** Read-only artwork recovered from this work's existing metadata cache. */
+  coverFallbackPath?: string | null;
   sourceScopes?: ("local" | "network")[];
   coverThumbnailPath?: string | null;
   tags: string[];
@@ -97,6 +99,7 @@ export interface RecognitionGroupInfo {
 }
 
 export interface WorkDetail extends Work {
+  coverFallbackPath?: string | null;
   tags: string[];
   mediaFiles: MediaFile[];
   metadata: MetadataSummary | null;

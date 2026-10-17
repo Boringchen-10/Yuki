@@ -1,5 +1,14 @@
 # Codex 与 DeepSeek Harness 项目交接记录
 
+## 安卓动漫详情封面修复 v0.17.1（2026-10-17）
+
+- 用户报告“青之箱 第二季”发现列表有图，从发现 / 媒体库进入详情都没有。Bangumi548156的公开v0/P1封面一致、JPEG459141B /1938×2744可读；已入库发现条目复用媒体库详情，详情只读works.cover_path而未使用已有发现图片缓存，隔离React及原生0.17.0均复现。
+- 详情增加只读coverFallbackPath：按明确Bangumi锚点从已有详情缓存 / Provider记录查找有效原图或缩略图，无网络等待或数据库写入。Poster原图失败后回退，背景一并恢复；cover_path、个人记录、人工封面 / 导入UUID及字段锁定保留，跨条目资料拒绝。不新建迁移或依赖，Windows显示行为保持。
+- TypeScript、前端130项、原详情9场景 /六宽度、封面4场景 /六宽度通过。新增缓存2项Rust通过，拒绝UPDATE触发器确认只读；完整Rust最终428通过 /19既有忽略。既有WebDAV连接计数在系统代理开启时受转发影响，cfg(test) loopback禁代理后全套通过，生产代理不变；并发初始化复用winning客户端为独立提交6416f30。
+- 独立organizeqa/PLK110/Android16用公开资料与JPEG快照建隔离缓存和自有作品：旧0.17.0有可读图片但详情缺图，native-1792214059650；新0.17.1封面 / 背景显示、coverPath保持null且收藏 /评分 /笔记保留，native-1792214475023，截图已看。生成作品清理、原作品列表哈希恢复；普通包与真实媒体未动。首轮在线详情超时改用快照，一次shell二进制副本校验拒绝且未写回设备，改exec-out通过；不要当作产品数据库损坏。
+- 签名APK `D:/DevTools/Android/Build/previews/blue-box-cover-20261017/Genzo_0.17.1_android_arm64-v8a.apk`，50,158,789B，SHA256 `a8dc48dad0c756aac7f9e60d5328803307ee90d02eefc406c2537a80e7f2654e`；17001/原包名/原证书/arm64/min26/target36/非debuggable/16KiB通过，无DB /测试媒体。Rust优化、QA、日常debug与签名Release构建成功。353构建快照输入及库各阶段核对，核心修复一致；后续并行图标功能12处输入差异记录于build-manifest，保留但未打入这个已验证快照。
+- 主目录WindowsWIP保持。AndroidApp持续有其他维护者改动，本轮只保存Poster及背景增量于 `docs/android/ANIME_COVER_SOURCE_HANDOFF.patch`，已应用且reverse --check通过，不重复应用或整文件提交其他WIP。DetailHeaders / useDetailPosterSize / 图标等改动未纳入本轮提交。使用、验证、复跑见docs/android/ANIME_COVER_RECOVERY.md；普通 / readerqa未升级，无公开Release/标签/推送。
+
 ## 安卓发现规则播放、应用更新与网络 v0.17.0（2026-10-17）
 
 - 用户明确本轮目标为安卓 v0.16.1，继续 `.tmp/android-first` / `codex/android-first` 当前 OpenDesign。Windows 根目录、原设计 WIP 和真实媒体保留。本轮不创建公开 Release / 标签 / 推送，也不替换日常已安装包。

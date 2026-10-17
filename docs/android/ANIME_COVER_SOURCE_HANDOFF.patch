@@ -1,0 +1,29 @@
+diff --git a/src/android/AndroidApp.tsx b/src/android/AndroidApp.tsx
+--- a/src/android/AndroidApp.tsx
++++ b/src/android/AndroidApp.tsx
+@@ -221,10 +221,12 @@
+
+ const Poster = memo(function Poster({ work, decorative = false }: { work: WorkListItem | WorkDetail; decorative?: boolean }) {
+   const [failed, setFailed] = useState(false);
+-  const url = asset(work.coverPath);
+-  useEffect(() => setFailed(false), [url]);
+-  return <div className={`gz-poster${work.type === "novel" ? " is-novel" : ""}${!url || failed ? " missing" : ""}`} data-cover-id={decorative ? undefined : work.id}>
+-    {url && !failed ? <img src={url} alt={decorative ? "" : work.title} loading="lazy" decoding="async" draggable={false} onError={() => setFailed(true)} /> : <><Film aria-hidden="true" /><span>暂无封面</span></>}
++  const [fallbackFailed, setFallbackFailed] = useState(false);
++  const primary = asset(work.coverPath), fallback = asset(work.coverFallbackPath);
++  const url = (!failed && primary) || (!fallbackFailed && fallback) || undefined;
++  useEffect(() => { setFailed(false); setFallbackFailed(false); }, [primary, fallback]);
++  return <div className={`gz-poster${work.type === "novel" ? " is-novel" : ""}${!url ? " missing" : ""}`} data-cover-id={decorative ? undefined : work.id}>
++    {url ? <img src={url} alt={decorative ? "" : work.title} loading="lazy" decoding="async" draggable={false} onError={() => url === primary ? setFailed(true) : setFallbackFailed(true)} /> : <><Film aria-hidden="true" /><span>暂无封面</span></>}
+   </div>;
+ });
+ function Empty({ title, children }: { title: string; children: React.ReactNode }) {
+@@ -1238,7 +1240,7 @@
+           </button>)}</div>
+         </> : <div className="gz-shelf-empty"><span className="gz-shelf-badge"><BookOpen size={26} /></span><h2>还没有章节</h2><p>{bookEntryState === "error" ? "章节目录读取失败，请稍后重试。" : "这个作品还没有可阅读的章节文件。"}</p></div>)}
+       </> : <>
+-        <AnimeDetailHeader title={detail.title} originalTitle={detail.originalTitle} poster={<Poster work={detail} />} backdrop={detail.coverPath ? <Poster work={detail} decorative /> : undefined} date={animeAirDate ?? (detail.metadataYear ? `${detail.metadataYear} 年` : null)} rating={detail.networkScore} votes={detail.networkRatingCount} episodes={structure?.episodes.length}>
++        <AnimeDetailHeader title={detail.title} originalTitle={detail.originalTitle} poster={<Poster work={detail} />} backdrop={detail.coverPath || detail.coverFallbackPath ? <Poster work={detail} decorative /> : undefined} date={animeAirDate ?? (detail.metadataYear ? `${detail.metadataYear} 年` : null)} rating={detail.networkScore} votes={detail.networkRatingCount} episodes={structure?.episodes.length}>
+               <button type="button" className="gz-status-pill" aria-haspopup="dialog" aria-expanded={statusSheet} disabled={busy} onClick={() => setStatusSheet(true)}><WorkStatusIcon id={detail.status} /><span>{statuses[detail.status]}</span></button>
+         </AnimeDetailHeader>
+         <div className="gz-detail-tabs" role="tablist" aria-label="作品详情分类">{detailTabs.map(tab => <button type="button" role="tab" key={tab.id} aria-selected={detailTab === tab.id} className={detailTab === tab.id ? "active" : ""} onClick={() => { if (tab.id === detailTab) return; const from = detailTabs.findIndex(item => item.id === detailTab); const to = detailTabs.findIndex(item => item.id === tab.id); startDetailTabTransition(to < from ? "back" : "forward", detailContentRef.current, () => {setDetailTab(tab.id);setDetailSectionState("idle");setDetailSectionAttempt(0);}); }}>{tab.label}</button>)}</div>

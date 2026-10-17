@@ -920,6 +920,43 @@ fn normalize_trusted_image_url(value: &str) -> String {
     }
 }
 
+/// Browsing can reuse discovery artwork without writing user fields or waiting on the network.
+#[cfg(any(target_os = "android", test))]
+pub(crate) async fn cached_work_cover(
+    state: &AppState, work: &crate::models::Work, locks: &[String],
+) -> AppResult<Option<String>> {
+    if work.work_type != "video" || locks.iter().any(|field| field == "coverPath") {
+        return Ok(None);
+    }
+    let imported = work.cover_path.as_deref().and_then(|path| Path::new(path).file_stem())
+        .and_then(|stem| stem.to_str()).is_some_and(|stem| Uuid::parse_str(stem).is_ok());
+    let manual: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM work_field_sources WHERE work_id=? AND field_name='coverPath' AND provider='manual')")
+        .bind(&work.id).fetch_one(&state.pool).await?;
+    if imported || manual { return Ok(None); }
+    let id: Option<String> = sqlx::query_scalar("SELECT external_id FROM work_external_ids WHERE work_id=? AND provider='bangumi'")
+        .bind(&work.id).fetch_optional(&state.pool).await?;
+    let Some(id) = id.filter(|id| id.parse::<u64>().is_ok_and(|value| value > 0)) else { return Ok(None); };
+    let key = crate::bangumi_network::current().cache_key(&format!("detail:{id}"));
+    let cached: Option<String> = sqlx::query_scalar("SELECT response_json FROM metadata_cache WHERE provider='bangumi' AND cache_key=?")
+        .bind(key).fetch_optional(&state.pool).await?;
+    let recorded: Option<String> = sqlx::query_scalar("SELECT response_json FROM metadata_provider_records WHERE work_id=? AND provider='bangumi' AND external_id=?")
+        .bind(&work.id).bind(&id).fetch_optional(&state.pool).await?;
+    let mut metadata = cached.as_deref().and_then(|json| serde_json::from_str::<Vec<WorkMetadata>>(json).ok()).unwrap_or_default();
+    metadata.extend(recorded.as_deref().and_then(|json| serde_json::from_str::<WorkMetadata>(json).ok()));
+    for item in metadata.into_iter().filter(|item| item.provider == BANGUMI_PROVIDER && item.external_id == id) {
+        let Some(url) = item.cover_url else { continue; };
+        for anchor in [format!("bangumi:{id}"), format!("bangumi-{id}")] {
+            let original = crate::metadata_aggregator::artwork_cache_path(&state.cover_cache_path, &anchor, "cover", &normalize_trusted_image_url(&url));
+            for path in [original.clone(), crate::metadata_aggregator::thumbnail_path(&original)] {
+                if work.cover_path.as_deref() != path.to_str() && image::image_dimensions(&path).is_ok() {
+                    return Ok(Some(path.to_string_lossy().into_owned()));
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
 pub async fn save_subject(
     app: &AppHandle,
     state: &AppState,
@@ -2118,6 +2155,57 @@ mod tests {
         assert!(!input.for_playback);
         assert!(save_cached_playback_subject(&state, &input).await.is_err());
         assert_eq!(sqlx::query_scalar::<_, i64>("SELECT count(*) FROM works").fetch_one(&state.pool).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn cached_work_cover_recovers_discovery_artwork_without_changing_the_record() {
+        let directory = tempdir().unwrap();
+        let state = AppState { pool: db::test_pool().await.unwrap(), database_path: directory.path().join("qa.db"), data_directory: directory.path().into(), cover_cache_path: directory.path().into(), thumbnail_cache_path: directory.path().into() };
+        let mut metadata = sample_metadata();
+        metadata.external_id = "548156".into();
+        metadata.title = "青之箱 第二季".into();
+        metadata.cover_url = Some("https://lain.bgm.tv/pic/cover/l/f1/6c/548156_L3fC6.jpg".into());
+        let id = persist_subject(&state, &metadata, "completed", true, None, None, None, false).await.unwrap();
+        sqlx::query("UPDATE works SET rating=9,notes='保留个人记录' WHERE id=?").bind(&id).execute(&state.pool).await.unwrap();
+        let key = crate::bangumi_network::current().cache_key("detail:548156");
+        save_cache(&state.pool, BANGUMI_PROVIDER, &key, &vec![metadata.clone()], Duration::hours(-1)).await.unwrap();
+        let cover = crate::metadata_aggregator::artwork_cache_path(&state.cover_cache_path, "bangumi:548156", "cover", metadata.cover_url.as_deref().unwrap());
+        image::RgbImage::new(120, 180).save(&cover).unwrap();
+        let work: crate::models::Work = sqlx::query_as("SELECT * FROM works WHERE id=?").bind(&id).fetch_one(&state.pool).await.unwrap();
+        let before = serde_json::to_value(&work).unwrap();
+        sqlx::raw_sql("CREATE TRIGGER read_only_cover_test BEFORE UPDATE ON works BEGIN SELECT RAISE(FAIL,'browsing must not write works'); END").execute(&state.pool).await.unwrap();
+        assert_eq!(cached_work_cover(&state, &work, &[]).await.unwrap(), Some(cover.to_string_lossy().into_owned()));
+        let after: crate::models::Work = sqlx::query_as("SELECT * FROM works WHERE id=?").bind(&id).fetch_one(&state.pool).await.unwrap();
+        assert_eq!(serde_json::to_value(after).unwrap(), before);
+        assert!(cached_work_cover(&state, &work, &["coverPath".into()]).await.unwrap().is_none());
+        let mut imported = work.clone();
+        imported.cover_path = Some(directory.path().join(format!("{}.jpg", Uuid::new_v4())).to_string_lossy().into_owned());
+        assert!(cached_work_cover(&state, &imported, &[]).await.unwrap().is_none());
+        sqlx::query("UPDATE work_field_sources SET provider='manual' WHERE work_id=? AND field_name='coverPath'").bind(&id).execute(&state.pool).await.unwrap();
+        assert!(cached_work_cover(&state, &work, &[]).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn cached_work_cover_uses_matching_provider_record_and_valid_thumbnail_only() {
+        let directory = tempdir().unwrap();
+        let state = AppState { pool: db::test_pool().await.unwrap(), database_path: directory.path().join("qa.db"), data_directory: directory.path().into(), cover_cache_path: directory.path().into(), thumbnail_cache_path: directory.path().into() };
+        let mut metadata = sample_metadata();
+        metadata.external_id = "548156".into();
+        metadata.cover_url = Some("https://lain.bgm.tv/pic/cover/l/f1/6c/548156_L3fC6.jpg".into());
+        let cover = crate::metadata_aggregator::artwork_cache_path(&state.cover_cache_path, "bangumi:548156", "cover", metadata.cover_url.as_deref().unwrap());
+        let thumb = crate::metadata_aggregator::thumbnail_path(&cover);
+        std::fs::write(&cover, b"interrupted image").unwrap();
+        image::RgbImage::new(120, 180).save(&thumb).unwrap();
+        let id = persist_subject(&state, &metadata, "planned", false, Some(cover.to_string_lossy().into_owned()), None, None, false).await.unwrap();
+        sqlx::query("INSERT INTO metadata_provider_records(work_id,provider,external_id,title,confidence,response_json,fetched_at) VALUES(?,'bangumi','548156','QA',1,?,'now')")
+            .bind(&id).bind(serde_json::to_string(&metadata).unwrap()).execute(&state.pool).await.unwrap();
+        let work: crate::models::Work = sqlx::query_as("SELECT * FROM works WHERE id=?").bind(&id).fetch_one(&state.pool).await.unwrap();
+        assert_eq!(cached_work_cover(&state, &work, &[]).await.unwrap(), Some(thumb.to_string_lossy().into_owned()));
+        sqlx::query("UPDATE metadata_provider_records SET external_id='460306' WHERE work_id=?").bind(&id).execute(&state.pool).await.unwrap();
+        assert!(cached_work_cover(&state, &work, &[]).await.unwrap().is_none());
+        sqlx::query("UPDATE metadata_provider_records SET external_id='548156' WHERE work_id=?").bind(&id).execute(&state.pool).await.unwrap();
+        std::fs::remove_file(&thumb).unwrap();
+        assert!(cached_work_cover(&state, &work, &[]).await.unwrap().is_none());
     }
 
     #[tokio::test]
