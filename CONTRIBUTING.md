@@ -1,28 +1,17 @@
 # 参与 Yuki 安卓开发
 
-先阅读 [项目上下文](PROJECT_CONTEXT.md)、[路线图](ROADMAP.md)、[设计方向](DESIGN_DIRECTION.md) 和 [Agent 说明](AGENTS.md)。本仓库只维护安卓，桌面相关讨论请回到原项目。
+先阅读 [AGENTS](AGENTS.md)、[项目上下文](PROJECT_CONTEXT.md)、[设计方向](DESIGN_DIRECTION.md) 和 [交接](AI_HANDOFF.md)。Windows 工作在原 Genzo 仓库进行。
 
-## 开始开发
+## 开发与检查
 
-1. 安装依赖并执行 `pnpm check`、`pnpm test`。
-2. 用 `pnpm dev` 预览安卓页面；原生功能需按 [构建指南](docs/BUILD_ANDROID.md) 构建 APK。
-3. 提交前检查已有修改，仅改任务相关内容；验证实际使用场景及受影响边界，不用静态截图代替功能验收。
-4. 提供问题复现步骤、系统 / 设备信息与脱敏错误，不上传个人媒体、数据库、网盘凭据或完整访问地址。
-
-## 代码与数据约定
-
-延续既有组件、主题 Token、桥接和数据模型，避免为单次使用引入新抽象。保留手动分集关联与用户进度；更名仓库不等于更改包名、签名、存储位置或同步格式。数据库只新增迁移，测试存量数据库升级。
-
-共享桌面代码暂时保留，因为安卓仍复用其中的模型、样式和后端；未经需求确认不大规模删除。历史交接 patch 已包含在独立项目基线中，不自动重新套用。
-
-## 检查与提交
-
-常规检查：`pnpm check`、`pnpm test`、`pnpm build`、`git diff --check`。Rust、Kotlin 或数据库改动还须运行相应测试；原生与 UI 风险按实际影响补充设备测试，并注明未覆盖范围。
-
-提交采用 Conventional Commits：`feat:`、`fix:`、`docs:`、`test:`、`refactor:`、`build:`、`chore:`。提交范围清晰，说明改变了什么、为何修改以及如何验证。不要纳入他人未提交工作。
+- `pnpm install --frozen-lockfile` 后运行 `pnpm check`、`pnpm test`、`pnpm build`。浏览器仅验证界面；原生功能按 [构建指南](docs/BUILD_ANDROID.md) 验收。
+- 前端任务使用 Refactoring UI；沿用现有组件、主题变量、桥接和数据模型，只改需求相关内容。
+- 保留其他人的未提交工作和用户资料。数据库新增迁移，不清库、不重建；不修改真实媒体，不猜测分集对应。
+- 问题报告提供复现、设备和脱敏错误，不上传个人数据库、媒体地址、Token 或凭据。
+- 提交采用 Conventional Commits，说明行为和实际验证；Rust / Kotlin / 数据库变动补充相应检查。
 
 ## 发布与许可
 
-版本号沿用现有序列，不从 0.1.0 重新开始。[发布指南](docs/RELEASING.md) 定义版本、签名、APK 命名、校验和更新来源。推送源码不等于发布用户可获取的更新。
+遵循 SemVer 和 [发布指南](docs/RELEASING.md)，保留包名、原证书、数据格式与同步协议。推送源码不等于发布安装包。
 
-贡献代码按 GPL-3.0-only 提供，保留上游声明。引入第三方代码或依赖前核对许可兼容性，同步 THIRD_PARTY_NOTICES 与 licenses；不要上传密钥、测试账号或未经授权的第三方媒体素材。
+代码采用 GPL-3.0-only；保留上游归属，新增依赖先核对许可并更新第三方声明。历史交接 patch 已纳入基线，不重复套用。

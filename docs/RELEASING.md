@@ -1,29 +1,21 @@
-# 安卓发布与应用更新
+# 安卓发布与更新
 
-## 更新来源
+主页与更新源：[Boringchen-10/Yuki](https://github.com/Boringchen-10/Yuki)。应用在「我的 → 关于 → 检查更新」手动读取正式 Releases，提交代码或标签本身不会触发更新。
 
-项目主页、源码、问题反馈和正式发布统一为 [Boringchen-10/Yuki](https://github.com/Boringchen-10/Yuki)。应用手动请求该仓库 GitHub Releases，不使用服务器主动推送；提交代码、创建标签或上传 Actions 产物本身不能让用户在应用内收到更新。
+## 发布清单
 
-入口为「我的 → 关于 → 检查更新」。更新器跳过草稿、预发布、旧版、不支持的 ABI 以及资料无效的资产；只选择更高语义版本。APK 经大小、SHA-256、包名、签名和 versionCode 验证后，由用户明确点安装并进入系统安装器。
+1. 同步 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`、`src-tauri/tauri.conf.json` 和 CHANGELOG。版本遵循 SemVer；当前发布为用户确认的 v1.0.0。
+2. 运行类型检查、测试、生产构建和相关设备回归；核对升级数据保留、原生依赖、16 KiB 对齐及第三方对应源码。
+3. 使用仓库外持久证书签名，保留正式包 `com.genzo.android`。构建命令见 [BUILD_ANDROID](BUILD_ANDROID.md)；不得发布 readerqa 包替代正式包。
+4. APK 命名 `Yuki_X.Y.Z_android_arm64-v8a.apk`；实际提供 x86_64 时使用对应 ABI。`SHA256SUMS.txt` 每行写 `64位SHA256  APK文件名`。
+5. 创建 `chore(release): vX.Y.Z` 提交和同名带注释标签，推送后发布非草稿、非预发布 Release，附 APK、校验文件、简短更新条目及对应源码标签。
+6. 核对公开资产、哈希、签名和源码提交；验证兼容旧包的检查、下载与系统安装入口，并记录未覆盖范围。
 
-## 发布步骤
+versionCode 为 `major × 1000000 + minor × 1000 + patch`，minor / patch 小于 1000，整体必须递增。v1.0.0 对应 `1000000`。
 
-1. 确定 SemVer 版本，同步 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json`，维护 CHANGELOG。沿用当前 0.17.2 序列；新功能升次版本、兼容修复升补丁版本。
-2. 运行相关类型检查、测试、APK 构建和设备回归。验证存量正式包覆盖安装不丢资料，检查原生库打包、16 KiB 对齐、许可证和对应源码。
-3. 使用仓库外持久发布证书签名；保留既有 `com.genzo.android`。不得以新证书或测试包替代正式升级包。
-4. APK 命名为 `Yuki_X.Y.Z_android_arm64-v8a.apk`；若实际发布 x86_64 则对应 `Yuki_X.Y.Z_android_x86_64.apk`。不要上传另一包名的 readerqa APK。
-5. 生成 `SHA256SUMS.txt`，每行格式为 `64位十六进制SHA256  APK文件名`。文件名必须与同一 Release 的 APK 精确对应。
-6. 创建 `chore(release): vX.Y.Z` 提交与同名带注释 Git 标签，推送到本仓库。发布非草稿、非预发布的 `vX.Y.Z` Release，附 APK、SHA256SUMS.txt、说明和该版本源码标签。公开分发前落实原生 LGPL 对应源码与重建说明，见 licenses/libmpv-1.2.7/SOURCES.md。
-7. 核对公开资产可访问、哈希和签名正确；在较旧兼容正式包中实测检查、取消、下载与系统安装入口，再确认发布完成。
+## 兼容与边界
 
-当前 versionCode 使用 `major × 1000000 + minor × 1000 + patch`，三段需保持可编码且整体递增（minor、patch 均小于 1000）。版本和代码均须高于安装版本；不能依靠更改仓库名绕过降级保护。
-
-## 从旧仓库迁移
-
-旧 APK 把更新地址编译在应用内。新建 Yuki 仓库不会改变旧安装包，所以用户需先手动安装一次包含新地址、同包名同签名且可覆盖的版本，此后在应用内检查新仓库。
-
-需要旧仓库过渡 Release 时必须单独安排，不能认为新仓库资产能通过旧更新器的来源限制。当前 readerqa 日常包与正式包相互隔离，不能原地交叉升级；不得为迁移要求用户卸载或清库。
-
-## 当前限制
-
-本次仅建立项目与切换源码更新地址，尚未发布新 APK。应用没有启动时自动检查、后台通知、静默安装或下载任务跨进程恢复。网络受限或限流会显示可重试错误，不把网络失败当成已是最新。
+- 更新器校验 ABI、大小、SHA-256、包名、证书和 versionCode；由用户点安装，无静默安装或后台推送。
+- 旧包内的 Genzo 更新地址不会自动变化，需先手动安装一次兼容新版。不要卸载或清库；readerqa 与正式包相互隔离。
+- 原生 LGPL 来源、固定版本和重建说明见 [libmpv 来源](../licenses/libmpv-1.2.7/SOURCES.md)。许可证和第三方声明随源码保留。
+- 设备未覆盖、网络受限或检查失败须如实记录，不将构建成功描述为全部机型验证通过。
