@@ -59,6 +59,8 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib --locked webdav -- --nocap
 
 ## 开源参考与许可证
 
+2026-10-17 补充：并发首次初始化时，`OnceLock::set` 的失败调用也复用已安装的客户端，避免生成独立连接池。覆盖封面修复的完整回归期间，工作站启用了系统代理，合成 loopback 连接计数原本受代理转发影响；仅 `cfg(test)` 客户端禁用系统代理后，完整 428 项通过 / 19 项既有忽略。生产端继续原有系统代理行为，没有放宽连接复用断言或生产超时。
+
 - [rclone WebDAV](https://github.com/rclone/rclone/blob/99f904d7118a9e3ece300a47f26e173b4b3d707e/backend/webdav/webdav.go)，固定快照 `99f904d7118a9e3ece300a47f26e173b4b3d707e`，研究其持有并复用 HTTP 客户端、默认跨主机跳转剥离认证的设计。[COPYING](https://github.com/rclone/rclone/blob/99f904d7118a9e3ece300a47f26e173b4b3d707e/COPYING) 为 Nick Craig-Wood 的 MIT 许可，与本项目 GPLv3 兼容。仅参考设计，没有移植 Go 代码或品牌素材；会话内重定向复用由 Genzo 独立实现。
 - [reqwest 官方 Client 文档](https://docs.rs/reqwest/latest/reqwest/struct.Client.html) 说明客户端持有内部连接池，建议复用；本项目继续使用锁文件既有 reqwest 0.12.28（MIT OR Apache-2.0），未升级或新增依赖。
 

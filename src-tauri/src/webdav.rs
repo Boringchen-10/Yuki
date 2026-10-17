@@ -118,15 +118,18 @@ impl DavClient {
         let client = if let Some(client) = HTTP_CLIENT.get() {
             client.clone()
         } else {
-            let client = Client::builder()
+            let builder = Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
                 .connect_timeout(RESPONSE_TIMEOUT)
                 .read_timeout(Duration::from_secs(60))
-                .user_agent("Genzo/0.4 WebDAV")
-                .build()
+                .user_agent("Genzo/0.4 WebDAV");
+            // Synthetic loopback tests must not inherit a workstation's system proxy.
+            #[cfg(test)]
+            let builder = builder.no_proxy();
+            let client = builder.build()
                 .map_err(|_| network())?;
             let _ = HTTP_CLIENT.set(client.clone());
-            client
+            HTTP_CLIENT.get().expect("initialized WebDAV HTTP client").clone()
         };
         Ok(Self {
             base: endpoint(address)?,
