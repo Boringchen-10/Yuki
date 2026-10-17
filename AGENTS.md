@@ -31,4 +31,6 @@
 
 ## 技能与协作
 
+前端、组件、样式、主题、布局、交互界面与 UI 评审任务必须使用 `refactoring-ui` 技能：先读取其 `SKILL.md`，遵循技术识别 → 走查 → 修改 → 渲染验证；沿用本项目主题变量和组件，不能直接替换成技能示例配色或引入新组件库。用户级安装位于 `~/.codex/skills/refactoring-ui/SKILL.md`（本机 `C:/Users/Administrator/.codex/skills/refactoring-ui/SKILL.md`）。若缺失，从 `https://github.com/edisonmbli/refactoring-ui-skill` 的 `skills/refactoring-ui` 安装后使用。该技能作为前端质量规范，与下列项目流程技能配合。
+
 主要技能位于 `.agents/skills/`：`project-builder` 用于完整新功能，`bug-hunter` 用于排错修复，`project-maintainer` 用于维护与文档。一次任务优先选最匹配技能，遵循其流程。默认简体中文交流。Codex 与 DeepSeek Harness 均须核实实际 Git / 代码状态后接力，不把交接记录当作完成证明。

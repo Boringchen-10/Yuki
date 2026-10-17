@@ -46,12 +46,12 @@ interface PreferencesState {
 export const usePreferences = create<PreferencesState>()(
   persist(
     (set) => ({
-      theme: "system",
+      theme: "light",
       libraryView: "grid",
       startScreen: "home",
-      accentHue: 158,
-      accentSat: 55,
-      accentLight: 55,
+      accentHue: 210,
+      accentSat: 64,
+      accentLight: 64,
       themeStyle: "soft",
       coverBrightness: 100,
       amoled: false,
@@ -80,7 +80,7 @@ export const usePreferences = create<PreferencesState>()(
       setTopbarOpacity: (topbarOpacity) => set({ topbarOpacity }),
       setShelfColumns: (shelfColumns) => set({ shelfColumns }),
       setRuleOrder: (ruleOrder) => set({ ruleOrder }),
-      resetAppearance: () => set({ theme: "system", accentHue: 158, accentSat: 55, accentLight: 55, themeStyle: "soft", coverBrightness: 100, amoled: false, dynamicColor: false, fontScale: 100, shadowScale: 1, glassBlur: 24, cornerRadius: 8, topbarOpacity: 0, shelfColumns: 7 }),
+      resetAppearance: () => set({ theme: "light", accentHue: 210, accentSat: 64, accentLight: 64, themeStyle: "soft", coverBrightness: 100, amoled: false, dynamicColor: false, fontScale: 100, shadowScale: 1, glassBlur: 24, cornerRadius: 8, topbarOpacity: 0, shelfColumns: 7 }),
     }),
     { name: "genzo-preferences" },
   ),

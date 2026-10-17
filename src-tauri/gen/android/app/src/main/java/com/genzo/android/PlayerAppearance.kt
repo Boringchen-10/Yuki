@@ -32,16 +32,16 @@ internal object PlayerAppearance {
     }
     fun read(context: Context): PlayerPalette {
         val prefs = context.getSharedPreferences(STORE, 0)
-        val night = when (prefs.getString("mode", "system")) {
+        val night = when (prefs.getString("mode", "light")) {
             "dark" -> true
             "light" -> false
             else -> context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
         }
         val saved = runCatching { JSONObject(prefs.getString(if (night) "dark" else "light", "{}").orEmpty()) }.getOrDefault(JSONObject())
         fun color(name: String, fallback: String) = runCatching { Color.parseColor(saved.getString(name)) }.getOrElse { Color.parseColor(fallback) }
-        return PlayerPalette(night, color("background", if (night) "#090d0f" else "#f3f6f5"), color("raised", if (night) "#151b18" else "#e3e9e6"),
-            color("surface", if (night) "#18231e" else "#fafcfb"), color("menu", if (night) "#1c2922" else "#ffffff"),
-            color("text", if (night) "#f4f7f6" else "#16201e"), color("muted", if (night) "#a8b0af" else "#53625e"),
-            color("accent", if (night) "#4cc197" else "#237657"), color("accentInk", if (night) "#07120e" else "#ffffff"))
+        return PlayerPalette(night, color("background", if (night) "#090d10" else "#f2f5f8"), color("raised", if (night) "#11171d" else "#e3e8ed"),
+            color("surface", if (night) "#13191f" else "#fcfdfe"), color("menu", if (night) "#131a20" else "#ffffff"),
+            color("text", if (night) "#f2f5f8" else "#1b2937"), color("muted", if (night) "#a9b8c6" else "#495c6e"),
+            color("accent", if (night) "#6ba3db" else "#205283"), color("accentInk", if (night) "#0b1a28" else "#ffffff"))
     }
 }

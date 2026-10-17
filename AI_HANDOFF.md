@@ -2,7 +2,21 @@
 
 更新于 2026-10-17。继续任务前核对 Git 状态、实际代码、AGENTS 与三份根决策文档。
 
-## 本轮：首次使用协议与规则配置（未发布）
+## 本轮：蓝白主题与新人界面（未发布）
+
+- 用户要求安装 `edisonmbli/refactoring-ui-skill` 并在前端任务使用，默认改为雪乃风格蓝白清冷主题，优化协议确认和规则配置。
+- 已用 skill-installer 安装到 `C:/Users/Administrator/.codex/skills/refactoring-ui`，已读取并用于本轮技术识别、修改前走查、修改与渲染核对。用户级 `C:/Users/Administrator/.codex/AGENTS.md` 和本项目 AGENTS 均加入前端必用要求；技能本体为用户级文件，不作为本仓库源码分发。
+- 新安装及恢复默认为浅色、冷蓝 HSL(210,64%,64%) 与蓝灰 / 冷白底，保留已有外观选择。`themeStyles.ts` 共用原有主题系数；网页 / 原生默认调色板一致，启动底色同步冷色。
+- 实际生产入口检查发现主应用原先以独立 `system` 状态启动，与前端偏好分开；已共用主题模式。引导只读本机数据库 `theme` 设置来保留旧模式，恢复默认同时保存数据库与前端浅色模式，重启不回到旧值。未增加网络或媒体读取。
+- 协议页新增两步进度、使用要点、正文阅读分组；原完整条款与主动勾选流程保留。新人规则页突出仓库 / 导入两入口，无规则时隐藏搜索 / 更新空控件，添加后显示数量和完成状态，保留稍后进入本地媒体。
+- 修改前后走查见 `docs/design/blue-white-onboarding.md`，保留既有样式架构，未引入新依赖或改动数据结构。
+- 已实际通过：类型检查、135 项前端测试、生产构建；新人 UI 14 组行为与 72 组布局（320 / 360 / 375 / 412 竖屏、915×412 横屏、1280 宽屏，深浅主题、100% / 150% 字体及安全区）；实际生产入口 4 组行为与 4 组主界面布局。原规则仓库 2 项 / 12 布局、图标 6 项 / 12 布局通过。
+- 默认配色 24 组文字 / 背景对比度通过，最低 4.80:1；14 组 UI 行为包含原生回退调色板与网页实际解析值逐项一致。不能将此结论扩展到任意用户自定义颜色。
+- 本轮 UI 输出：`D:/DevTools/Android/Build/qa/onboarding-20261017/ui-1792248997278/`；生产入口结果为同级 `bluewhite-production-entry.json`，对比度矩阵为 `bluewhite-contrast.json`，安卓构建日志为 `bluewhite-android-build.log`。
+- 最终 arm64 优化调试 APK 构建通过；本轮 10 个生产输入与构建副本逐项核对一致。预览包 `D:/DevTools/Android/Build/previews/bluewhite-onboarding-20261017/Yuki-0.17.2-bluewhite-readerqa-arm64-v8a.apk`，包名 `com.genzo.android.readerqa`，版本 `0.17.2 / 17002`，targetSdk 36，16 KiB ZIP 对齐通过；同级提供 `SHA256SUMS.txt` 与 `build-manifest.json`。SHA-256：`6008e62bde3b6ca18fe154b6be9cc57324463e32d9099518179a0435b2288a8a`。
+- 本轮没有安装 / 修改手机应用，浏览器结果不代表实机验收；版本仍为 0.17.2，未发布正式 Release。
+
+## 先前：首次使用协议与规则配置（未发布）
 
 - 用户要求安卓首次打开先确认使用协议，再像 Kazumi 一样添加规则来源；已接入真实安卓入口。默认勾选为空，不同意不进入；规则支持稍后添加以保留本地媒体使用。
 - `src/android/FirstRunGate.tsx` 控制主应用挂载，`LegalNotice.tsx` 为首次展示和「我的」重读入口共用文本。`onboarding.ts` 使用独立本机键 `yuki-android-onboarding` 保存协议版本、同意时间和完成时间；不修改用户数据库或同步协议。老版本首次升级到含此流程的版本也会要求确认一次。

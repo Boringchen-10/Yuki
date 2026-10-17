@@ -10,7 +10,7 @@ function domainOf(origin: string | null): string {
   try { return new URL(origin).host; } catch { return origin.replace(/^[a-z]+:\/\//i, "").split("/")[0] ?? ""; }
 }
 
-export default function RuleSourceManager({ onChanged, registerBack, onBusyChange }: { onChanged: () => Promise<void>; registerBack: (handler: (() => boolean) | null) => void; onBusyChange?: (busy: boolean) => void }) {
+export default function RuleSourceManager({ onChanged, registerBack, onBusyChange, onboarding = false, onCountChange }: { onChanged: () => Promise<void>; registerBack: (handler: (() => boolean) | null) => void; onBusyChange?: (busy: boolean) => void; onboarding?: boolean; onCountChange?: (count: number) => void }) {
   const [plugins, setPlugins] = useState<RulePlugin[]>([]), [catalog, setCatalog] = useState<RuleCatalogItem[] | null>(null);
   const [filter, setFilter] = useState(""), [catalogFilter, setCatalogFilter] = useState(""), [catalogView, setCatalogView] = useState<"all" | "installed" | "updatable">("all"), [view, setView] = useState<"all" | "updatable">("all");
   const [definition, setDefinition] = useState(""), [busy, setBusy] = useState(false), [error, setError] = useState(""), [message, setMessage] = useState("");
@@ -22,6 +22,7 @@ export default function RuleSourceManager({ onChanged, registerBack, onBusyChang
   const dragState = useRef<{ id: string; grabOffset: number; translate: number; pointerY: number; slots: { top: number; bottom: number; id: string }[] } | null>(null);
   const ruleOrder = usePreferences(state => state.ruleOrder), setRuleOrder = usePreferences(state => state.setRuleOrder);
   useEffect(() => { onBusyChange?.(busy); }, [busy, onBusyChange]);
+  useEffect(() => { onCountChange?.(plugins.length); }, [plugins.length, onCountChange]);
   useEffect(() => { let active = true; void rulesApi.plugins().then(items => { if (active) setPlugins(items); }).catch(reason => { if (active) setError(String(reason)); }); return () => { active = false; }; }, []);
   useEffect(() => { let active = true; void rulesApi.catalog(false).then(result => { if (active) setCatalog(result.items); }).catch(() => {}); return () => { active = false; }; }, []);
   useEffect(() => { if (browser) dialog.current?.showModal(); }, [browser]);
@@ -136,21 +137,26 @@ export default function RuleSourceManager({ onChanged, registerBack, onBusyChang
   }
   function move(plugin: RulePlugin, delta: number) { const ids = ordered.map(entry => entry.id), from = ids.indexOf(plugin.id), to = from + delta; if (from < 0 || to < 0 || to >= ids.length) return; ids.splice(to, 0, ...ids.splice(from, 1)); setRuleOrder(ids); }
   return <>
-    <section className="gz-rule-hero">
+    {onboarding ? <section className="gz-onboarding-sources" aria-label="添加来源方式">
+      {/* Refactoring UI §2.8 / §8.4: lead with a source choice, hide empty filters. */}
+      <button type="button" className={`gz-onboarding-source${plugins.length ? "" : " is-recommended"}`} aria-label="规则仓库" disabled={busy} onClick={() => openCatalog()}><span className="gz-onboarding-source-icon"><Compass size={24} aria-hidden="true" /></span><span><strong>从规则仓库添加</strong><span>浏览社区规则，选择需要的来源</span></span><ChevronRight size={20} aria-hidden="true" /></button>
+      <button type="button" className="gz-onboarding-source" aria-label="添加规则" disabled={busy} onClick={() => setAddOpen(true)}><span className="gz-onboarding-source-icon"><FileUp size={24} aria-hidden="true" /></span><span><strong>导入已有规则</strong><span>使用链接、JSON、文件或剪贴板</span></span><ChevronRight size={20} aria-hidden="true" /></button>
+      {!!plugins.length && <p className="gz-onboarding-installed" role="status"><Check size={18} aria-hidden="true" />已添加 {plugins.length} 条规则，可以开始使用</p>}
+    </section> : <section className="gz-rule-hero">
       <div className="gz-rule-hero-head"><h2>我的规则</h2><span className="gz-rule-hero-badge" aria-hidden="true"><Package size={20} /></span></div>
       <p className="gz-rule-hero-desc">管理你的番剧来源。拖动调整搜索顺序，点按规则进行编辑。</p>
       <div className="gz-rule-hero-actions">
         <button type="button" className="gz-rule-hero-add" onClick={() => setAddOpen(true)}><Plus size={16} />添加规则</button>
         <button type="button" className="gz-rule-hero-catalog" disabled={busy} onClick={() => openCatalog()}><Package size={16} />规则仓库</button>
       </div>
-    </section>
+    </section>}
     {!catalogOpen && error && <p className="gz-error" role="alert">{error}</p>}{!catalogOpen && message && <p className="gz-meta" role="status">{message}</p>}
-    <label className="gz-rule-search"><Search size={18} aria-hidden="true" /><input type="search" aria-label="搜索名称或站点" placeholder="搜索名称或站点" value={filter} onChange={event => setFilter(event.target.value)} /></label>
+    {(!onboarding || !!plugins.length) && <><label className="gz-rule-search"><Search size={18} aria-hidden="true" /><input type="search" aria-label="搜索名称或站点" placeholder="搜索名称或站点" value={filter} onChange={event => setFilter(event.target.value)} /></label>
     <div className="gz-rule-chips">
       <button type="button" className={`gz-rule-chip${view === "all" ? " active" : ""}`} onClick={() => setView("all")}>全部 {ordered.length}</button>
       <button type="button" className={`gz-rule-chip${view === "updatable" ? " active" : ""}`} onClick={() => setView("updatable")}>可更新 {updatableCount}</button>
       <button type="button" className="gz-rule-chip gz-rule-chip-action" disabled={busy || !updatableCount} onClick={() => void updateAll()}><RefreshCw size={15} aria-hidden="true" />更新全部</button>
-    </div>
+    </div></>}
     {visible.map(plugin => <article ref={node => { if (node) rowRefs.current.set(plugin.id, node); else rowRefs.current.delete(plugin.id); }} className={`gz-rule-card${plugin.enabled ? "" : " is-disabled"}${dragging === plugin.id ? " is-dragging" : ""}`} key={plugin.id} data-rule-row={plugin.id}>
       <button type="button" className="gz-rule-card-icon" aria-hidden="true" onClick={() => void edit(plugin)}><Package size={20} /></button>
       <button type="button" className="gz-rule-card-main" onClick={() => void edit(plugin)}>
@@ -174,7 +180,7 @@ export default function RuleSourceManager({ onChanged, registerBack, onBusyChang
       </div>}
     </article>)}
     {menu && <button type="button" className="gz-rule-menu-backdrop" aria-label="关闭菜单" onClick={() => setMenu(null)} />}
-    {!visible.length && <p className="gz-meta">{ordered.length ? "没有匹配的规则。" : "尚未安装规则，从规则仓库安装或导入 JSON。"}</p>}
+    {!visible.length && (!onboarding || !!plugins.length) && <p className="gz-meta">{ordered.length ? "没有匹配的规则。" : "尚未安装规则，从规则仓库安装或导入 JSON。"}</p>}
     {catalogOpen && <section className="gz-catalog-page" role="dialog" aria-modal="true" aria-label="规则仓库">
       <header className="gz-catalog-head">
         <button type="button" className="gz-iconbtn" aria-label="返回" onClick={() => setCatalogOpen(false)}><ChevronLeft size={22} /></button>

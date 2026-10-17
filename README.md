@@ -24,6 +24,8 @@ Yuki 是本地优先的安卓 ACGN 媒体库，整合作品管理、视频播放
 - 使用原生漫画阅读器与 Readium 小说阅读器；下载中心管理支持的离线任务。
 - 选择浅色、深色或跟随系统的外观，并在「我的 → 通用 → 应用图标」切换三款图标。
 
+默认外观采用蓝白清冷主题；新安装和恢复默认使用浅色，已有外观设置保留。首次使用页提供步骤进度、协议要点和完整文本，再引导选择规则仓库或导入已有规则。
+
 <p align="center">
   <img src="src/android/assets/app-icons/classic.png" width="96" alt="经典校服（默认）" />
   <img src="src/android/assets/app-icons/beret.png" width="96" alt="贝雷帽约会" />

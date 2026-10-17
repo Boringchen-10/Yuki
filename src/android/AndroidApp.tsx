@@ -12,7 +12,7 @@ import { bookContentApi, type ReadingKind, type SourceEntry } from "../bookConte
 import type { AnimeEpisodeMetadata, AnimeWorkStructure, MediaFile, ThemeMode, UnassignedMediaGroup, WorkDetail, WorkInput, WorkListItem, WorkStatus } from "../types";
 import { activeScan, type ScanTask } from "../scanTasks";
 import { playbackPercent, playbackTime, type PlaybackProgress } from "../playback";
-import { usePreferences, type StartScreen, type ThemeStyle } from "../store";
+import { usePreferences, type StartScreen } from "../store";
 import { androidApi, isDirectoryEntry, listenAndroidChanges, type DocumentEntry, type VideoSource } from "./api";
 import AndroidPrototype from "./AndroidPrototype";
 import AppUpdatePanel from "./AppUpdatePanel";
@@ -21,6 +21,7 @@ import LegalNotice from "./LegalNotice";
 import BookReader from "./BookReader";
 import ReadingHistoryRow from "./ReadingHistoryRow";
 import { nativeAppearance } from "./nativeAppearance";
+import { themeStyles, resolveThemeAccent } from "./themeStyles";
 import DownloadCenter from "./DownloadCenter";
 import type { DownloadReadTarget } from "./downloadCenterApi";
 import { readingHistoryApi, readingHistoryKey, type ReadingHistoryItem } from "./readingHistory";
@@ -143,16 +144,6 @@ const hsvToHex = (hue: number, sat: number, value: number) => {
   const match = hsvVal - chroma;
   return `#${[red, green, blue].map(channel => Math.round((channel + match) * 255).toString(16).padStart(2, "0")).join("")}`;
 };
-const themeStyles: { id: ThemeStyle; label: string; sat: number; light: number; neutral: number; lift?: number; rainbow?: boolean }[] = [
-  { id: "soft", label: "柔和", sat: 0.95, light: 1, neutral: 28, lift: 0 },
-  { id: "vivid", label: "鲜明", sat: 1.4, light: 1.06, neutral: 48, lift: 1.2 },
-  { id: "expressive", label: "表现", sat: 1.6, light: 1.12, neutral: 62, lift: 2.4 },
-  { id: "accurate", label: "准确", sat: 0.85, light: 0.94, neutral: 14, lift: 0 },
-  { id: "content", label: "内容", sat: 1.15, light: 1, neutral: 34, lift: 0.6 },
-  { id: "neutral", label: "中性", sat: 0.4, light: 0.98, neutral: 8, lift: 1 },
-  { id: "mono", label: "黑白", sat: 0, light: 1, neutral: 0, lift: 1.5 },
-  { id: "rainbow", label: "彩虹", sat: 1.45, light: 1.06, neutral: 58, lift: 1.5, rainbow: true },
-];
 const presetSwatches = [
   { hex: "#5a6b70", h: 194, s: 10, l: 40 },
   { hex: "#0f9b8e", h: 174, s: 82, l: 33 },
@@ -314,7 +305,7 @@ export default function AndroidApp() {
   const [progressLoading, setProgressLoading] = useState(true);
   const [detail, setDetail] = useState<WorkDetail | null>(null);
   const [detailError, setDetailError] = useState("");
-  const [theme, setTheme] = useState<ThemeMode>("system");
+  const theme = usePreferences(state => state.theme), setTheme = usePreferences(state => state.setTheme);
   const [systemDark, setSystemDark] = useState(matchMedia("(prefers-color-scheme: dark)").matches);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -429,12 +420,8 @@ export default function AndroidApp() {
   const lastHashRef = useRef(location.hash);
   routeRef.current = route;
   const dark = theme === "system" ? systemDark : theme === "dark";
-  const accentStyle = themeStyles.find(item => item.id === themeStyle) ?? { id: "soft" as ThemeStyle, label: "柔和", sat: 1, light: 1, neutral: 30 };
-  const accentSatValue = clamp(accentSat * accentStyle.sat, 0, 100);
-  const darkAccentLight = clamp(accentLight * accentStyle.light, 10, 92), lightAccentLight = clamp(accentLight * accentStyle.light * 0.5, 12, 46);
+  const { accentStyle, accentSatValue, darkAccentLight, lightAccentLight, neutralSatValue, neutralLiftValue } = resolveThemeAccent(themeStyle, accentSat, accentLight);
   const accentLightValue = dark ? darkAccentLight : lightAccentLight;
-  const neutralSatValue = clamp(accentStyle.neutral, 0, 100);
-  const neutralLiftValue = accentStyle.lift ?? 0;
   const accentHex = hslToHex(accentHue, accentSatValue, accentLightValue);
   useEffect(() => {
     const node = rootRef.current;
@@ -1196,7 +1183,7 @@ export default function AndroidApp() {
           </SettingRow>
         </SettingBlock>
         <div className="gz-appearance-actions">
-          <button className="gz-btn" onClick={resetAppearance}>恢复默认外观</button>
+          <button className="gz-btn" onClick={() => void run(async () => { await api.setSetting("theme", "light"); resetAppearance(); })}>恢复默认外观</button>
           {import.meta.env.DEV && <button className="gz-row-card" onClick={() => navigate("diagnostics")}><CircleHelp /><span className="gz-row-main"><strong>开发验证</strong><span className="gz-meta">数据库、目录和播放器诊断</span></span><ChevronRight size={18} /></button>}
         </div>
       </>}
