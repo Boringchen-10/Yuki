@@ -4,6 +4,16 @@
 
 用户确认下载目录采用应用专属目录（手机 / 可用 SD 卡），书签采用漫画 / 小说阅读位置。本轮 **v1.1.0** 功能、真机验收、正式签名包与覆盖升级已完成，待公开发布；当前公开版本仍是 v1.0.2。正式包 `com.genzo.android`，versionCode `1001000`，保留原证书、资料与同步格式。
 
+## 分支中：漫画图片保存到相册（未合并）
+
+- 分支 `feat/comic-image-save-gallery`，已实现并验证，等待用户确认后再合入 `main`；v1.1.0 的发布状态不受影响。
+- 双击漫画页面打开的图片浮层新增「保存」，写入系统相册 `Pictures/Yuki`；小说插图共用同一浮层。文件名形如 `Yuki <章节名> 第N页.<ext>`。
+- Android 10 及以上通过 MediaStore 写入，不需要存储权限；Android 8–9 首次保存请求 `WRITE_EXTERNAL_STORAGE`（manifest `maxSdkVersion=28`）。JPEG / PNG / WebP / GIF 原样复制，其他可解码格式按最长边 4096 转 JPEG。
+- 实际通过：`testArm64DebugUnitTest` 20 项；arm64 readerqa 构建；OnePlus PLK110 / Android 16 真机打开合成漫画，双击第 1 页保存生成 `Yuki 合成漫画测试 · 1 第1页.png`（25,650 字节，PNG 头一致），Toast 与浮层行为正常，返回后阅读器关闭。
+- 证据：`D:/DevTools/Android/Build/qa/reader-image-save/1792306357317/`；设备上的测试图片与合成阅读缓存已删除。
+- 未验证：Android 8 / 9 的旧版存储权限路径；未在正式包 `com.genzo.android` 安装验证（使用隔离 readerqa）。图片浮层状态栏图标在浅色阅读主题下对比不足为既有问题，本轮未改动。
+- 代码入口：`ReaderGallery.kt`、`ReaderImages.kt`、`ReaderActivity.kt`、`ComicReaderSurface.kt`、`NovelReaderSurface.kt`；说明见 [图片保存](docs/READER_IMAGE_SAVE.md)。
+
 ## 本版变化
 
 - 删除「我的」下载设置占位入口，在下载中心右上角新增设置按钮，显示路径与可用空间，选择应用内部、手机共享存储的应用专属目录及可用 SD 卡。

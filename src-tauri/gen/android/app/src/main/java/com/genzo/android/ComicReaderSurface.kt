@@ -133,7 +133,21 @@ class ComicReaderSurface(private val host: ReaderActivity, data: JSONObject, ini
         val rtl=mode=="page-horizontal"&&host.settings.optBoolean("rtl",false)
         if(mode.startsWith("page")&&axis<size*.3f)move(rtl)else if(mode.startsWith("page")&&axis>size*.7f)move(!rtl)else host.toggleMenu()
     }
-    private fun doubleTap(x:Float,y:Float){if(insideEndBar(x,y)||overSeparator(x,y))return;holderAt(x,y)?.sourceFile?.let {source->overlayVisible=true;showReaderImage(host,source){overlayVisible=false;autoPausedUntil=SystemClock.uptimeMillis()+2000}}}
+    private fun doubleTap(x:Float,y:Float){
+        if(insideEndBar(x,y)||overSeparator(x,y))return
+        val holder=holderAt(x,y)?:return
+        val source=holder.sourceFile?:return
+        overlayVisible=true
+        showReaderImage(host,source,saveName(holder.ordinal)){overlayVisible=false;autoPausedUntil=SystemClock.uptimeMillis()+2000}
+    }
+    /** "Yuki <chapter> 第N页" so a saved page stays identifiable in the gallery. */
+    private fun saveName(ordinal:Int):String {
+        if(ordinal !in 0 until totalPages())return "Yuki 漫画"
+        val page=pageLocal(ordinal)+1
+        val title=chapters.getOrNull(pageChapter(ordinal))?.title?.trim()?.takeIf { it.isNotEmpty() }
+            ?:initialTitle.trim().takeIf { it.isNotEmpty() }?:"漫画"
+        return "Yuki $title 第${page}页"
+    }
     private fun hold(x:Float,y:Float){
         if(insideEndBar(x,y)||overSeparator(x,y))return
         if(!host.settings.optBoolean("longPressZoom",true))return
@@ -392,6 +406,7 @@ class ComicReaderSurface(private val host: ReaderActivity, data: JSONObject, ini
         private var holdScale: Float? = null
         private var holdCenter: android.graphics.PointF? = null
         var sourceFile:File?=null;private set
+        val ordinal:Int get()=bound
         private var retries=0
         private var version=0
         private var previewReady=false

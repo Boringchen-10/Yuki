@@ -1,5 +1,7 @@
 package com.genzo.android
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Color
@@ -70,6 +72,7 @@ class ReaderActivity : AppCompatActivity() {
     private var firstContent = true
     private var menuTouched = false
     private var pendingSave: Job? = null
+    private var pendingGallerySave: (() -> Unit)? = null
     private var autoScroll: Job? = null
     private val writes = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val writeLock = kotlinx.coroutines.sync.Mutex()
@@ -235,6 +238,20 @@ class ReaderActivity : AppCompatActivity() {
         }
     }
     fun notify(message: String) { Toast.makeText(this, message, Toast.LENGTH_SHORT).show() }
+    /** Runs [action] now, or after the Android 9 and older gallery permission is granted. */
+    fun requestGallerySave(action: () -> Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) { action(); return }
+        pendingGallerySave = action
+        requestPermissions(arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE), ReaderGallery.PERMISSION_REQUEST)
+    }
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != ReaderGallery.PERMISSION_REQUEST) return
+        val action = pendingGallerySave
+        pendingGallerySave = null
+        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) action?.invoke()
+        else notify("未获得存储权限，无法保存到相册")
+    }
     fun locationChanged(page: Int, count: Int, fraction: Double) {
         if (kind == "comic") { position.text = "${page + 1}"; totalLabel.text = "$count" }
         else { position.text = "${"%.1f".format(fraction.coerceIn(0.0,1.0) * 100)}%"; totalLabel.text = "" }

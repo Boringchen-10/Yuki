@@ -183,7 +183,7 @@ class NovelReaderSurface(private val host: ReaderActivity, private val container
                     File(host.cacheDir,"reader-illustration-${System.nanoTime()}.image").apply { writeBytes(bytes) }
                 }
                 if (closed) { file.delete(); return@launch }
-                showReaderImage(host,file) { file.delete() }
+                showReaderImage(host,file,"Yuki 小说插图") { file.delete() }
             } catch (error: Exception) { if (!closed) host.notify(error.message ?: "插图读取失败，请重试。") }
         }
     }
