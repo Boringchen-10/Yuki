@@ -131,6 +131,7 @@ internal object AppUpdater {
     private var activeCall: Call? = null
     private var readyFile: File? = null
     private var verifiedDigest = ""
+    private var resolvedDigest = ""
 
     @Suppress("DEPRECATION")
     private fun packageInfo(activity: Activity, path: String? = null): PackageInfo {
@@ -149,6 +150,9 @@ internal object AppUpdater {
         AppUpdatePolicy.validateIdentity(next.packageName, code(next), signers(next), installed.packageName, code(installed), signers(installed))
     }
     fun status(activity: Activity): JSObject = synchronized(lock) {
+        if (phase != "downloading" && readyFile == null && resolvedDigest.isNotEmpty()) offer?.let {
+            downloaded = AppUpdateTransfer.retained(File(activity.cacheDir, "updates/${it.name}.part"), it.size, resolvedDigest)
+        }
         JSObject().put("phase", phase).put("currentVersion", packageInfo(activity).versionName ?: "")
             .put("version", offer?.version ?: "").put("bytes", downloaded).put("total", offer?.size ?: 0)
             .put("error", error).put("canInstall", Build.VERSION.SDK_INT < 26 || activity.packageManager.canRequestPackageInstalls())
@@ -164,13 +168,15 @@ internal object AppUpdater {
             else -> "无法完成更新操作，请稍后重试"
         }
     }
-    private fun response(id: Long, address: String, api: Boolean = false): Response {
+    private fun response(id: Long, address: String, api: Boolean = false, offset: Long = 0): Response {
         var url = address
         repeat(6) {
             check(current(id))
             require(if (api) url == AppUpdatePolicy.API else AppUpdatePolicy.trustedUrl(url, false)) { "更新下载地址不受信任" }
-            val call = client.newCall(Request.Builder().url(url).header("User-Agent", "Yuki-Android-Updater")
-                .header("Accept", if (api) "application/vnd.github+json" else "application/octet-stream").build())
+            val builder = Request.Builder().url(url).header("User-Agent", "Yuki-Android-Updater")
+                .header("Accept-Encoding", "identity").header("Accept", if (api) "application/vnd.github+json" else "application/octet-stream")
+            if (offset > 0) builder.header("Range", "bytes=$offset-")
+            val call = client.newCall(builder.build())
             // Metadata and headers are bounded; the APK body uses an idle timeout so large downloads can finish.
             call.timeout().timeout(if (api || address == AppUpdatePolicy.MANIFEST) 20 else 0, TimeUnit.SECONDS)
             synchronized(lock) { check(operation == id); activeCall = call }
@@ -181,7 +187,7 @@ internal object AppUpdater {
                 require(!api && next != null && AppUpdatePolicy.trustedUrl(next, false)) { "更新下载重定向无效" }
                 url = next
             } else {
-                if (!reply.isSuccessful) {
+                if (!reply.isSuccessful && !(reply.code == 416 && offset > 0)) {
                     val status = reply.code
                     reply.close()
                     throw IllegalArgumentException(if (status == 403 || status == 429) "更新服务暂时限流，请稍后重试" else "更新服务返回 HTTP $status，请稍后重试")
@@ -207,7 +213,7 @@ internal object AppUpdater {
         worker.execute { try {
             val abi = Build.SUPPORTED_ABIS.firstOrNull { it in setOf("arm64-v8a", "x86_64") } ?: "unsupported"
             val next = AppUpdatePolicy.resolve(packageInfo(activity).versionName ?: "", abi) { url, api -> text(id, url, api) }
-            update(id) { offer = next; downloaded = 0; readyFile = null; verifiedDigest = ""; phase = if (next == null) "current" else "available" }
+            update(id) { offer = next; downloaded = 0; readyFile = null; verifiedDigest = ""; resolvedDigest = next?.digest ?: ""; phase = if (next == null) "current" else "available" }
         } catch (exception: Exception) { fail(id, exception) } }
         return status(activity)
     }
@@ -224,30 +230,29 @@ internal object AppUpdater {
                 require(directory.isDirectory || directory.mkdirs()) { "无法创建更新缓存目录" }
                 val digest = selected.digest.ifEmpty { AppUpdatePolicy.checksum(text(id, selected.checksumUrl), selected.name)
                     ?: throw IllegalArgumentException("发布未提供唯一有效的安装包校验值") }
-                response(id, selected.url).use { reply ->
-                    val length = reply.body?.contentLength() ?: -1
-                    require(length == -1L || length == selected.size) { "安装包大小与发布记录不一致" }
-                    val input = reply.body?.byteStream() ?: throw java.io.IOException()
-                    AppUpdatePolicy.copyVerified(input, part, selected.size, digest) { count ->
-                        check(current(id)); update(id) { downloaded = count }
-                    }
+                check(current(id)); update(id) { resolvedDigest = digest }
+                AppUpdateTransfer.download(part, selected.size, digest, { offset -> response(id, selected.url, offset = offset) }) { count ->
+                    check(current(id)); update(id) { downloaded = count }
                 }
                 validateArchive(activity, part)
                 synchronized(lock) {
                     check(operation == id)
                     val file = File(directory, selected.name)
                     require(part.renameTo(file)) { "无法保存已校验的安装包" }
+                    File(part.path + ".identity").delete()
                     readyFile = file; verifiedDigest = digest; phase = "ready"
                 }
-            } catch (exception: Exception) { fail(id, exception) }
-            finally { part.delete() }
+            } catch (exception: Exception) {
+                if (exception is IllegalArgumentException) AppUpdateTransfer.clear(part)
+                fail(id, exception)
+            }
         }
         return status(activity)
     }
     fun cancel(activity: Activity): JSObject = synchronized(lock) {
         ++operation; activeCall?.cancel(); activeCall = null
         phase = if (readyFile != null) "ready" else if (offer != null) "available" else "idle"
-        error = ""; downloaded = 0
+        error = ""
         status(activity)
     }
     fun install(activity: Activity): JSObject {

@@ -12,7 +12,7 @@ qa.__TAURI_INTERNALS__ = { invoke: async (command: string, args: any) => {
   if (command !== "android_native") throw new Error("Unexpected command");
   if (args.command === "checkAppUpdate") status = qa.__checkError ? { ...status, phase: "error", error: "更新服务暂时限流，请稍后重试" } : { ...status, phase: "available", version: "0.18.0", total: 50 * 1024 * 1024, error: "" };
   if (args.command === "downloadAppUpdate") status = { ...status, phase: "downloading", bytes: 10 * 1024 * 1024 };
-  if (args.command === "cancelAppUpdate") status = { ...status, phase: "available", bytes: 0 };
+  if (args.command === "cancelAppUpdate") status = { ...status, phase: "available" };
   if (args.command === "installAppUpdate") status = { ...status, phase: "permission" };
   return { ...status };
 } };
