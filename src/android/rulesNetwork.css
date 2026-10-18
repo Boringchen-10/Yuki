@@ -1,0 +1,13 @@
+.android-app .gz-rule-network { margin-bottom: 16px; }
+.gz-rule-network-summary { display: flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; list-style: none; font-size: .875em; }
+.gz-rule-network-summary::-webkit-details-marker { display: none; }
+.gz-rule-network-summary > svg:first-child { color: var(--accent); }
+.gz-rule-network-summary > span { margin-left: auto; color: var(--muted); font-size: .875em; }
+.gz-rule-network-summary > svg:last-child { color: var(--muted); }
+.gz-rule-network details[open] > summary > svg:last-child { transform: rotate(180deg); }
+.gz-rule-network summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: var(--radius); }
+.gz-rule-network-body { display: grid; gap: 12px; padding-top: 12px; }
+.gz-rule-network-body > .gz-meta { max-width: 35em; line-height: 1.7; }
+.android-app .gz-rule-network select { width: 100%; min-height: 44px; background: var(--surface-strong); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 12px; }
+.gz-rule-network .gz-net-row { flex-wrap: wrap; }
+.gz-rule-network .gz-error { overflow-wrap: anywhere; }

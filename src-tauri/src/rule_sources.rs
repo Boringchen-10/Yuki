@@ -201,35 +201,39 @@ pub(crate) async fn environment(url: &str) -> AppResult<Value> {
 fn network_error() -> AppError {
     AppError::Network("规则来源连接失败或超时，请重试或切换来源".into())
 }
+async fn catalog_revision(pool: &SqlitePool) -> AppResult<String> {
+    Ok(sqlx::query_scalar::<_, String>("SELECT updated_at FROM app_settings WHERE key=?").bind(crate::rules_network::KEY).fetch_optional(pool).await?.unwrap_or_default())
+}
+async fn cache_catalog(pool: &SqlitePool, data: &Value, revision: &str) -> AppResult<()> {
+    let now = Utc::now();
+    // The condition and write share one SQL statement: a response from before
+    // a mode change must not overwrite or revalidate the new mode's cache.
+    sqlx::query("INSERT INTO metadata_cache(provider,cache_key,response_json,fetched_at,expires_at) SELECT 'kazumi','catalog',?,?,? WHERE COALESCE((SELECT updated_at FROM app_settings WHERE key=?),'')=? ON CONFLICT(provider,cache_key) DO UPDATE SET response_json=excluded.response_json,fetched_at=excluded.fetched_at,expires_at=excluded.expires_at")
+        .bind(serde_json::to_string(data)?).bind(now.to_rfc3339()).bind((now + Duration::minutes(60)).to_rfc3339()).bind(crate::rules_network::KEY).bind(revision).execute(pool).await?;
+    Ok(())
+}
 #[tauri::command]
 pub async fn get_rule_catalog(fresh: bool, state: State<'_, AppState>) -> AppResult<Value> {
-    let old = cache_get(&state.pool, "catalog").await?;
+    catalog(&state.pool, fresh).await
+}
+async fn catalog(pool: &SqlitePool, fresh: bool) -> AppResult<Value> {
+    let old = cache_get(pool, "catalog").await?;
     if !fresh {
         if let Some((data, true)) = &old {
-            return Ok(json!({"items":data,"stale":false}));
+            return Ok(json!({"items":data,"stale":false,"source":"cache"}));
         }
     }
     let result = async {
-        let raw = body(
-            client()?
-                .get(format!("{REPOSITORY}index.json"))
-                .send()
-                .await
-                .map_err(|_| network_error())?,
-        )
-        .await?;
-        let data: Value = serde_json::from_str(&raw)?;
-        if !data.is_array() || data.as_array().unwrap().len() > 500 {
-            return Err(AppError::Validation("规则仓库索引无效".into()));
-        }
-        cache_put(&state.pool, "catalog", &data, 60).await?;
-        Ok::<_, AppError>(data)
+        let revision = catalog_revision(pool).await?;
+        let result = crate::rules_network::fetch(pool, &format!("{REPOSITORY}index.json"), crate::rules_network::Document::Catalog).await?;
+        cache_catalog(pool, &result.data, &revision).await?;
+        Ok::<_, AppError>(result)
     }
     .await;
     match result {
-        Ok(data) => Ok(json!({"items":data,"stale":false})),
+        Ok(result) => Ok(json!({"items":result.data,"stale":false,"source":result.source,"warning":if result.fallback { Some("镜像暂不可用，已从官方仓库获取。") } else { None }})),
         Err(error) => match old {
-            Some((data, _)) => Ok(json!({"items":data,"stale":true,"warning":error.to_string()})),
+            Some((data, _)) => Ok(json!({"items":data,"stale":true,"source":"cache","warning":format!("仓库连接失败，正在使用本地缓存。{error}")})),
             None => Err(error),
         },
     }
@@ -282,15 +286,8 @@ pub async fn import_rule_plugin(
 #[tauri::command]
 pub async fn import_rule_url(url: String, state: State<'_, AppState>) -> AppResult<String> {
     http_url(&url)?;
-    let raw = body(
-        client()?
-            .get(&url)
-            .send()
-            .await
-            .map_err(|_| network_error())?,
-    )
-    .await?;
-    install(&state.pool, serde_json::from_str(&raw)?, Some(url)).await
+    let result = crate::rules_network::fetch(&state.pool, &url, crate::rules_network::Document::Rule).await?;
+    install(&state.pool, result.data, Some(crate::rules_network::canonical_origin(&url).unwrap_or(url))).await
 }
 #[tauri::command]
 pub async fn install_catalog_rule(name: String, state: State<'_, AppState>) -> AppResult<String> {
@@ -303,15 +300,8 @@ pub async fn install_catalog_rule(name: String, state: State<'_, AppState>) -> A
         return Err(AppError::Validation("规则仓库条目名称无效".into()));
     }
     let url = format!("{REPOSITORY}{name}.json");
-    let raw = body(
-        client()?
-            .get(&url)
-            .send()
-            .await
-            .map_err(|_| network_error())?,
-    )
-    .await?;
-    install(&state.pool, serde_json::from_str(&raw)?, Some(url)).await
+    let result = crate::rules_network::fetch(&state.pool, &url, crate::rules_network::Document::Rule).await?;
+    install(&state.pool, result.data, Some(url)).await
 }
 #[tauri::command]
 pub async fn update_rule_plugin(id: String, state: State<'_, AppState>) -> AppResult<String> {
@@ -324,15 +314,8 @@ pub async fn update_rule_plugin(id: String, state: State<'_, AppState>) -> AppRe
     let origin = origin
         .ok_or_else(|| AppError::Validation("此规则没有更新地址，可重新导入 JSON 更新".into()))?;
     http_url(&origin)?;
-    let raw = body(
-        client()?
-            .get(&origin)
-            .send()
-            .await
-            .map_err(|_| network_error())?,
-    )
-    .await?;
-    let rule: Value = serde_json::from_str(&raw)?;
+    let result = crate::rules_network::fetch(&state.pool, &origin, crate::rules_network::Document::Rule).await?;
+    let rule = result.data;
     let key: String = sqlx::query_scalar("SELECT name_key FROM rule_plugins WHERE id=?")
         .bind(&id)
         .fetch_one(&state.pool)
@@ -843,6 +826,46 @@ pub(crate) fn page_key(base: &str, page: &str) -> AppResult<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    #[ignore = "Live public repository probe; run explicitly before release"]
+    async fn live_rules_repository_download_and_reinstall_preserve_identity() {
+        let pool = db::test_pool().await.unwrap();
+        let index = crate::rules_network::fetch(&pool, &format!("{REPOSITORY}index.json"), crate::rules_network::Document::Catalog).await.unwrap();
+        assert_eq!(index.source, crate::rules_network::Source::Mirror);
+        let name = index.data[0]["name"].as_str().unwrap();
+        let origin = format!("{REPOSITORY}{name}.json");
+        let first = crate::rules_network::fetch(&pool, &origin, crate::rules_network::Document::Rule).await.unwrap();
+        assert_eq!(first.source, crate::rules_network::Source::Mirror);
+        let id = install(&pool, first.data, Some(origin.clone())).await.unwrap();
+        sqlx::query("UPDATE library_roots SET enabled=0 WHERE id=?").bind(&id).execute(&pool).await.unwrap();
+        let next = crate::rules_network::fetch(&pool, &origin, crate::rules_network::Document::Rule).await.unwrap();
+        assert_eq!(install(&pool, next.data, Some(origin.clone())).await.unwrap(), id);
+        let stored: (String, bool) = sqlx::query_as("SELECT p.origin,r.enabled FROM rule_plugins p JOIN library_roots r ON r.id=p.id WHERE p.id=?").bind(&id).fetch_one(&pool).await.unwrap();
+        assert_eq!(stored, (origin, false));
+    }
+    #[tokio::test]
+    async fn late_catalog_reply_cannot_overwrite_cache_after_connection_change() {
+        let pool = db::test_pool().await.unwrap();
+        let old_revision = catalog_revision(&pool).await.unwrap();
+        sqlx::query("INSERT INTO app_settings(key,value,updated_at) VALUES('rules.network','{\"mode\":\"direct\"}','new-setting')").execute(&pool).await.unwrap();
+        let current = json!([{"name":"QA","version":"2"}]);
+        cache_catalog(&pool, &current, &catalog_revision(&pool).await.unwrap()).await.unwrap();
+        cache_catalog(&pool, &json!([{"name":"QA","version":"1"}]), &old_revision).await.unwrap();
+        assert_eq!(cache_get(&pool, "catalog").await.unwrap().unwrap().0, current);
+    }
+    #[tokio::test]
+    async fn repository_failure_keeps_existing_catalog_and_first_use_reports_error() {
+        let pool = db::test_pool().await.unwrap();
+        let previous = json!([{"name":"QA","version":"1"}]);
+        cache_put(&pool, "catalog", &previous, 60).await.unwrap();
+        sqlx::query("INSERT INTO app_settings(key,value,updated_at) VALUES('rules.network','{\"mode\":\"invalid\"}','now')").execute(&pool).await.unwrap();
+        let cached = catalog(&pool, true).await.unwrap();
+        assert_eq!(cached["items"], previous); assert_eq!(cached["stale"], true); assert_eq!(cached["source"], "cache");
+        assert!(cached["warning"].as_str().unwrap().contains("本地缓存"));
+        assert_eq!(catalog(&pool, false).await.unwrap()["stale"], false);
+        sqlx::query("DELETE FROM metadata_cache WHERE provider='kazumi' AND cache_key='catalog'").execute(&pool).await.unwrap();
+        assert!(catalog(&pool, true).await.is_err());
+    }
     #[tokio::test]
     async fn captcha_regex_matches_kazumi_case_insensitive_multiline_detection() {
         let rule = json!({"antiCrawlerConfig":{"enabled":true,"captchaDetectType":3,"captchaDetectValue":"verify.*captcha"}});

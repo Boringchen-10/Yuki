@@ -5,6 +5,7 @@ import { bangumiNetworkApi, BANGUMI_NETWORK_CHANGED, defaultBangumiNetwork, type
 import { readingNetworkApi, readingRoutes, type NodeProbe, type ReadingNetwork } from "../readingNetwork";
 import LoadingIndicator from "./LoadingIndicator";
 import MetadataSettings from "./MetadataSettings";
+import RulesNetworkSettings from "./RulesNetworkSettings";
 import { androidSession, READING_NETWORK_CHANGED } from "./sessionCache";
 
 type Props = { onToast: (message: string) => void };
@@ -98,6 +99,7 @@ export default function NetworkPanel({ onToast }: Props) {
   const disabled = busy !== null;
   const mirrorPreset = bangumi.mirrorUrl === KAZUMI_MIRROR_URL ? "kazumi" : "custom";
   return <div className="gz-network">
+    <RulesNetworkSettings />
     <section className="gz-net-card">
       <div className="gz-net-head"><Globe size={16} /><h2>Bangumi 数据源</h2></div>
       <p className="gz-meta">发现页的热门番组、搜索和放送表会使用这里选择的接口。连接测试同时检查作品吐槽与分集讨论；官网评论使用独立接口，不经过 v0 镜像。</p>

@@ -32,6 +32,7 @@ try {
   result.cases.push("fresh install defaults to blue-white light theme");
   assert.ok(await consent().isDisabled());
   assert.equal((await stats()).catalogCalls, 0); assert.equal((await stats()).backgroundCalls, 0);
+  assert.equal((await stats()).networkCalls, 0);
   result.cases.push("fresh install and deep link cannot bypass unchecked agreement; no source/background calls");
   await page.getByRole("button", { name: "暂不同意", exact: true }).click();
   await page.getByRole("heading", { name: "尊重你的选择" }).waitFor();
@@ -44,6 +45,30 @@ try {
   await page.getByRole("alert").waitFor(); assert.equal((await stats()).catalogCalls, 0);
   await page.evaluate(() => window.__onboarding.storageFail(false, false)); await consent().click();
   await enter().waitFor();
+  const network = page.getByRole("region", { name: "规则仓库连接", exact: true });
+  await network.locator("summary").click();
+  const mode = network.getByRole("combobox", { name: "规则连接方式" });
+  await page.waitForFunction(() => !document.querySelector('select[aria-label="规则连接方式"]')?.disabled);
+  assert.equal(await mode.inputValue(), "auto");
+  const beforeCatalog = (await stats()).catalogCalls;
+  await mode.selectOption("direct");
+  await page.getByText("已连接官方规则仓库", { exact: true }).waitFor();
+  assert.ok((await stats()).catalogCalls > beforeCatalog, "saving connection refreshes the catalog");
+  await page.evaluate(() => window.__onboarding.remount()); await enter().waitFor();
+  await network.locator("summary").click();
+  await page.waitForFunction(() => !document.querySelector('select[aria-label="规则连接方式"]')?.disabled);
+  assert.equal(await mode.inputValue(), "direct");
+  await page.evaluate(() => window.__onboarding.networkFail(true, false));
+  await mode.selectOption("auto"); await network.getByRole("alert").waitFor();
+  assert.equal(await mode.inputValue(), "direct");
+  await page.evaluate(() => window.__onboarding.networkFail(false, false));
+  await mode.selectOption("auto"); await page.getByText("已连接 GitCode 规则镜像", { exact: true }).waitFor();
+  await network.getByRole("button", { name: "测试规则连接", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('.gz-onboarding-footer button.gz-btn')?.disabled === true);
+  await network.getByText("GitCode 镜像：40 ms · 可用", { exact: true }).waitFor();
+  await network.getByText("官方仓库：连接超时", { exact: true }).waitFor();
+  await network.locator("summary").click();
+  result.cases.push("mirror default, persisted mode, immediate catalog reload, failed save rollback and source probes");
   assert.equal(await page.getByRole("searchbox", { name: "搜索名称或站点" }).count(), 0);
   assert.equal(await page.getByRole("button", { name: "更新全部", exact: true }).count(), 0);
   assert.equal(await enter().evaluate(node => node.classList.contains("primary")), false);
@@ -103,9 +128,10 @@ try {
     assert.equal(match[1], result.palette.dark[name]); assert.equal(match[2], result.palette.light[name]);
   }
   result.cases.push("native fallback colors exactly match resolved web palettes");
-  for (const stage of ["agreement", "sources", "catalog"]) {
+  for (const stage of ["agreement", "sources", "network", "catalog"]) {
     await reset(); if (stage !== "agreement") await accept();
     if (stage === "catalog") await page.getByRole("button", { name: "规则仓库", exact: true }).click();
+    if (stage === "network") await page.getByRole("region", { name: "规则仓库连接", exact: true }).locator("summary").click();
     for (const [width, height] of [[320, 568], [360, 640], [375, 812], [412, 915], [915, 412], [1280, 800]]) for (const theme of ["light", "dark"]) for (const scale of [100, 150]) {
       await page.setViewportSize({ width, height });
       await page.evaluate(({ theme, scale }) => window.__onboarding.appearance(theme, scale), { theme, scale });

@@ -15,15 +15,22 @@ try {
   const page = await browser.newPage({ viewport: { width: 375, height: 812 }, colorScheme: "dark" });
   page.on("pageerror", error => result.errors.push(String(error)));
   await page.addInitScript(() => {
-    window.__calls = []; window.isTauri = true;
+    window.__calls = []; window.__ruleMode = "auto"; window.isTauri = true;
+    window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
     window.__TAURI_INTERNALS__ = { transformCallback: () => 1, unregisterCallback: () => {}, invoke: async (cmd, args) => {
       window.__calls.push(cmd);
       if (cmd === "android_native") return { top: 38, bottom: 24, left: 0, right: 0 };
       if (cmd === "get_rule_catalog") return { items: [], stale: false };
+      if (cmd === "get_rules_network") return { mode: window.__ruleMode };
+      if (cmd === "save_rules_network") { window.__ruleMode = args.config.mode; return args.config; }
+      if (cmd === "probe_rules_network") return [{ source: "official", milliseconds: 20, error: null }];
+      if (cmd === "get_reading_network") return { apiHost: "api.copy202601.com", appVersion: "3.0.9", route: 0, node: "", proxyMode: "system", proxyUrl: "", autoUpdate: true, comicConcurrency: 4, novelConcurrency: 2 };
+      if (cmd === "get_bangumi_network") return { mode: "system", mirrorUrl: "" };
       if (cmd === "get_setting") return args?.key === "theme" ? localStorage.getItem("__dbTheme") : null;
       if (cmd === "set_setting" && args?.key === "theme") { localStorage.setItem("__dbTheme", args.value); return null; }
       if (cmd === "get_playback_progress") return { items: [], sessions: [] };
       if (cmd === "get_book_shelf_state") return {};
+      if (cmd === "get_metadata_provider_statuses") return [];
       if (cmd === "plugin:event|listen") return 1;
       if (cmd.startsWith("list_") || ["get_video_source_states", "get_reading_history", "get_source_imports"].includes(cmd)) return [];
       return null;
@@ -65,6 +72,13 @@ try {
   await page.reload(); await page.getByRole("button", { name: "恢复默认外观", exact: true }).waitFor();
   assert.equal(await page.locator(".android-app").getAttribute("data-theme"), "light");
   result.cases.push("real appearance selector persists DB mode; reset restores light mode across restart");
+  await page.evaluate(() => location.hash = "#/network");
+  const ruleNetwork = page.getByRole("region", { name: "规则仓库连接", exact: true });
+  await ruleNetwork.getByRole("combobox", { name: "规则连接方式" }).selectOption("direct");
+  await ruleNetwork.getByText("已保存：官方直连", { exact: true }).waitFor();
+  await ruleNetwork.getByRole("button", { name: "测试规则连接" }).click();
+  await ruleNetwork.getByText("官方仓库：20 ms · 可用", { exact: true }).waitFor();
+  result.cases.push("real network settings expose rule transport independently of Bangumi and COPY");
   await page.evaluate(() => { localStorage.removeItem("genzo-preferences"); localStorage.removeItem("yuki-android-onboarding"); localStorage.setItem("__dbTheme", "dark"); });
   await page.reload(); await page.getByRole("button", { name: "同意并继续", exact: true }).waitFor();
   await page.waitForFunction(() => document.querySelector(".android-app").dataset.theme === "dark");

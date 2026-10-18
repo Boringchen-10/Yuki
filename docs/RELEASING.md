@@ -4,14 +4,14 @@
 
 ## 发布清单
 
-1. 同步 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`、`src-tauri/tauri.conf.json` 和 CHANGELOG。版本遵循 SemVer；当前发布为用户确认的 v1.0.0。
+1. 同步 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock`、`src-tauri/tauri.conf.json` 和 CHANGELOG。版本遵循 SemVer；当前发布为 v1.0.1。
 2. 运行类型检查、测试、生产构建和相关设备回归；核对升级数据保留、原生依赖、16 KiB 对齐及第三方对应源码。
 3. 使用仓库外持久证书签名，保留正式包 `com.genzo.android`。构建命令见 [BUILD_ANDROID](BUILD_ANDROID.md)；不得发布 readerqa 包替代正式包。
 4. APK 命名 `Yuki_X.Y.Z_android_arm64-v8a.apk`；实际提供 x86_64 时使用对应 ABI。`SHA256SUMS.txt` 每行写 `64位SHA256  APK文件名`。
 5. 创建 `chore(release): vX.Y.Z` 提交和同名带注释标签，推送后发布非草稿、非预发布 Release，附 APK、校验文件、简短更新条目及对应源码标签。
 6. 核对公开资产、哈希、签名和源码提交；验证兼容旧包的检查、下载与系统安装入口，并记录未覆盖范围。
 
-versionCode 为 `major × 1000000 + minor × 1000 + patch`，minor / patch 小于 1000，整体必须递增。v1.0.0 对应 `1000000`。
+versionCode 为 `major × 1000000 + minor × 1000 + patch`，minor / patch 小于 1000，整体必须递增。v1.0.1 对应 `1000001`。
 
 ## 兼容与边界
 

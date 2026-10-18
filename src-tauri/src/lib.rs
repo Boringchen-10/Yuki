@@ -5,6 +5,7 @@ mod android_bridge;
 mod android_sources;
 mod rule_format;
 mod rule_sources;
+mod rules_network;
 mod rule_bindings;
 mod rule_stream;
 mod source_imports;
@@ -103,6 +104,9 @@ pub fn run() {
             rule_sources::list_rule_plugins,
             rule_sources::get_rule_definition,
             rule_sources::get_rule_catalog,
+            rules_network::get_rules_network,
+            rules_network::save_rules_network,
+            rules_network::probe_rules_network,
             rule_sources::import_rule_plugin,
             rule_sources::import_rule_url,
             rule_sources::install_catalog_rule,

@@ -1,6 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, Check, ChevronLeft, ChevronRight, ClipboardPaste, Compass, FileUp, GripVertical, MoreHorizontal, Package, Pencil, PenLine, Plus, RefreshCw, Search, Share2, Trash2, X } from "lucide-react";
-import { rulesApi, type RuleCatalogItem, type RulePlugin } from "./rulesApi";
+import { rulesApi, ruleCatalogMessage, type RuleCatalogItem, type RulePlugin } from "./rulesApi";
+import RulesNetworkSettings from "./RulesNetworkSettings";
+import { RULES_NETWORK_CHANGED } from "./rulesNetwork";
 import RuleBrowser from "./RuleBrowser";
 import { usePreferences } from "../store";
 import "./rules.css";
@@ -13,7 +15,10 @@ function domainOf(origin: string | null): string {
 export default function RuleSourceManager({ onChanged, registerBack, onBusyChange, onboarding = false, onCountChange }: { onChanged: () => Promise<void>; registerBack: (handler: (() => boolean) | null) => void; onBusyChange?: (busy: boolean) => void; onboarding?: boolean; onCountChange?: (count: number) => void }) {
   const [plugins, setPlugins] = useState<RulePlugin[]>([]), [catalog, setCatalog] = useState<RuleCatalogItem[] | null>(null);
   const [filter, setFilter] = useState(""), [catalogFilter, setCatalogFilter] = useState(""), [catalogView, setCatalogView] = useState<"all" | "installed" | "updatable">("all"), [view, setView] = useState<"all" | "updatable">("all");
-  const [definition, setDefinition] = useState(""), [busy, setBusy] = useState(false), [error, setError] = useState(""), [message, setMessage] = useState("");
+  const [definition, setDefinition] = useState(""), [operationBusy, setBusy] = useState(false), [error, setError] = useState(""), [message, setMessage] = useState("");
+  const [networkBusy, setNetworkBusy] = useState(false), [catalogLoading, setCatalogLoading] = useState(true);
+  const busy = operationBusy || networkBusy;
+  const catalogRequest = useRef(0);
   const [browser, setBrowser] = useState<RulePlugin | null>(null), [removing, setRemoving] = useState<RulePlugin | null>(null);
   const [editor, setEditor] = useState<{ plugin: RulePlugin | null } | null>(null), [menu, setMenu] = useState<string | null>(null), [dragging, setDragging] = useState<string | null>(null), [addOpen, setAddOpen] = useState(false), [catalogOpen, setCatalogOpen] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null), editorDialog = useRef<HTMLDialogElement>(null), fileInput = useRef<HTMLInputElement>(null);
@@ -24,7 +29,8 @@ export default function RuleSourceManager({ onChanged, registerBack, onBusyChang
   useEffect(() => { onBusyChange?.(busy); }, [busy, onBusyChange]);
   useEffect(() => { onCountChange?.(plugins.length); }, [plugins.length, onCountChange]);
   useEffect(() => { let active = true; void rulesApi.plugins().then(items => { if (active) setPlugins(items); }).catch(reason => { if (active) setError(String(reason)); }); return () => { active = false; }; }, []);
-  useEffect(() => { let active = true; void rulesApi.catalog(false).then(result => { if (active) setCatalog(result.items); }).catch(() => {}); return () => { active = false; }; }, []);
+  useEffect(() => { let active = true; const request = ++catalogRequest.current; void rulesApi.catalog(false).then(result => { if (active && request === catalogRequest.current) { setCatalog(result.items); setMessage(ruleCatalogMessage(result)); } }).catch(reason => { if (active && request === catalogRequest.current) setError(String(reason)); }).finally(() => { if (active && request === catalogRequest.current) setCatalogLoading(false); }); return () => { active = false; }; }, []);
+  useEffect(() => { const changed = () => void load(true); window.addEventListener(RULES_NETWORK_CHANGED, changed); return () => window.removeEventListener(RULES_NETWORK_CHANGED, changed); }, []);
   useEffect(() => { if (browser) dialog.current?.showModal(); }, [browser]);
   useEffect(() => { if (editor) editorDialog.current?.showModal(); }, [editor]);
   const ordered = useMemo(() => {
@@ -108,13 +114,13 @@ export default function RuleSourceManager({ onChanged, registerBack, onBusyChang
   }, [dragging, ordered, visible, setRuleOrder]);
   const editorPlugin = editor?.plugin ? plugins.find(plugin => plugin.id === editor.plugin!.id) ?? editor.plugin : null;
   async function run(operation: () => Promise<unknown>) { setBusy(true); setError(""); setMessage(""); try { await operation(); setPlugins(await rulesApi.plugins()); await onChanged(); } catch (reason) { setError(String(reason)); } finally { setBusy(false); } }
-  async function load(fresh: boolean) { await run(async () => { const result = await rulesApi.catalog(fresh); setCatalog(result.items); if (result.warning) setMessage(result.warning); }); }
+  async function load(fresh: boolean) { const request = ++catalogRequest.current; setCatalogLoading(true); try { await run(async () => { const result = await rulesApi.catalog(fresh); if (request === catalogRequest.current) { setCatalog(result.items); setMessage(ruleCatalogMessage(result)); } }); } finally { if (request === catalogRequest.current) setCatalogLoading(false); } }
   async function checkUpdate(plugin: RulePlugin) { const item = catalog?.find(entry => entry.name.toLowerCase() === plugin.name.toLowerCase()); if (plugin.origin) await run(() => rulesApi.update(plugin.id)); else if (item) await run(() => rulesApi.install(item.name)); else setMessage("该规则没有更新来源，可重新导入 JSON。"); }
   async function updateAll() { await run(async () => { for (const plugin of ordered.filter(updatable)) { const item = catalog!.find(entry => entry.name.toLowerCase() === plugin.name.toLowerCase())!; if (plugin.origin) await rulesApi.update(plugin.id); else await rulesApi.install(item.name); } }); }
   async function share(plugin: RulePlugin) { try { const text = plugin.origin || JSON.stringify(await rulesApi.definition(plugin.id), null, 2); if (!navigator.clipboard?.writeText) throw new Error("clipboard"); await navigator.clipboard.writeText(text); setMessage(`已复制「${plugin.name}」的规则内容`); } catch { setError("当前环境无法复制规则内容"); } }
   async function edit(plugin: RulePlugin) { try { setDefinition(JSON.stringify(await rulesApi.definition(plugin.id), null, 2)); setEditor({ plugin }); } catch (reason) { setError(String(reason)); } }
   async function saveEditor() { const text = definition.trim(); if (!text) return; await run(async () => { if (/^https?:\/\//i.test(text)) await rulesApi.importUrl(text); else await rulesApi.import(JSON.parse(text), editor?.plugin?.origin ?? null); setEditor(null); setMessage("规则已保存"); }); }
-  function openCatalog() { setCatalogOpen(true); if (!catalog) void load(false); }
+  function openCatalog() { setCatalogOpen(true); if (!catalog && !catalogLoading) void load(false); }
   async function importClipboard() {
     setBusy(true); setError(""); setMessage("");
     try {
@@ -137,6 +143,7 @@ export default function RuleSourceManager({ onChanged, registerBack, onBusyChang
   }
   function move(plugin: RulePlugin, delta: number) { const ids = ordered.map(entry => entry.id), from = ids.indexOf(plugin.id), to = from + delta; if (from < 0 || to < 0 || to >= ids.length) return; ids.splice(to, 0, ...ids.splice(from, 1)); setRuleOrder(ids); }
   return <>
+    <RulesNetworkSettings compact disabled={operationBusy} onBusyChange={setNetworkBusy} />
     {onboarding ? <section className="gz-onboarding-sources" aria-label="添加来源方式">
       {/* Refactoring UI §2.8 / §8.4: lead with a source choice, hide empty filters. */}
       <button type="button" className={`gz-onboarding-source${plugins.length ? "" : " is-recommended"}`} aria-label="规则仓库" disabled={busy} onClick={() => openCatalog()}><span className="gz-onboarding-source-icon"><Compass size={24} aria-hidden="true" /></span><span><strong>从规则仓库添加</strong><span>浏览社区规则，选择需要的来源</span></span><ChevronRight size={20} aria-hidden="true" /></button>
@@ -185,7 +192,7 @@ export default function RuleSourceManager({ onChanged, registerBack, onBusyChang
       <header className="gz-catalog-head">
         <button type="button" className="gz-iconbtn" aria-label="返回" onClick={() => setCatalogOpen(false)}><ChevronLeft size={22} /></button>
         <h2>规则仓库</h2>
-        <button type="button" className="gz-iconbtn" aria-label="刷新规则仓库" disabled={busy} onClick={() => void load(true)}><RefreshCw size={20} /></button>
+        <button type="button" className="gz-iconbtn" aria-label="刷新规则仓库" disabled={busy || catalogLoading} onClick={() => void load(true)}><RefreshCw size={20} /></button>
       </header>
       {error && <p className="gz-error" role="alert">{error}</p>}
       {message && <p className="gz-meta" role="status">{message}</p>}
@@ -196,7 +203,7 @@ export default function RuleSourceManager({ onChanged, registerBack, onBusyChang
         <button type="button" className={`gz-rule-chip${catalogView === "installed" ? " active" : ""}`} onClick={() => setCatalogView("installed")}>已安装 {installedCount}</button>
         <button type="button" className={`gz-rule-chip${catalogView === "updatable" ? " active" : ""}`} onClick={() => setCatalogView("updatable")}>可更新 {catalogUpdatableCount}</button>
       </div>
-      {!catalog && <p className="gz-meta">{busy ? "正在加载规则仓库…" : "规则仓库暂时不可用，请稍后重试。"}</p>}
+      {!catalog && <p className="gz-meta">{busy || catalogLoading ? "正在加载规则仓库…" : "规则仓库暂时不可用，请稍后重试。"}</p>}
       {catalog && <div className="gz-rule-catalog">{catalogRows.map(item => { const installed = installedOf(item); return <article className="gz-rule-catalog-row" key={item.name}><span className="gz-rule-catalog-icon" aria-hidden="true"><Package size={18} /></span><span className="gz-row-main"><strong>{item.name}</strong><span className="gz-meta">v{item.version}{item.author ? ` · ${item.author}` : ""}{item.antiCrawlerEnabled ? " · 可能需要网页验证" : ""}</span></span><button className="gz-btn" disabled={busy} onClick={() => void run(() => rulesApi.install(item.name))}>{installed ? installed.version === item.version ? "重新获取" : "更新" : "安装"}</button></article>; })}</div>}
       {catalog && !catalogRows.length && <p className="gz-meta">没有匹配的规则。</p>}
     </section>}

@@ -3,6 +3,10 @@ import type { PlayerSnapshot } from "./api";
 
 export interface RulePlugin { id: string; name: string; version: string; enabled: boolean; origin: string | null; updatedAt: string }
 export interface RuleCatalogItem { name: string; version: string; author?: string; lastUpdate?: number; antiCrawlerEnabled?: boolean }
+export interface RuleCatalog { items: RuleCatalogItem[]; stale: boolean; warning?: string | null; source?: "mirror" | "official" | "cache" }
+export function ruleCatalogMessage(result: RuleCatalog): string {
+  return result.warning || ({ mirror: "已连接 GitCode 规则镜像", official: "已连接官方规则仓库", cache: "正在使用本地规则目录缓存" }[result.source ?? "cache"]);
+}
 export interface RuleItem { name: string; source: string }
 export interface RuleEpisode { name: string; url: string }
 export interface RuleRoad { name: string; episodes: RuleEpisode[] }
@@ -14,7 +18,7 @@ export interface WorkRuleSource { pluginId: string; name: string; source: string
 export const rulesApi = {
   plugins: () => invoke<RulePlugin[]>("list_rule_plugins"),
   definition: (id: string) => invoke<unknown>("get_rule_definition", { id }),
-  catalog: (fresh = false) => invoke<{ items: RuleCatalogItem[]; stale: boolean; warning?: string }>("get_rule_catalog", { fresh }),
+  catalog: (fresh = false) => invoke<RuleCatalog>("get_rule_catalog", { fresh }),
   install: (name: string) => invoke<string>("install_catalog_rule", { name }),
   import: (definition: unknown, origin: string | null = null) => invoke<string>("import_rule_plugin", { definition, origin }),
   importUrl: (url: string) => invoke<string>("import_rule_url", { url }),
