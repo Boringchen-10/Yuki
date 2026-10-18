@@ -35,16 +35,19 @@ internal object DownloadStorage {
     fun state(context: Context): JSONObject {
         val selected = selectedId(context)
         val choices = locations(context)
-        return JSONObject().put("selected", selected).put("available", choices.any { it.id == selected }).put("locations", JSONArray().apply {
+        return JSONObject().put("selected", selected).put("wifiOnly", DownloadNetwork.onlyWifi(context)).put("available", choices.any { it.id == selected }).put("locations", JSONArray().apply {
             choices.forEach { location -> put(JSONObject().put("id", location.id).put("label", location.label)
                 .put("path", location.root.absolutePath).put("freeBytes", runCatching { StatFs(location.parent.path).availableBytes }.getOrDefault(0))) }
         })
     }
-    fun select(context: Context, id: String): JSONObject {
+    fun select(context: Context, id: String, wifiOnly: Boolean? = null): JSONObject {
         val root = root(context, id, true)
         val probe = File(root, ".yuki-write-${UUID.randomUUID()}")
         try { probe.outputStream().use { it.write(0) } } finally { probe.delete() }
-        check(context.getSharedPreferences("genzo-download-storage", 0).edit().putString("selected", id).commit()) { "下载目录保存失败，请重试" }
+        val editor = context.getSharedPreferences("genzo-download-storage", 0).edit().putString("selected", id)
+        if (wifiOnly != null) editor.putBoolean("wifiOnly", wifiOnly)
+        check(editor.commit()) { "下载设置保存失败，请重试" }
+        DownloadNetwork.initialize(context); OfflineVideoDownloads.refreshNetwork()
         return state(context)
     }
 }

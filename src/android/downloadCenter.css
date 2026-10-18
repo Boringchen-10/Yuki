@@ -37,6 +37,7 @@
 .android-app .gz-download-content progress::-webkit-progress-value { background: var(--accent); }
 .android-app .gz-download-content progress:indeterminate { background: var(--line); }
 .android-app .gz-download-row-error { margin-top: 8px; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.android-app .gz-download-rate { margin-top: 8px; font-size: 12px; font-variant-numeric: tabular-nums; }
 .android-app .gz-download-actions { display: flex; align-items: center; justify-content: flex-end; align-self: center; gap: 1px; padding-left: 4px; }
 .android-app .gz-download-actions .gz-iconbtn { width: 44px; height: 44px; }
 .android-app .gz-download-remove { color: var(--muted); }
@@ -50,6 +51,8 @@
 .android-app .gz-download-confirm-item { margin: 12px 0; font-size: 14px; overflow-wrap: anywhere; }
 .android-app .gz-download-confirm-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
 .android-app .gz-download-confirm-delete { color: var(--danger); }
+.android-app dialog.gz-download-settings label.gz-download-wifi { display: flex; flex-direction: row; align-items: center; gap: 12px; min-height: 44px; margin-top: 20px; }
+.android-app .gz-download-wifi input { width: 20px; height: 20px; accent-color: var(--accent); }
 @media (max-width: 520px) {
   .android-app .gz-download-row { grid-template-columns: 32px minmax(0,1fr); column-gap: 10px; padding: 16px 0; }
   .android-app .gz-download-kind { width: 32px; height: 36px; background: transparent; }

@@ -81,7 +81,7 @@ internal class OfflineVideoDownloads private constructor(private val context: Co
     private val pending = ConcurrentHashMap<String, Pending>()
     val manager = DownloadManager(context, index, DownloaderFactory { request ->
         val secret = lazy { readSecret(request.id) }
-        val source = DataSource.Factory { OfflineNetworkDataSource { secret.value } }
+        val source = DataSource.Factory { OfflineNetworkDataSource({ DownloadNetwork.requireAllowed(context) }) { secret.value } }
         DefaultDownloaderFactory(CacheDataSource.Factory().setCache(cache(storageId(request))).setUpstreamDataSourceFactory(source), Executor { it.run() })
             .createDownloader(request)
     }).apply {
@@ -104,6 +104,19 @@ internal class OfflineVideoDownloads private constructor(private val context: Co
         })
     }
 
+    private var waitingWifi = false
+    init { DownloadNetwork.initialize(context); applyNetworkPolicy() }
+    private fun applyNetworkPolicy() {
+        val blocked = !DownloadNetwork.allowed(context)
+        if (blocked) manager.pauseDownloads()
+        else if (waitingWifi) {
+            manager.currentDownloads.filter { it.state == Download.STATE_FAILED && errors.getString(it.request.id, "") == "offline_waiting_wifi" }
+                .forEach { manager.addDownload(it.request) }
+            manager.resumeDownloads()
+        }
+        waitingWifi = blocked
+    }
+
     fun prepare(id: String, uri: String, headers: Map<String, String>, title: String,
         mediaFileId: String?, workId: String?, episodeTitle: String?, recipe: JSONObject, forceRefresh: Boolean = false): OfflineVideoPreparation {
         require(id.matches(Regex("[A-Za-z0-9_-]{1,96}")))
@@ -124,6 +137,7 @@ internal class OfflineVideoDownloads private constructor(private val context: Co
         DownloadStorage.root(context, location, true)
         val key = ByteArray(32).also { SecureRandom().nextBytes(it) }
         val secret = OfflineVideoSecret(id, uri, headers, key)
+        DownloadNetwork.requireAllowed(context)
         val deadline = SystemClock.elapsedRealtime() + 45000
         val source = secret.probeHttpFactory(45000).createDataSource()
         val first = ByteArrayOutputStream()
@@ -133,6 +147,7 @@ internal class OfflineVideoDownloads private constructor(private val context: Co
             mime = source.responseHeaders.entries.firstOrNull { it.key.equals("content-type", true) }?.value?.firstOrNull().orEmpty()
             val buffer = ByteArray(512)
             while (first.size() < 512) {
+                DownloadNetwork.requireAllowed(context)
                 val count = source.read(buffer, 0, 512 - first.size())
                 if (count == C.RESULT_END_OF_INPUT) break
                 first.write(buffer, 0, count)
@@ -148,7 +163,7 @@ internal class OfflineVideoDownloads private constructor(private val context: Co
             val manifest = secret.probeHttpFactory((deadline - SystemClock.elapsedRealtime()).coerceAtLeast(1)).createDataSource()
             try {
                 openOfflineHttp(manifest, DataSpec.Builder().setUri(uri).build())
-                val bytes = readBounded(manifest, 8 * 1024 * 1024)
+                val bytes = readBounded(manifest, 8 * 1024 * 1024) { DownloadNetwork.requireAllowed(context) }
                 val parsed = HlsPlaylistParser().parse(manifest.uri ?: Uri.parse(uri), ByteArrayInputStream(bytes))
                 validateOfflineHls(parsed, String(bytes, Charsets.UTF_8))
                 resolution = if (parsed is HlsMultivariantPlaylist) selectOfflineHls(parsed).resolution else "来源画质"
@@ -204,7 +219,7 @@ internal class OfflineVideoDownloads private constructor(private val context: Co
     fun add(request: DownloadRequest): String {
         if (index.getDownload(request.id)?.let { it.state == Download.STATE_COMPLETED && it.request.uri == request.uri } == true) return "completed"
         DownloadService.sendAddDownload(context, VideoDownloadService::class.java, request, true)
-        DownloadService.sendResumeDownloads(context, VideoDownloadService::class.java, true)
+        if (DownloadNetwork.allowed(context)) DownloadService.sendResumeDownloads(context, VideoDownloadService::class.java, true)
         return "queued"
     }
     fun control(id: String, action: String) {
@@ -215,7 +230,7 @@ internal class OfflineVideoDownloads private constructor(private val context: Co
                 val request = index.getDownload(id)?.request ?: throw OfflineDownloadException("offline_download_missing")
                 DownloadService.sendAddDownload(context, VideoDownloadService::class.java, request, true)
                 DownloadService.sendSetStopReason(context, VideoDownloadService::class.java, id, Download.STOP_REASON_NONE, false)
-                DownloadService.sendResumeDownloads(context, VideoDownloadService::class.java, true)
+                if (DownloadNetwork.allowed(context)) DownloadService.sendResumeDownloads(context, VideoDownloadService::class.java, true)
             }
             "remove" -> DownloadService.sendRemoveDownload(context, VideoDownloadService::class.java, id, false)
             else -> throw IllegalArgumentException("invalid_download_action")
@@ -228,7 +243,10 @@ internal class OfflineVideoDownloads private constructor(private val context: Co
         return JSONArray().apply { downloads.values.sortedByDescending { it.startTimeMs }.forEach { put(dto(it)) } }
     }
     private fun dto(download: Download): JSONObject {
-        val state = when (download.state) {
+        val waiting = !DownloadNetwork.allowed(context) && download.stopReason == Download.STOP_REASON_NONE &&
+            (download.state in listOf(Download.STATE_QUEUED, Download.STATE_DOWNLOADING, Download.STATE_STOPPED) ||
+                download.state == Download.STATE_FAILED && errors.getString(download.request.id, "") == "offline_waiting_wifi")
+        val state = if (waiting) "queued" else when (download.state) {
             Download.STATE_DOWNLOADING -> "downloading"
             Download.STATE_STOPPED -> if (download.stopReason == 2) "interrupted" else "paused"
             Download.STATE_COMPLETED -> "completed"
@@ -240,7 +258,7 @@ internal class OfflineVideoDownloads private constructor(private val context: Co
             .put("bytesDownloaded", download.bytesDownloaded).put("totalBytes", download.contentLength.takeIf { it >= 0 } ?: JSONObject.NULL)
             .put("percent", download.percentDownloaded.takeIf { it >= 0 } ?: JSONObject.NULL)
             .put("createdAt", offlineIsoTime(download.startTimeMs)).put("updatedAt", offlineIsoTime(download.updateTimeMs))
-            .put("error", if (state == "failed") errors.getString(download.request.id, "offline_download_failed") else JSONObject.NULL)
+            .put("error", if (waiting) "offline_waiting_wifi" else if (state == "failed") errors.getString(download.request.id, "offline_download_failed") else JSONObject.NULL)
     }
     fun locator(id: String): JSONObject {
         val download = index.getDownload(id) ?: throw OfflineDownloadException("offline_download_missing")
@@ -262,6 +280,7 @@ internal class OfflineVideoDownloads private constructor(private val context: Co
     }
     companion object {
         @Volatile private var current: OfflineVideoDownloads? = null
+        fun refreshNetwork() { Handler(Looper.getMainLooper()).post { current?.applyNetworkPolicy() } }
         fun get(context: Context): OfflineVideoDownloads {
             current?.let { return it }
             check(Looper.myLooper() == Looper.getMainLooper())
@@ -356,7 +375,7 @@ internal class OfflineVideoSecret(val id: String, val uri: String, private val h
 }
 
 /** HTTP transport remains Media3/OkHttp; only manifests are validated and redirected to opaque cache identities. */
-private class OfflineNetworkDataSource(private val secretProvider: () -> OfflineVideoSecret) : BaseDataSource(true) {
+private class OfflineNetworkDataSource(private val gate: () -> Unit = {}, private val secretProvider: () -> OfflineVideoSecret) : BaseDataSource(true) {
     private var upstream: DataSource? = null
     private var opened: DataSpec? = null
     private var buffered: ByteArrayInputStream? = null
@@ -368,6 +387,7 @@ private class OfflineNetworkDataSource(private val secretProvider: () -> Offline
         }
     }
     private fun openChecked(dataSpec: DataSpec): Long {
+        gate()
         transferInitializing(dataSpec)
         val secret = try { secretProvider() } catch (_: Exception) { throw OfflineDownloadException("offline_credentials_unavailable") }
         val network = secret.httpFactory().createDataSource().also { upstream = it }
@@ -380,7 +400,7 @@ private class OfflineNetworkDataSource(private val secretProvider: () -> Offline
         val mime = network.responseHeaders.entries.firstOrNull { it.key.equals("content-type", true) }?.value?.firstOrNull().orEmpty()
         val playlist = expectedPlaylist || mime.contains("mpegurl", true)
         val result = if (playlist) {
-            val bytes = readBounded(network, 8 * 1024 * 1024)
+            val bytes = readBounded(network, 8 * 1024 * 1024, gate)
             val base = network.uri ?: actual
             val text = String(bytes, Charsets.UTF_8)
             val parsed = HlsPlaylistParser().parse(base, ByteArrayInputStream(bytes))
@@ -401,6 +421,7 @@ private class OfflineNetworkDataSource(private val secretProvider: () -> Offline
         return result
     }
     override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+        gate()
         if (length == 0) return 0
         val count = try { buffered?.read(buffer, offset, length) ?: requireNotNull(upstream).read(buffer, offset, length) }
             catch (_: Exception) { throw OfflineDownloadException("offline_download_connection_failed") }
@@ -452,10 +473,11 @@ private fun filterOfflineHlsMaster(text: String, base: Uri, selected: Set<Uri>):
     return output.joinToString("\n")
 }
 
-internal fun readBounded(source: DataSource, maximum: Int): ByteArray {
+internal fun readBounded(source: DataSource, maximum: Int, gate: () -> Unit = {}): ByteArray {
     val output = ByteArrayOutputStream()
     val buffer = ByteArray(16384)
     while (true) {
+        gate()
         val count = source.read(buffer, 0, buffer.size)
         if (count == C.RESULT_END_OF_INPUT) break
         if (output.size() + count > maximum) throw OfflineDownloadException("offline_playlist_too_large")

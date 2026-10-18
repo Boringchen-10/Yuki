@@ -28,6 +28,15 @@ try {
   assert.equal(await row("video:shared").locator("progress").getAttribute("value"), "25");
   assert.equal(await row("job:novel-queued").locator("progress").getAttribute("value"), null);
   cases.push("real bytes/resource counts determine progress; unknown totals remain indeterminate; backend identities do not collide");
+  await page.waitForTimeout(600);
+  await page.evaluate(() => { window.__qaChangeBytes(); window.__qaEmit(); });
+  await row("job:shared").locator(".gz-download-rate").filter({hasText:/[KM]B\/s/}).waitFor();
+  await page.evaluate(() => window.__qaWaitWifi());
+  await row("job:shared").getByText("等待 Wi-Fi",{exact:true}).waitFor();
+  assert.equal(await row("job:shared").getByRole("alert").count(),0);
+  assert.equal(await row("job:shared").locator(".gz-download-rate").count(),0);
+  cases.push("real byte changes show transfer rates; Wi-Fi waiting is a neutral state rather than a failure");
+  await mount();
   for (const width of [360, 375, 412, 915, 1280, 1920]) {
     await page.setViewportSize({ width, height: width > 1000 ? 768 : 915 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), width);
@@ -171,10 +180,13 @@ try {
   await page.getByRole("button",{name:"下载设置",exact:true}).click();
   const settings=page.getByRole("dialog",{name:"下载设置",exact:true});
   await settings.getByRole("combobox",{name:"下载目录",exact:true}).selectOption("external:primary");
+  await settings.getByRole("checkbox",{name:"仅 Wi-Fi 下载",exact:true}).check();
   await settings.getByRole("button",{name:"保存下载设置",exact:true}).click();
   await settings.waitFor({state:"detached"});
   await page.getByRole("button",{name:"下载设置",exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('select[aria-label="下载目录"]')?.value==="external:primary");
+  assert.equal(await settings.getByRole("checkbox",{name:"仅 Wi-Fi 下载",exact:true}).isChecked(),true);
+  assert.equal(await settings.locator(".gz-download-wifi").evaluate(node=>getComputedStyle(node).flexDirection),"row");
   assert.equal(await page.evaluate(()=>window.__qaBack()),true);
   await settings.waitFor({state:"detached"});
   cases.push("top-right settings save storage, retain selection when reopened, and system back closes settings first");

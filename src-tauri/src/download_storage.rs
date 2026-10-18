@@ -7,7 +7,7 @@ use tauri::State;
 #[serde(rename_all = "camelCase")]
 pub struct Location { id: String, label: String, path: PathBuf, free_bytes: u64 }
 #[derive(Clone, Serialize, Deserialize)]
-pub struct Storage { selected: String, available: bool, locations: Vec<Location> }
+pub struct Storage { selected: String, available: bool, locations: Vec<Location>, #[serde(default)] wifi_only: bool }
 fn registry() -> &'static Mutex<HashMap<PathBuf, Storage>> { static VALUES: OnceLock<Mutex<HashMap<PathBuf, Storage>>> = OnceLock::new(); VALUES.get_or_init(Default::default) }
 pub fn roots(base: &Path) -> Vec<PathBuf> {
     let mut roots = vec![base.to_path_buf()];
@@ -44,14 +44,14 @@ pub async fn get_download_storage(state: State<'_, AppState>) -> AppResult<Stora
     registry().lock().unwrap().get(&state.data_directory).cloned().ok_or_else(|| AppError::Validation("下载目录选择需要在安卓应用中使用".into()))
 }
 #[tauri::command]
-pub async fn set_download_storage(id: String, state: State<'_, AppState>) -> AppResult<Storage> {
-    let storage = serde_json::from_value(crate::android_bridge::call("setDownloadStorage", serde_json::json!({"id":id})).await?)?;
+pub async fn set_download_storage(id: String, wifi_only: Option<bool>, state: State<'_, AppState>) -> AppResult<Storage> {
+    let storage = serde_json::from_value(crate::android_bridge::call("setDownloadStorage", serde_json::json!({"id":id,"wifiOnly":wifi_only})).await?)?;
     register(&state.data_directory, storage)
 }
 #[cfg(test)]
 pub(crate) fn test_select(base: &Path, selected: &Path, extra: &[PathBuf]) {
     let mut paths = vec![base.to_path_buf()]; paths.extend_from_slice(extra);
-    let storage = Storage { selected:selected.to_string_lossy().into(),available:paths.iter().any(|path|path==selected),locations:paths.into_iter().map(|path| Location {
+    let storage = Storage { selected:selected.to_string_lossy().into(),wifi_only:false,available:paths.iter().any(|path|path==selected),locations:paths.into_iter().map(|path| Location {
         id:if path==base {"internal".into()} else {path.to_string_lossy().into()},label:"fixture".into(),path,free_bytes:100 }).collect() };
     let mut storage=storage; if selected==base {storage.selected="internal".into();}
     register(base,storage).unwrap();

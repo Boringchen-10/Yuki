@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BookOpen, Check, Download, FileDown, Film, HardDrive, Images, Pause, Play, RefreshCw, Settings, Trash2, X } from "lucide-react";
 import DownloadSettings from "./DownloadSettings";
 import LoadingIndicator from "./LoadingIndicator";
+import { DownloadRateMeter, downloadRateLabel } from "./downloadRate";
 import { activeDownload, downloadBytes, downloadCenterApi, downloadErrorLabel, downloadProgress, mergeDownloadTasks, type DownloadAction, type DownloadJob, type DownloadKind, type DownloadReadTarget, type DownloadTask, type VideoDownload } from "./downloadCenterApi";
 import "./downloadCenter.css";
 
@@ -29,6 +30,8 @@ export default function DownloadCenter({ onReadBook, onOpenWork, onError, onToas
   const [settings, setSettings] = useState(false), [settingsBusy, setSettingsBusy] = useState(false);
   const [jobs, setJobs] = useState<DownloadJob[]>([]);
   const [videos, setVideos] = useState<VideoDownload[]>([]);
+  const rateMeter = useRef(new DownloadRateMeter());
+  const [rates, setRates] = useState<Record<string, number | null>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [readErrors, setReadErrors] = useState<string[]>([]);
@@ -82,6 +85,12 @@ export default function DownloadCenter({ onReadBook, onOpenWork, onError, onToas
   }, [refresh]);
 
   const tasks = useMemo(() => mergeDownloadTasks(jobs, videos), [jobs, videos]);
+  useEffect(() => {
+    const now = performance.now(), values: Record<string, number | null> = {};
+    rateMeter.current.retain(new Set(tasks.map(task => task.key)));
+    for (const task of tasks) values[task.key] = rateMeter.current.sample(task.key, task.bytesDownloaded, task.state === "downloading", now);
+    setRates(values);
+  }, [tasks]);
   const active = tasks.some(activeDownload);
   useEffect(() => {
     if (!active) return;
@@ -149,16 +158,18 @@ export default function DownloadCenter({ onReadBook, onOpenWork, onError, onToas
         const percent = downloadProgress(task);
         const busy = pending.includes(task.key) || task.state === "removing";
         const label = task.itemTitle || task.title;
+        const waitingWifi = task.state === "queued" && ["offline_waiting_wifi", "等待 Wi-Fi 连接"].includes(task.error ?? "");
         const control = task.state === "queued" || task.state === "downloading" ? "pause" : task.state === "paused" || task.state === "interrupted" ? "resume" : task.state === "failed" ? "retry" : null;
         const canOpen = task.kind === "video" || task.kind === "file" && !!task.mediaFileId || (task.kind === "comic" || task.kind === "novel") && !!task.pathWord && !!task.entryId;
         return <article key={task.key} className="gz-download-row" role="listitem" data-download-key={task.key}>
           <div className={`gz-download-kind kind-${task.kind}`} title={kindLabels[task.kind]}><Icon size={23} aria-hidden="true" /></div>
           <div className="gz-download-content">
-            <div className="gz-download-title">{task.workId ? <button type="button" title={task.title} onClick={() => onOpenWork(task.workId!)}>{task.title}</button> : <strong title={task.title}>{task.title}</strong>}<span className={`gz-download-state state-${task.state}`}>{task.state === "completed" && <Check size={13} />}{stateLabels[task.state]}</span></div>
+            <div className="gz-download-title">{task.workId ? <button type="button" title={task.title} onClick={() => onOpenWork(task.workId!)}>{task.title}</button> : <strong title={task.title}>{task.title}</strong>}<span className={`gz-download-state state-${task.state}`}>{task.state === "completed" && <Check size={13} />}{waitingWifi ? "等待 Wi-Fi" : stateLabels[task.state]}</span></div>
             {task.itemTitle && <p className="gz-download-item" title={task.itemTitle}>{task.itemTitle}</p>}
             <p className="gz-download-metrics"><span>{kindLabels[task.kind]} · {downloadDetail(task)}</span>{task.state !== "completed" && percent != null && <span>{Math.floor(percent)}%</span>}</p>
             {task.state !== "completed" && <progress max={100} value={percent ?? undefined} aria-label={`${label}下载进度`} />}
-            {(task.error || operationErrors[task.key]) && <p className="gz-download-row-error" role="alert">{operationErrors[task.key] || downloadErrorLabel(task.error!)}</p>}
+            {task.state === "downloading" && <p className="gz-meta gz-download-rate">{downloadRateLabel(rates[task.key] ?? null, task.totalBytes == null ? undefined : task.totalBytes - task.bytesDownloaded)}</p>}
+            {(!waitingWifi && task.error || operationErrors[task.key]) && <p className="gz-download-row-error" role="alert">{operationErrors[task.key] || downloadErrorLabel(task.error!)}</p>}
           </div>
           <div className="gz-download-actions">
             {task.state === "completed" && <button type="button" className="gz-download-open" disabled={busy || !canOpen} aria-label={`${task.kind === "comic" || task.kind === "novel" ? "阅读" : "播放"} ${label}`} title={task.kind === "comic" || task.kind === "novel" ? "阅读" : "播放"} onClick={() => void perform(task, "open")}>{task.kind === "comic" || task.kind === "novel" ? <BookOpen size={19} /> : <Play size={19} />}<span>{task.kind === "comic" || task.kind === "novel" ? "阅读" : "播放"}</span></button>}

@@ -18,6 +18,7 @@ const reads: (() => void)[] = [], controls: (() => void)[] = [];
 const subscribers = new Set<() => void>();
 const calls: any[] = [];
 let selectedStorage = "internal";
+let wifiOnly = false;
 qa.__qaStorageFailure = "";
 qa.__qaSaveStorageFailure = false;
 qa.__qaBack = null;
@@ -26,12 +27,12 @@ qa.__TAURI_INTERNALS__ = { invoke: async (command: string, args: any) => {
     {id:"external:primary",label:"手机存储（应用专属目录）",path:"/storage/emulated/0/Android/data/com.genzo.android.qa/files/YukiDownloads",freeBytes:20*1024**3}];
   if (command === "get_download_storage") {
     if (qa.__qaStorageFailure) throw qa.__qaStorageFailure;
-    return {selected:selectedStorage,available:locations.some(item=>item.id===selectedStorage),locations};
+    return {selected:selectedStorage,available:locations.some(item=>item.id===selectedStorage),locations,wifiOnly};
   }
   if (command === "set_download_storage") {
-    calls.push({action:"storage",id:args.id});
+    calls.push({action:"storage",id:args.id,wifiOnly:args.wifiOnly});
     if (qa.__qaSaveStorageFailure) throw "下载目录不可用或无法写入，请重新选择";
-    selectedStorage=args.id; return {selected:selectedStorage,available:true,locations};
+    selectedStorage=args.id; wifiOnly=args.wifiOnly ?? wifiOnly; return {selected:selectedStorage,available:true,locations,wifiOnly};
   }
   throw new Error(`Unexpected storage command ${command}`);
 } };
@@ -81,6 +82,7 @@ qa.__qaResolveReads = () => { reads.splice(0).forEach(resolve => resolve()); };
 qa.__qaResolveControls = () => { controls.splice(0).forEach(resolve => resolve()); };
 qa.__qaEmit = emit;
 qa.__qaChangeBytes = () => { jobs[0]!.bytesDownloaded = 12 * MB; };
+qa.__qaWaitWifi = () => { jobs[0]!.state = "queued"; jobs[0]!.error = "等待 Wi-Fi 连接"; emit(); };
 qa.__qaEmpty = () => { jobs = []; videos = []; };
 qa.__qaMount = (empty = false) => {
   reset(); if (empty) qa.__qaEmpty();

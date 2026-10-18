@@ -4,14 +4,15 @@ import { Folder, RefreshCw, X } from "lucide-react";
 import LoadingIndicator from "./LoadingIndicator";
 import { downloadBytes } from "./downloadCenterApi";
 
-export interface DownloadStorage { selected: string; available: boolean; locations: { id: string; label: string; path: string; freeBytes: number }[] }
+export interface DownloadStorage { selected: string; available: boolean; wifiOnly?: boolean; locations: { id: string; label: string; path: string; freeBytes: number }[] }
 export default function DownloadSettings({ onClose, onBusyChange }: { onClose: () => void; onBusyChange: (busy: boolean) => void }) {
   const dialog = useRef<HTMLDialogElement>(null), revision = useRef(0), alive = useRef(false);
   const [storage, setStorage] = useState<DownloadStorage | null>(null), [selected, setSelected] = useState("");
   const [loading, setLoading] = useState(true), [saving, setSaving] = useState(false), [error, setError] = useState("");
+  const [wifiOnly, setWifiOnly] = useState(false);
   async function load() {
     const token = ++revision.current; setLoading(true); setError("");
-    try { const value = await invoke<DownloadStorage>("get_download_storage"); if (alive.current && revision.current === token) { setStorage(value); setSelected(value.selected); } }
+    try { const value = await invoke<DownloadStorage>("get_download_storage"); if (alive.current && revision.current === token) { setStorage(value); setSelected(value.selected); setWifiOnly(value.wifiOnly ?? false); } }
     catch (reason) { if (alive.current && revision.current === token) setError(String(reason)); }
     finally { if (alive.current && revision.current === token) setLoading(false); }
   }
@@ -23,7 +24,7 @@ export default function DownloadSettings({ onClose, onBusyChange }: { onClose: (
   async function save() {
     if (saving || !storage?.locations.some(item => item.id === selected)) return;
     setSaving(true); setError("");
-    try { await invoke<DownloadStorage>("set_download_storage", { id: selected }); if (alive.current) onClose(); }
+    try { await invoke<DownloadStorage>("set_download_storage", { id: selected, wifiOnly }); if (alive.current) onClose(); }
     catch (reason) { if (alive.current) setError(String(reason)); }
     finally { if (alive.current) setSaving(false); }
   }
@@ -37,6 +38,8 @@ export default function DownloadSettings({ onClose, onBusyChange }: { onClose: (
         {!storage.available && <option value={storage.selected} disabled>原目录当前不可用，请重新选择</option>}{storage.locations.map(item => <option value={item.id} key={item.id}>{item.label}</option>)}
       </select></label>
       {choice && <div className="gz-download-directory"><Folder size={20} aria-hidden="true" /><div><strong>可用空间 {downloadBytes(choice.freeBytes)}</strong><p className="gz-meta">{choice.path}</p></div></div>}
+      <label className="gz-download-wifi"><input type="checkbox" checked={wifiOnly} disabled={saving} onChange={event => setWifiOnly(event.target.checked)} /><span>仅 Wi-Fi 下载</span></label>
+      <p className="gz-meta">视频、漫画、小说和文件任务共用此设置。离开 Wi-Fi 后等待连接恢复，已暂停的任务保持暂停。</p>
       <p className="gz-meta">后续下载使用所选位置，已有下载保留原位。检测到 SD 卡时可在这里选择；应用专属文件会随卸载清除。</p>
     </>}
     {error && <p className="gz-error" role="alert">{error}</p>}

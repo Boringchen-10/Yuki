@@ -67,7 +67,7 @@ class ReaderControlArgs { lateinit var sessionId: String; lateinit var action: S
 @InvokeArg
 class DataPackageArgs { lateinit var data: String }
 @InvokeArg
-class DownloadStorageArgs { lateinit var id: String }
+class DownloadStorageArgs { lateinit var id: String; var wifiOnly: Boolean? = null }
 @InvokeArg
 class ImportServiceArgs { var text: String = "正在整理目录" }
 @InvokeArg
@@ -127,10 +127,12 @@ class GenzoPlugin(private val activity: Activity) : Plugin(activity) {
     }
     @Command
     fun setDownloadStorage(invoke: Invoke) {
-        val id = invoke.parseArgs(DownloadStorageArgs::class.java).id
-        downloadReadWorker.execute { try { invoke.resolve(JSObject(DownloadStorage.select(activity, id).toString())) }
+        val args = invoke.parseArgs(DownloadStorageArgs::class.java)
+        downloadReadWorker.execute { try { invoke.resolve(JSObject(DownloadStorage.select(activity, args.id, args.wifiOnly).toString())) }
             catch (_: Exception) { invoke.reject("下载目录不可用或无法写入，请重新选择") } }
     }
+    @Command
+    fun getDownloadNetwork(invoke: Invoke) { invoke.resolve(JSObject(DownloadNetwork.state(activity).toString())) }
     @Command
     fun parseRuleHtml(invoke: Invoke) {
         val args = invoke.parseArgs(RuleArgs::class.java)

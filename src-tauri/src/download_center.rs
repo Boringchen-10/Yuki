@@ -188,7 +188,24 @@ pub async fn enqueue_file_download(media_file_id: String, state: State<'_, AppSt
 fn start_worker(state: AppState, runtime: Arc<Runtime>) {
     if runtime.worker.swap(true, Ordering::AcqRel) { return; }
     tauri::async_runtime::spawn(async move {
+        let mut waiting_service = false;
         loop {
+            let queued = sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM download_jobs WHERE state='queued')").fetch_one(&state.pool).await.unwrap_or(false);
+            if queued && !network_allowed().await.unwrap_or(false) {
+                if !waiting_service {
+                    if service(&state.pool).await.is_err() { let _ = interrupt(&state.pool).await; runtime.worker.store(false, Ordering::Release); emit(&state.pool).await; break; }
+                    waiting_service = true;
+                }
+                if service_stopped().await.unwrap_or(true) { let _ = interrupt(&state.pool).await; runtime.worker.store(false, Ordering::Release); emit(&state.pool).await; break; }
+                if let Ok((_guard, mut tx)) = db::begin_write(&state.pool).await {
+                    let changed = sqlx::query("UPDATE download_jobs SET error='等待 Wi-Fi 连接' WHERE state='queued' AND error IS NULL").execute(&mut *tx).await.map(|result| result.rows_affected()).unwrap_or(0);
+                    let _ = tx.commit().await;
+                    if changed > 0 { emit(&state.pool).await; }
+                }
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                continue;
+            }
+            waiting_service = false;
             let claimed = {
                 let _control = runtime.controls.lock().await;
                 claim(&state.pool).await
@@ -244,6 +261,24 @@ async fn claim(pool: &SqlitePool) -> AppResult<Option<DownloadJob>> {
 }
 
 struct Completed { bytes: i64, units: Option<i64> }
+pub(crate) async fn network_allowed() -> AppResult<bool> {
+    #[cfg(target_os = "android")]
+    { return Ok(crate::android_bridge::call("getDownloadNetwork", serde_json::json!({})).await?["allowed"].as_bool().unwrap_or(false)); }
+    #[cfg(not(target_os = "android"))]
+    Ok(true)
+}
+async fn requeue_for_wifi(pool: &SqlitePool, job: &DownloadJob) -> AppResult<()> {
+    let (_guard, mut tx) = db::begin_write(pool).await?;
+    sqlx::query("UPDATE download_jobs SET state='queued',generation=generation+1,error='等待 Wi-Fi 连接',bytes_downloaded=CASE WHEN kind='file' THEN bytes_downloaded ELSE 0 END,completed_units=0,updated_at=? WHERE id=? AND generation=? AND state='downloading'")
+        .bind(Utc::now().to_rfc3339()).bind(&job.id).bind(job.generation).execute(&mut *tx).await?;
+    tx.commit().await?; Ok(())
+}
+async fn guard_network(pool: &SqlitePool, job: &DownloadJob, cancel: &watch::Sender<bool>) -> AppResult<()> {
+    if *cancel.borrow() { return Ok(()); }
+    if !network_allowed().await.unwrap_or(false) { requeue_for_wifi(pool, job).await?; cancel.send_replace(true); }
+    else if service_stopped().await.unwrap_or(true) { interrupt(pool).await?; cancel.send_replace(true); }
+    Ok(())
+}
 async fn perform(state: &AppState, job: &DownloadJob, cancel: watch::Sender<bool>) -> AppResult<Completed> {
     let mut ticks = tokio::time::interval(Duration::from_millis(500));
     if job.kind == "file" {
@@ -258,8 +293,7 @@ async fn perform(state: &AppState, job: &DownloadJob, cancel: watch::Sender<bool
             tokio::select! {
                 result = &mut download => return Ok(Completed { bytes: tokio::fs::metadata(result?).await?.len() as i64, units: Some(1) }),
                 _ = ticks.tick() => {
-                    let cancelling = *cancel.borrow();
-                    if !cancelling && service_stopped().await.unwrap_or(true) { interrupt(&state.pool).await?; cancel.send_replace(true); }
+                    guard_network(&state.pool, job, &cancel).await?;
                     let size: Option<i64> = sqlx::query_scalar("SELECT size FROM remote_cache WHERE media_file_id=?").bind(id).fetch_optional(&state.pool).await?;
                     if let Some(size) = size { if size != previous { persist_progress(&state.pool, job, size, job.total_bytes, 0, Some(1)).await?; previous = size; } }
                 }
@@ -275,8 +309,7 @@ async fn perform(state: &AppState, job: &DownloadJob, cancel: watch::Sender<bool
         tokio::select! {
             result = &mut download => return Ok(Completed { bytes: result?.bytes as i64, units: current.borrow().total_units.map(|value| value as i64) }),
             _ = ticks.tick() => {
-                let cancelling = *cancel.borrow();
-                if !cancelling && service_stopped().await.unwrap_or(true) { interrupt(&state.pool).await?; cancel.send_replace(true); }
+                guard_network(&state.pool, job, &cancel).await?;
                 let value = current.borrow().clone();
                 let snapshot = (value.bytes_downloaded, value.completed_units, value.total_units);
                 if snapshot != previous { persist_progress(&state.pool, job, value.bytes_downloaded as i64, None, value.completed_units as i64, value.total_units.map(|value| value as i64)).await?; previous = snapshot; }
@@ -319,7 +352,7 @@ async fn control(state: &AppState, id: &str, action: DownloadAction) -> AppResul
         DownloadAction::Pause | DownloadAction::Remove => {
             if matches!(action, DownloadAction::Pause) && !matches!(job.state.as_str(), "queued" | "downloading") { return Ok(()); }
             let (_guard, mut tx) = db::begin_write(&state.pool).await?;
-            sqlx::query("UPDATE download_jobs SET state=CASE WHEN state='completed' THEN state ELSE 'paused' END,generation=generation+1,updated_at=? WHERE id=?")
+            sqlx::query("UPDATE download_jobs SET state=CASE WHEN state='completed' THEN state ELSE 'paused' END,generation=generation+1,error=CASE WHEN error='等待 Wi-Fi 连接' THEN NULL ELSE error END,updated_at=? WHERE id=?")
                 .bind(Utc::now().to_rfc3339()).bind(id).execute(&mut *tx).await?;
             tx.commit().await?; drop(_guard);
             let active = runtime.active.lock().unwrap().as_ref().filter(|active| active.id == id).cloned();
@@ -563,6 +596,29 @@ mod tests {
         sqlx::query("UPDATE library_roots SET enabled=0").execute(&state.pool).await.unwrap();
         assert!(enqueue_file(&state.pool,&id).await.is_err());
         assert!(enqueue_file(&state.pool,"../original.mp4").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn wifi_waiting_fences_late_writers_and_manual_pause_stays_paused() {
+        let (_directory,state) = state().await;
+        let comic = enqueue_books(&state.pool,"comic","book","default","作品", &[entry("one")]).await.unwrap().remove(0);
+        let claimed = claim(&state.pool).await.unwrap().unwrap();
+        requeue_for_wifi(&state.pool,&claimed).await.unwrap();
+        persist_progress(&state.pool,&claimed,100,None,1,Some(1)).await.unwrap();
+        finish(&state.pool,&claimed,Ok(Completed {bytes:100,units:Some(1)})).await.unwrap();
+        let waiting = row(&state.pool,&comic.id).await.unwrap();
+        assert_eq!(waiting.state,"queued"); assert_eq!(waiting.error.as_deref(),Some("等待 Wi-Fi 连接"));
+        assert_eq!(waiting.generation,claimed.generation+1); assert_eq!(waiting.bytes_downloaded,0);
+        control(&state,&comic.id,DownloadAction::Pause).await.unwrap();
+        let paused = row(&state.pool,&comic.id).await.unwrap();
+        assert_eq!(paused.state,"paused"); assert_eq!(paused.error,None);
+
+        let id = uuid::Uuid::new_v4().to_string(); seed_remote(&state,&id).await;
+        let file = enqueue_file(&state.pool,&id).await.unwrap();
+        let claimed = claim(&state.pool).await.unwrap().unwrap();
+        persist_progress(&state.pool,&claimed,7,Some(17),0,Some(1)).await.unwrap();
+        requeue_for_wifi(&state.pool,&claimed).await.unwrap();
+        assert_eq!(row(&state.pool,&file.id).await.unwrap().bytes_downloaded,7);
     }
 
     #[tokio::test]

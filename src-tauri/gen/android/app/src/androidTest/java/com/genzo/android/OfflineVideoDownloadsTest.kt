@@ -133,6 +133,46 @@ class OfflineVideoDownloadsTest {
     @Test fun durableProgressivePausesResumesAndPlaysWithoutItsOrigin() {
         progressiveStorage("internal", true)
     }
+    @Test fun wifiOnlyBlocksProbesAndQueuedBytesAndKeepsManualPause() {
+        org.junit.Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("yukiWifiBlocked") == "true")
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        assertTrue("isolated QA package required", context.packageName.endsWith("qa"))
+        val previous = DownloadStorage.selectedId(context); val previousWifi = DownloadNetwork.onlyWifi(context)
+        val downloads = onMain { OfflineVideoDownloads.get(context) }
+        await { onMain { downloads.manager.isInitialized } }
+        val previousRequirements = onMain { downloads.manager.requirements }
+        onMain { downloads.manager.requirements = androidx.media3.exoplayer.scheduler.Requirements(0) }
+        val id = "qa_wifi_${UUID.randomUUID()}"
+        val origin = FixtureServer(mapOf("/video.mp4" to ("video/mp4" to ByteArray(1024 * 1024) { (it % 251).toByte() })))
+        try {
+            DownloadStorage.select(context, previous, true)
+            assertFalse("Run this explicit case with Wi-Fi disconnected", DownloadNetwork.allowed(context))
+            try { downloads.prepare(id,"${origin.base}/video.mp4",emptyMap(),"QA Wi-Fi",null,null,null,org.json.JSONObject()); fail("Probe must wait for Wi-Fi") }
+            catch (error: OfflineDownloadException) { assertEquals("offline_waiting_wifi",error.reason) }
+            assertTrue(origin.requests.isEmpty())
+            DownloadStorage.select(context, previous, false)
+            val ticket = downloads.stage { downloads.prepare(id,"${origin.base}/video.mp4",emptyMap(),"QA Wi-Fi",null,null,null,org.json.JSONObject()) }
+            val request = downloads.commitTicket(ticket,id); val probes = origin.requests.size
+            DownloadStorage.select(context, previous, true)
+            onMain { downloads.manager.addDownload(request) }
+            await { downloads.manager.downloadIndex.getDownload(id) != null }
+            Thread.sleep(500)
+            assertEquals(0L,downloads.manager.downloadIndex.getDownload(id)!!.bytesDownloaded)
+            assertEquals(probes,origin.requests.size)
+            onMain { downloads.manager.setStopReason(id,1) }
+            DownloadStorage.select(context, previous, false)
+            Thread.sleep(300)
+            assertEquals(1,downloads.manager.downloadIndex.getDownload(id)!!.stopReason)
+            assertEquals(probes,origin.requests.size)
+            onMain { downloads.manager.setStopReason(id,Download.STOP_REASON_NONE); downloads.manager.resumeDownloads() }
+            await { downloads.manager.downloadIndex.getDownload(id)?.state == Download.STATE_COMPLETED }
+        } finally {
+            origin.close(); onMain { downloads.manager.removeDownload(id) }
+            await { downloads.manager.downloadIndex.getDownload(id) == null }
+            onMain { downloads.manager.requirements = previousRequirements }
+            DownloadStorage.select(context,previous,previousWifi)
+        }
+    }
     @Test fun externalStorageKeepsPausedDownloadsReadableAfterChangingTheDefault() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val external = DownloadStorage.locations(context).firstOrNull { it.id != "internal" }

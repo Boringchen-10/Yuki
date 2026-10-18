@@ -293,7 +293,15 @@ fn start_worker(state: AppState) {
                     break;
                 }
             };
-            let claimed = sqlx::query("UPDATE rule_video_downloads SET state='downloading',updated_at=? WHERE id=? AND generation=? AND state='queued'")
+            if !crate::download_center::network_allowed().await.unwrap_or(false) {
+                if task.error.as_deref() != Some("offline_waiting_wifi") {
+                    let _ = sqlx::query("UPDATE rule_video_downloads SET error='offline_waiting_wifi' WHERE id=? AND generation=? AND state='queued'")
+                        .bind(&task.id).bind(task.generation).execute(&state.pool).await;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                continue;
+            }
+            let claimed = sqlx::query("UPDATE rule_video_downloads SET state='downloading',error=NULL,updated_at=? WHERE id=? AND generation=? AND state='queued'")
                 .bind(now()).bind(&task.id).bind(task.generation).execute(&state.pool).await;
             match claimed {
                 Ok(result) if result.rows_affected() == 1 => {}
@@ -327,12 +335,13 @@ fn start_worker(state: AppState) {
                 Ok::<_,AppError>(())
             }.await;
             if let Err(error) = result {
-                let code = match &error {
+                let code = if !crate::download_center::network_allowed().await.unwrap_or(false) { "offline_waiting_wifi" } else { match &error {
                     AppError::Validation(code) if code.starts_with("offline_") => code.as_str(),
                     _ => "offline_download_resolve_failed",
-                };
-                let _ = sqlx::query("UPDATE rule_video_downloads SET state='failed',error=?,updated_at=? WHERE id=? AND generation=? AND state='downloading'")
-                    .bind(code).bind(now()).bind(&task.id).bind(task.generation).execute(&state.pool).await;
+                } };
+                let next_state = if code == "offline_waiting_wifi" { "queued" } else { "failed" };
+                let _ = sqlx::query("UPDATE rule_video_downloads SET state=?,error=?,generation=generation+1,updated_at=? WHERE id=? AND generation=? AND state='downloading'")
+                    .bind(next_state).bind(code).bind(now()).bind(&task.id).bind(task.generation).execute(&state.pool).await;
             }
         }
     });
@@ -366,7 +375,7 @@ pub async fn control_video_download(
     };
     if action == "remove" || action == "pause" {
         if action == "pause" && (download.is_none() || task.state != "handed_off") {
-            sqlx::query("UPDATE rule_video_downloads SET state='paused',generation=generation+1,updated_at=? WHERE id=?").bind(now()).bind(&id).execute(&state.pool).await?;
+            sqlx::query("UPDATE rule_video_downloads SET state='paused',error=CASE WHEN error='offline_waiting_wifi' THEN NULL ELSE error END,generation=generation+1,updated_at=? WHERE id=?").bind(now()).bind(&id).execute(&state.pool).await?;
         }
         // Service intents may not yet be visible in the index; stop/remove must
         // still be ordered after a just-dispatched add.
