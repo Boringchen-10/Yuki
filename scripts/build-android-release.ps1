@@ -37,5 +37,15 @@ if ($LASTEXITCODE -ne 0) { throw 'Signed APK alignment verification failed' }
 Remove-Item -LiteralPath $taskAligned
 $taskHash = (Get-FileHash -LiteralPath $taskApk -Algorithm SHA256).Hash.ToLowerInvariant()
 "$taskHash  $(Split-Path -Leaf $taskApk)" | Set-Content -LiteralPath (Join-Path $taskOutput 'SHA256SUMS.txt') -Encoding ascii
+$taskAssetName = Split-Path -Leaf $taskApk
+$taskReleaseBase = "https://github.com/Boringchen-10/Yuki/releases/download/v$taskVersion"
+$taskManifest = @(@{
+    tag_name = "v$taskVersion"; draft = $false; prerelease = $false
+    assets = @(
+        @{ name = $taskAssetName; size = (Get-Item -LiteralPath $taskApk).Length; digest = "sha256:$taskHash"; browser_download_url = "$taskReleaseBase/$taskAssetName" },
+        @{ name = 'SHA256SUMS.txt'; browser_download_url = "$taskReleaseBase/SHA256SUMS.txt" }
+    )
+})
+ConvertTo-Json -InputObject $taskManifest -Depth 5 | Set-Content -LiteralPath (Join-Path $taskOutput 'update.json') -Encoding utf8NoBOM
 Write-Output $taskApk
 Write-Output $taskHash

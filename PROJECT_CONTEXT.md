@@ -3,7 +3,7 @@
 ## 产品与兼容
 
 - 独立安卓 ACGN 媒体库；主页、源码和更新源为 [Boringchen-10/Yuki](https://github.com/Boringchen-10/Yuki)。Windows 留在原 Genzo 仓库。
-- 当前版本 v1.0.1，含规则仓库连接修复。保留正式包 `com.genzo.android`、原签名、内部 genzo 标识、资料路径、偏好与同步协议。
+- 当前版本 v1.0.2，含规则仓库连接与应用更新限流修复。保留正式包 `com.genzo.android`、原签名、内部 genzo 标识、资料路径、偏好与同步协议。
 - `com.genzo.android.readerqa` 为隔离测试包。数据库只新增迁移，不清库、不重建资料、不修改用户真实媒体。
 
 ## 架构与功能
@@ -18,6 +18,6 @@
 
 ## 更新与许可
 
-- 手动检查 Yuki 正式 Releases；验证 APK 的 ABI、大小、SHA-256、包名、证书与递增 versionCode 后交给系统安装。
+- 手动检查 Yuki 正式 Releases，优先读取静态更新清单，失败时兼容 API；验证 APK 的 ABI、大小、SHA-256、包名、证书与递增 versionCode 后交给系统安装。
 - 旧包查询旧仓库时需先手动安装兼容新版；不要求卸载或清库。发布流程见 [RELEASING](docs/RELEASING.md)。
 - GPL-3.0-only；保留历史、版权及第三方归属。代码许可不授予第三方角色、商标或媒体权利。

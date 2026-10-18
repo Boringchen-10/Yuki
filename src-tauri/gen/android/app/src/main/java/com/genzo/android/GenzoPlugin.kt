@@ -110,6 +110,15 @@ class GenzoPlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun installAppUpdate(invoke: Invoke) { invoke.resolve(AppUpdater.install(activity)) }
     @Command
+    fun openAppReleases(invoke: Invoke) {
+        activity.runOnUiThread {
+            try {
+                activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(AppUpdatePolicy.RELEASE_PAGE)))
+                invoke.resolve(AppUpdater.status(activity))
+            } catch (_: Exception) { invoke.reject("无法打开浏览器，请手动访问 Yuki 的 GitHub 发布页") }
+        }
+    }
+    @Command
     fun parseRuleHtml(invoke: Invoke) {
         val args = invoke.parseArgs(RuleArgs::class.java)
         worker.execute { try { invoke.resolve(JSObject(RuleHtml.parse(args.html, org.json.JSONObject(args.rule), args.operation).toString())) }

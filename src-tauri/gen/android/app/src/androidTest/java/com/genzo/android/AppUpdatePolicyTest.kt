@@ -60,6 +60,53 @@ class AppUpdatePolicyTest {
         assertFalse(AppUpdatePolicy.trustedUrl(asset.getString("browser_download_url"), true))
         assertNotNull(AppUpdatePolicy.offer(JSONArray().put(release("0.18.0", brand = "Yuki")), "0.17.2", "arm64-v8a"))
     }
+    @Test fun publicManifestFindsUpdateWithoutCallingARateLimitedApi() {
+        val calls = mutableListOf<String>()
+        val next = AppUpdatePolicy.resolve("1.0.0", "arm64-v8a") { url, api ->
+            calls.add(url)
+            assertFalse(api)
+            assertEquals(AppUpdatePolicy.MANIFEST, url)
+            JSONArray().put(release("1.0.1", brand = "Yuki")).toString()
+        }
+        assertEquals("1.0.1", next?.version)
+        assertEquals(listOf(AppUpdatePolicy.MANIFEST), calls)
+        assertEquals("https://github.com/Boringchen-10/Yuki/releases/latest", AppUpdatePolicy.RELEASE_PAGE)
+    }
+    @Test fun validManifestDoesNotProbeApiWhenCurrentOrAbiUnsupported() {
+        for ((current, abi) in listOf("1.0.1" to "arm64-v8a", "1.0.2" to "arm64-v8a", "1.0.0" to "x86_64")) {
+            var calls = 0
+            assertNull(AppUpdatePolicy.resolve(current, abi) { _, api ->
+                calls++; assertFalse(api)
+                JSONArray().put(release("1.0.1", brand = "Yuki")).toString()
+            })
+            assertEquals(1, calls)
+        }
+    }
+    @Test fun missingMalformedAndUnsafeManifestUseCompatibleReleaseApi() {
+        val unsafe = release("1.0.2", brand = "Yuki").also {
+            it.getJSONArray("assets").getJSONObject(0).put("browser_download_url", "https://example.org/update.apk")
+        }
+        for (manifest in listOf(null, "<html>unavailable</html>", "[]", JSONArray().put(unsafe).toString(),
+            JSONArray().put(release("1.0.2", prerelease = true)).toString())) {
+            val calls = mutableListOf<Boolean>()
+            val next = AppUpdatePolicy.resolve("1.0.0", "arm64-v8a") { url, api ->
+                calls.add(api)
+                if (!api) manifest ?: throw java.io.IOException("HTTP 404")
+                else { assertEquals(AppUpdatePolicy.API, url); JSONArray().put(release("1.0.1", brand = "Yuki")).toString() }
+            }
+            assertEquals(listOf(false, true), calls)
+            assertEquals("1.0.1", next?.version)
+        }
+    }
+    @Test fun allMetadataRoutesFailWithoutClaimingTheAppIsCurrent() {
+        try {
+            AppUpdatePolicy.resolve("1.0.0", "arm64-v8a") { _, api ->
+                if (api) throw IllegalArgumentException("更新服务暂时限流，请稍后重试")
+                else throw java.io.IOException("offline")
+            }
+            fail("must report failure")
+        } catch (error: IllegalArgumentException) { assertTrue(error.message!!.contains("限流")) }
+    }
     @Test fun identityRequiresTheSameApplicationAndSigningKeyAndAHigherCode() {
         AppUpdatePolicy.validateIdentity("com.genzo.android", 17001, setOf("key"), "com.genzo.android", 17000, setOf("key"))
         fun rejected(name: String, code: Long, keys: Set<String>) {

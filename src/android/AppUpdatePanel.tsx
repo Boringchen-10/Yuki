@@ -37,6 +37,8 @@ export default function AppUpdatePanel() {
   if (!isTauri()) return <p className="gz-meta">应用内更新可在安卓安装版中使用。</p>;
   const working = pending || !!status && busy(status.phase);
   const ready = !!status && ["ready", "permission"].includes(status.phase);
+  // Refactoring UI §2.8: keep download/install primary; the official page is a
+  // secondary recovery action. Reuse gz-actions, gz-btn and existing theme tokens.
   return <section className="gz-panel" aria-label="应用更新">
     <h3>应用更新</h3>
     <p className="gz-meta">当前版本 {status?.currentVersion || "…"} · 从 Yuki 官方 GitHub Release 获取新版安装包。</p>
@@ -52,6 +54,7 @@ export default function AppUpdatePanel() {
       {status?.version && !ready && !working && <button className="gz-btn primary" onClick={() => void action("downloadAppUpdate")}><Download size={16} />下载安装包</button>}
       {ready && <button className="gz-btn primary" disabled={working} onClick={() => void action("installAppUpdate")}>安装更新</button>}
       {working && status?.phase !== "installing" && <button className="gz-btn" onClick={() => void action("cancelAppUpdate")}><X size={16} />取消</button>}
+      {(error || status?.error) && <button className="gz-btn" disabled={working} onClick={() => void action("openAppReleases")}>前往官方发布页</button>}
     </div>
     <p className="gz-meta">升级保留媒体库、来源配置、收藏与播放记录；安装包会核对包名、版本、SHA-256 和签名。首次安装更新可能需要系统授权。</p>
   </section>;

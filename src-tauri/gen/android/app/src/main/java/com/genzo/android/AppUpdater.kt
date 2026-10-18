@@ -25,6 +25,9 @@ internal data class AppUpdateOffer(val version: String, val name: String, val ur
 
 internal object AppUpdatePolicy {
     const val REPOSITORY = "Boringchen-10/Yuki"
+    const val RELEASE_PAGE = "https://github.com/$REPOSITORY/releases/latest"
+    const val MANIFEST = "$RELEASE_PAGE/download/update.json"
+    const val API = "https://api.github.com/repos/$REPOSITORY/releases?per_page=30"
     const val MAX_APK_BYTES = 512L * 1024 * 1024
     private fun version(value: String): List<Int>? {
         return Regex("^v?(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$").matchEntire(value)
@@ -74,6 +77,19 @@ internal object AppUpdatePolicy {
             selected = AppUpdateOffer(version, name, url, size, sums, digest)
         }
         return selected
+    }
+    fun resolve(current: String, abi: String, fetch: (String, Boolean) -> String): AppUpdateOffer? {
+        // The public release asset does not consume the shared anonymous REST quota.
+        val releases = try {
+            JSONArray(fetch(MANIFEST, false)).also { releases ->
+                require(releases.length() == 1 &&
+                    listOf("arm64-v8a", "x86_64").any { offer(releases, "0.0.0", it) != null }) { "更新清单无效" }
+            }
+        } catch (_: Exception) {
+            // Older releases may not contain a manifest yet.
+            JSONArray(fetch(API, true))
+        }
+        return offer(releases, current, abi)
     }
     fun validateIdentity(packageName: String, versionCode: Long, signers: Set<String>, installedName: String, installedCode: Long, installedSigners: Set<String>) {
         require(packageName == installedName) { "安装包与当前应用包名不一致" }
@@ -152,11 +168,11 @@ internal object AppUpdater {
         var url = address
         repeat(6) {
             check(current(id))
-            require(if (api) url == "https://api.github.com/repos/${AppUpdatePolicy.REPOSITORY}/releases?per_page=30" else AppUpdatePolicy.trustedUrl(url, false)) { "更新下载地址不受信任" }
+            require(if (api) url == AppUpdatePolicy.API else AppUpdatePolicy.trustedUrl(url, false)) { "更新下载地址不受信任" }
             val call = client.newCall(Request.Builder().url(url).header("User-Agent", "Yuki-Android-Updater")
                 .header("Accept", if (api) "application/vnd.github+json" else "application/octet-stream").build())
             // Metadata and headers are bounded; the APK body uses an idle timeout so large downloads can finish.
-            call.timeout().timeout(if (api) 20 else 0, TimeUnit.SECONDS)
+            call.timeout().timeout(if (api || address == AppUpdatePolicy.MANIFEST) 20 else 0, TimeUnit.SECONDS)
             synchronized(lock) { check(operation == id); activeCall = call }
             val reply = call.execute()
             if (reply.code in listOf(301, 302, 303, 307, 308)) {
@@ -189,9 +205,8 @@ internal object AppUpdater {
     fun check(activity: Activity): JSObject {
         val id = synchronized(lock) { if (busy()) return status(activity); phase = "checking"; error = ""; ++operation }
         worker.execute { try {
-            val releases = JSONArray(text(id, "https://api.github.com/repos/${AppUpdatePolicy.REPOSITORY}/releases?per_page=30", true))
             val abi = Build.SUPPORTED_ABIS.firstOrNull { it in setOf("arm64-v8a", "x86_64") } ?: "unsupported"
-            val next = AppUpdatePolicy.offer(releases, packageInfo(activity).versionName ?: "", abi)
+            val next = AppUpdatePolicy.resolve(packageInfo(activity).versionName ?: "", abi) { url, api -> text(id, url, api) }
             update(id) { offer = next; downloaded = 0; readyFile = null; verifiedDigest = ""; phase = if (next == null) "current" else "available" }
         } catch (exception: Exception) { fail(id, exception) } }
         return status(activity)
