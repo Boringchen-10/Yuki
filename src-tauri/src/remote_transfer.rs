@@ -100,12 +100,12 @@ async fn resource(pool: &SqlitePool, id: &str) -> AppResult<Resource> {
         .bind(id).fetch_optional(pool).await?.ok_or_else(|| AppError::NotFound("远程文件不存在".into()))
 }
 
-fn cache_directory(state: &AppState) -> AppResult<PathBuf> {
-    let directory = state.data_directory.join("remote-cache");
+fn cache_directory(root: &std::path::Path) -> AppResult<PathBuf> {
+    let directory = root.join("remote-cache");
     if let Ok(metadata) = std::fs::symlink_metadata(&directory) {
         let resolved = std::fs::canonicalize(&directory)?;
         if !metadata.is_dir() || metadata.file_type().is_symlink()
-            || resolved.parent() != Some(std::fs::canonicalize(&state.data_directory)?.as_path()) {
+            || resolved.parent() != Some(std::fs::canonicalize(root)?.as_path()) {
             return Err(AppError::Validation("下载缓存目录无效，未修改文件".into()));
         }
     }
@@ -116,7 +116,10 @@ fn cache_path(state: &AppState, id: &str, extension: &str, partial: bool) -> App
     if extension.len() > 16 || !extension.bytes().all(|b| b.is_ascii_alphanumeric()) {
         return Err(AppError::Validation("文件扩展名无效".into()));
     }
-    let path = cache_directory(state)?.join(format!("{id}.{}", if partial { "part" } else { extension }));
+    let candidates = [PathBuf::from(format!("remote-cache/{id}.{extension}")), PathBuf::from(format!("remote-cache/{id}.part"))];
+    let root = crate::download_storage::existing_root(&state.data_directory, &candidates)
+        .map(Ok).unwrap_or_else(|| crate::download_storage::write_root(&state.data_directory))?;
+    let path = cache_directory(&root)?.join(format!("{id}.{}", if partial { "part" } else { extension }));
     if std::fs::symlink_metadata(&path).is_ok_and(|metadata| !metadata.is_file() || metadata.file_type().is_symlink()) {
         return Err(AppError::Validation("下载缓存文件无效，未修改文件".into()));
     }
@@ -183,12 +186,13 @@ async fn remove(state: &AppState, id: &str) -> AppResult<()> {
         ));
     }
     Uuid::parse_str(id).map_err(|_| AppError::Validation("文件标识无效".into()))?;
-    let directory = cache_directory(state)?;
     let paths = match resource(&state.pool, id).await {
         Ok(r) => vec![cache_path(state, id, &r.extension, false)?, cache_path(state, id, &r.extension, true)?],
         Err(AppError::NotFound(_)) => {
             let mut paths = vec![];
-            if directory.exists() {
+            for root in crate::download_storage::roots(&state.data_directory) {
+                let directory = cache_directory(&root)?;
+                if directory.exists() {
                 for item in std::fs::read_dir(&directory)? {
                     let item = item?;
                     let path = item.path();
@@ -197,6 +201,7 @@ async fn remove(state: &AppState, id: &str) -> AppResult<()> {
                             paths.push(cache_path(state, id, extension, false)?);
                         }
                     }
+                }
                 }
             }
             paths
@@ -283,6 +288,7 @@ async fn cancellable<T>(cancel: Option<watch::Receiver<bool>>, future: impl std:
     }
 }
 async fn download_inner(state: &AppState, id: &str, pinned: bool, cancel: Option<watch::Receiver<bool>>) -> AppResult<PathBuf> {
+    crate::download_storage::refresh(state).await?;
     let _guard = TRANSFER_LOCK
         .get_or_init(|| Mutex::new(()))
         .try_lock()
@@ -302,7 +308,10 @@ async fn download_inner(state: &AppState, id: &str, pinned: bool, cancel: Option
     let source = remote_storage::source(&state.pool, &r.source_id).await?;
     let client = remote_storage::client(&source)?;
     let target = cache_path(state, id, &r.extension, false)?;
-    let partial = cache_path(state, id, &r.extension, true)?;
+    let partial = target.with_extension("part");
+    if std::fs::symlink_metadata(&partial).is_ok_and(|metadata| !metadata.is_file() || metadata.file_type().is_symlink()) {
+        return Err(AppError::Validation("下载缓存文件无效，未修改文件".into()));
+    }
     tokio::fs::create_dir_all(target.parent().unwrap()).await?;
     let previous: Option<(String, bool)> =
         sqlx::query_as("SELECT revision,pinned FROM remote_cache WHERE media_file_id=?")
@@ -703,6 +712,20 @@ fn valid_range(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn partial_download_stays_on_its_original_volume_and_remove_preserves_source_files() {
+        let base=tempfile::tempdir().unwrap(); let external=tempfile::tempdir().unwrap();
+        let state=AppState {pool:crate::db::test_pool().await.unwrap(),database_path:base.path().join("test.db"),data_directory:base.path().into(),cover_cache_path:base.path().join("covers"),thumbnail_cache_path:base.path().join("thumbs")};
+        let id=Uuid::new_v4().to_string();
+        crate::download_storage::test_select(base.path(),external.path(),&[external.path().into()]);
+        let part=cache_path(&state,&id,"mp4",true).unwrap(); assert!(part.starts_with(external.path()));
+        std::fs::create_dir_all(part.parent().unwrap()).unwrap(); std::fs::write(&part,b"partial").unwrap();
+        let source=base.path().join("original.mp4"); std::fs::write(&source,b"original media").unwrap();
+        crate::download_storage::test_select(base.path(),base.path(),&[external.path().into()]);
+        assert_eq!(cache_path(&state,&id,"mp4",true).unwrap(),part);
+        remove_download(&state,&id).await.unwrap();
+        assert!(!part.exists()); assert_eq!(std::fs::read(&source).unwrap(),b"original media");
+    }
     #[tokio::test]
     async fn offline_cache_leases_are_session_scoped_reference_counted_and_do_not_erase_external_leases() {
         let id = Uuid::new_v4().to_string();

@@ -43,6 +43,7 @@ pub fn source(source: &crate::android_sources::VideoSource) {
 }
 
 pub fn player(snapshot: Value) { publish("player-state", snapshot); }
+pub fn bookmarks() { publish("reading-bookmarks-updated", json!({"revision":revision()})); }
 pub fn source_removed(id: &str) { publish("android-source-state", json!({"sourceId":id,"state":"removed","revision":revision()})); }
 pub fn reading(snapshot: Value) { publish("reading-progress-updated", snapshot); }
 

@@ -185,7 +185,7 @@ class ReaderActivity : AppCompatActivity() {
             } else root.setPadding(bars.left,bars.top,bars.right,bars.bottom)
             WindowInsetsCompat.Builder(insets).setInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),androidx.core.graphics.Insets.NONE).build()
         }
-        applyAppearance(); load(entry, savedInstanceState?.getString("location")?.let { runCatching { JSONObject(it) }.getOrNull() })
+        applyAppearance(); load(entry, (savedInstanceState?.getString("location") ?: if (savedInstanceState == null) intent.getStringExtra("location") else null)?.let { runCatching { JSONObject(it) }.getOrNull() })
     }
     fun button(label: String, action: () -> Unit) = Button(this).apply {
         text = label; textSize = 12f; isAllCaps = false; minWidth = dp(44); minimumWidth = dp(44); minimumHeight = dp(44)

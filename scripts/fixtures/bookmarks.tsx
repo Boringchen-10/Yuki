@@ -1,0 +1,16 @@
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import { flushSync } from "react-dom";
+import BookmarkManager from "../../src/android/BookmarkManager";
+import { readingBookmarksApi, type ReadingBookmark } from "../../src/android/readingBookmarks";
+import "../../src/android/mobile.css";
+const qa=window as any,root=createRoot(document.getElementById("root")!);
+let items:ReadingBookmark[]=[],failRead=false,failDelete=false,delayRead=false,mount=0;
+const reads:(()=>void)[]=[],calls:any[]=[];
+qa.__TAURI_INTERNALS__={transformCallback:()=>1,unregisterCallback:()=>{},invoke:async()=>1};
+qa.__TAURI_EVENT_PLUGIN_INTERNALS__={unregisterListener:()=>{}};
+const seed=()=>["one","two","novel"].map((id,index)=>({id,kind:index===2?"novel":"comic",pathWord:"book",group:index===2?"":"default",entryId:"chapter-one",title:index===2?"合成小说":"合成漫画：很长的书名也应该自然换行并且保留书签操作",label:`${index===2?"第一卷":"第一话"} · 书签${index+1}`,entryTitle:index===2?"第一卷":"第一话",location:index===2?{href:"OEBPS/chapter-0.xhtml",locations:{totalProgression:0.4}}:{pageIndex:index+2,offset:0.3},pageCount:index===2?null:20,createdAt:"2026-10-18T01:00:00Z",workId:null,coverPath:null,coverUrl:null} as ReadingBookmark));
+readingBookmarksApi.list=async()=>{ if(failRead)throw "书签读取失败"; const snapshot=structuredClone(items);return delayRead?new Promise(resolve=>reads.push(()=>resolve(snapshot))):snapshot;};
+readingBookmarksApi.remove=async id=>{calls.push({action:"remove",id});if(failDelete)throw "书签删除失败";items=items.filter(item=>item.id!==id);};
+qa.__marks={calls,mount:(empty=false)=>{items=empty?[]:seed();failRead=failDelete=delayRead=false;flushSync(()=>root.render(<StrictMode><div className="android-app" data-theme="light" style={{gridTemplateRows:"minmax(0,1fr)"}}><main className="gz-scroll"><BookmarkManager key={++mount} registerBack={handler=>qa.__marks.back=handler} onRead={item=>calls.push({action:"read",id:item.id,kind:item.kind,entryId:item.entryId,location:item.location})}/></main></div></StrictMode>));},flags:(read:boolean,remove=false,delay=false)=>{failRead=read;failDelete=remove;delayRead=delay;},resolve:()=>reads.splice(0).forEach(done=>done()),unmount:()=>flushSync(()=>root.render(<div>left</div>))};
+qa.__marks.mount();

@@ -17,6 +17,25 @@ let mount = 0;
 const reads: (() => void)[] = [], controls: (() => void)[] = [];
 const subscribers = new Set<() => void>();
 const calls: any[] = [];
+let selectedStorage = "internal";
+qa.__qaStorageFailure = "";
+qa.__qaSaveStorageFailure = false;
+qa.__qaBack = null;
+qa.__TAURI_INTERNALS__ = { invoke: async (command: string, args: any) => {
+  const locations = [{id:"internal",label:"应用内部存储",path:"/data/user/0/com.genzo.android.qa",freeBytes:12*1024**3},
+    {id:"external:primary",label:"手机存储（应用专属目录）",path:"/storage/emulated/0/Android/data/com.genzo.android.qa/files/YukiDownloads",freeBytes:20*1024**3}];
+  if (command === "get_download_storage") {
+    if (qa.__qaStorageFailure) throw qa.__qaStorageFailure;
+    return {selected:selectedStorage,available:locations.some(item=>item.id===selectedStorage),locations};
+  }
+  if (command === "set_download_storage") {
+    calls.push({action:"storage",id:args.id});
+    if (qa.__qaSaveStorageFailure) throw "下载目录不可用或无法写入，请重新选择";
+    selectedStorage=args.id; return {selected:selectedStorage,available:true,locations};
+  }
+  throw new Error(`Unexpected storage command ${command}`);
+} };
+qa.__qaSelectStorage = (id: string) => selectedStorage=id;
 function reset() {
   jobs = [book("shared", { title: "合成漫画作品：很长的标题需要自然换行而不能挤住下载操作按钮" }),
     book("novel-queued", { kind: "novel", title: "合成小说", itemTitle: "第一卷", state: "queued", bytesDownloaded: 0, completedUnits: 0, totalUnits: null, pathWord: "sample-novel", workId: null }),
@@ -66,7 +85,7 @@ qa.__qaEmpty = () => { jobs = []; videos = []; };
 qa.__qaMount = (empty = false) => {
   reset(); if (empty) qa.__qaEmpty();
   flushSync(() => root.render(<StrictMode><div className="android-app" data-theme="dark" style={{ gridTemplateRows: "minmax(0,1fr)" }}><main className="gz-scroll">
-    <DownloadCenter key={++mount} onReadBook={target => { calls.push({ action: "read", ...target }); }} onOpenWork={id => calls.push({ action: "work", id })} onToast={message => calls.push({ action: "toast", message })} onError={reason => calls.push({ action: "error", reason: String(reason) })} />
+    <DownloadCenter key={++mount} registerBack={handler => qa.__qaBack=handler} onReadBook={target => { calls.push({ action: "read", ...target }); }} onOpenWork={id => calls.push({ action: "work", id })} onToast={message => calls.push({ action: "toast", message })} onError={reason => calls.push({ action: "error", reason: String(reason) })} />
   </main></div></StrictMode>));
 };
 qa.__qaUnmount = () => flushSync(() => root.render(<div>下载页已离开</div>));

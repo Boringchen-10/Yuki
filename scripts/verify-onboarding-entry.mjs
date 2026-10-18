@@ -15,7 +15,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 375, height: 812 }, colorScheme: "dark" });
   page.on("pageerror", error => result.errors.push(String(error)));
   await page.addInitScript(() => {
-    window.__calls = []; window.__ruleMode = "auto"; window.isTauri = true;
+    window.__calls = []; window.__readerCalls = []; window.__storageId = "internal"; window.__ruleMode = "auto"; window.isTauri = true;
     window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
     window.__TAURI_INTERNALS__ = { transformCallback: () => 1, unregisterCallback: () => {}, invoke: async (cmd, args) => {
       window.__calls.push(cmd);
@@ -30,6 +30,13 @@ try {
       if (cmd === "set_setting" && args?.key === "theme") { localStorage.setItem("__dbTheme", args.value); return null; }
       if (cmd === "get_playback_progress") return { items: [], sessions: [] };
       if (cmd === "get_book_shelf_state") return {};
+      if (cmd === "list_video_downloads") return {downloads:[]};
+      if (cmd === "get_download_storage" || cmd === "set_download_storage") {
+        if (cmd === "set_download_storage") window.__storageId=args.id;
+        return {selected:window.__storageId,available:true,locations:[{id:"internal",label:"应用内部存储",path:"/data/user/0/com.genzo.android.qa",freeBytes:12*1024**3},{id:"external:primary",label:"手机存储（应用专属目录）",path:"/storage/emulated/0/Android/data/com.genzo.android.qa/files/YukiDownloads",freeBytes:20*1024**3}]};
+      }
+      if (cmd === "list_reading_bookmarks") return [{id:"11111111-1111-4111-8111-111111111111",kind:"comic",pathWord:"fixture-book",group:"default",entryId:"fixture-entry",title:"合成书签作品",entryTitle:"第一话",label:"第一话 · 第三页",location:{pageIndex:2,offset:0.4},pageCount:20,createdAt:"2026-10-18T01:00:00Z",workId:null,coverPath:null,coverUrl:null}];
+      if (cmd === "open_internal_reader") {window.__readerCalls.push(args);return {sessionId:"fixture"};}
       if (cmd === "get_metadata_provider_statuses") return [];
       if (cmd === "plugin:event|listen") return 1;
       if (cmd.startsWith("list_") || ["get_video_source_states", "get_reading_history", "get_source_imports"].includes(cmd)) return [];
@@ -79,6 +86,22 @@ try {
   await ruleNetwork.getByRole("button", { name: "测试规则连接" }).click();
   await ruleNetwork.getByText("官方仓库：20 ms · 可用", { exact: true }).waitFor();
   result.cases.push("real network settings expose rule transport independently of Bangumi and COPY");
+  await page.getByRole("button",{name:"我的",exact:true}).click();
+  assert.equal(await page.getByRole("button",{name:"下载设置",exact:true}).count(),0);
+  await page.getByRole("button",{name:/^下载中心/}).click();
+  await page.getByRole("button",{name:"下载设置",exact:true}).click();
+  const downloads=page.getByRole("dialog",{name:"下载设置",exact:true});
+  await downloads.getByRole("combobox",{name:"下载目录",exact:true}).selectOption("external:primary");
+  for (const width of [375,1280]) {await page.setViewportSize({width,height:812});await page.screenshot({path:`${output}/download-settings-${width}.png`,animations:"disabled"});}
+  await downloads.getByRole("button",{name:"保存下载设置",exact:true}).click();await downloads.waitFor({state:"detached"});
+  await page.getByRole("button",{name:"下载设置",exact:true}).click();assert.equal(await downloads.getByRole("combobox",{name:"下载目录",exact:true}).inputValue(),"external:primary");
+  await downloads.getByRole("button",{name:"取消",exact:true}).click();
+  await page.getByRole("button",{name:"我的",exact:true}).click();await page.getByRole("button",{name:/^书签/}).click();
+  for (const width of [375,1280]) {await page.setViewportSize({width,height:812});await page.getByRole("button",{name:/跳转书签 合成书签作品/}).waitFor();await page.screenshot({path:`${output}/reading-bookmarks-${width}.png`,animations:"disabled"});}
+  await page.getByRole("button",{name:/跳转书签 合成书签作品/}).click();
+  await page.waitForFunction(()=>window.__readerCalls.length===1);
+  assert.deepEqual(await page.evaluate(()=>window.__readerCalls[0]),{kind:"comic",pathWord:"fixture-book",entryId:"fixture-entry",group:"default",offlineOnly:false,bookmarkId:"11111111-1111-4111-8111-111111111111"});
+  result.cases.push("real profile removes download placeholder; download-center settings persist and bookmarks launch the exact saved bookmark");
   await page.evaluate(() => { localStorage.removeItem("genzo-preferences"); localStorage.removeItem("yuki-android-onboarding"); localStorage.setItem("__dbTheme", "dark"); });
   await page.reload(); await page.getByRole("button", { name: "同意并继续", exact: true }).waitFor();
   await page.waitForFunction(() => document.querySelector(".android-app").dataset.theme === "dark");

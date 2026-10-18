@@ -23,6 +23,7 @@ import ReadingHistoryRow from "./ReadingHistoryRow";
 import { nativeAppearance } from "./nativeAppearance";
 import { themeStyles, resolveThemeAccent } from "./themeStyles";
 import DownloadCenter from "./DownloadCenter";
+import BookmarkManager from "./BookmarkManager";
 import type { DownloadReadTarget } from "./downloadCenterApi";
 import { readingHistoryApi, readingHistoryKey, type ReadingHistoryItem } from "./readingHistory";
 import BookDescription from "./BookDescription";
@@ -386,7 +387,7 @@ export default function AndroidApp() {
   const [historyItem, setHistoryItem] = useState<PlaybackProgress | null>(null);
   const [readingHistory, setReadingHistory] = useState<ReadingHistoryItem[]>([]);
   const [readingHistoryItem, setReadingHistoryItem] = useState<ReadingHistoryItem | null>(null);
-  const [historyReader, setHistoryReader] = useState<(DownloadReadTarget & {offlineOnly?: boolean}) | null>(null);
+  const [historyReader, setHistoryReader] = useState<(DownloadReadTarget & {offlineOnly?: boolean; bookmarkId?: string}) | null>(null);
   const [hiddenVideoHistory, setHiddenVideoHistory] = useState<Record<string, string>>({});
   const [historyPending, setHistoryPending] = useState(false);
   const historyRevision = useRef(0);
@@ -454,7 +455,7 @@ export default function AndroidApp() {
   }, [workId, detail?.mediaFiles.length]);
   const episodeSignature = structure?.episodes.map(episode => `${episode.provider}:${episode.externalId}`).join(",") ?? "";
   const episodeArtwork = useEpisodeArtwork(workId ?? undefined, episodeSignature);
-  const title = top?.title || ({ legal: "使用协议与隐私说明", sources: "资料库", inbox: "待整理", browse: "浏览目录", diagnostics: import.meta.env.DEV ? "开发验证" : "关于", bookshelf: "书架", explore: "发现", network: "网络", appearance: "外观", history: "浏览记录", downloads: "下载中心", "reading-stats": "阅读统计", "reading-stats-settings": "阅读统计设置", "playback-settings": "播放设置", "playback-settings/decoder": "硬件解码器", "playback-settings/renderer": "视频渲染器", "playback-settings/super": "超分辨率", sync: "同步备份", "sync/bangumi": "追番同步", "sync/webdav": "多设备同步" }[route]) || "作品详情";
+  const title = top?.title || ({ legal: "使用协议与隐私说明", sources: "资料库", inbox: "待整理", browse: "浏览目录", diagnostics: import.meta.env.DEV ? "开发验证" : "关于", bookshelf: "书架", explore: "发现", network: "网络", appearance: "外观", history: "浏览记录", downloads: "下载中心", bookmarks: "书签", "reading-stats": "阅读统计", "reading-stats-settings": "阅读统计设置", "playback-settings": "播放设置", "playback-settings/decoder": "硬件解码器", "playback-settings/renderer": "视频渲染器", "playback-settings/super": "超分辨率", sync: "同步备份", "sync/bangumi": "追番同步", "sync/webdav": "多设备同步" }[route]) || "作品详情";
 
   async function refresh(renew = false): Promise<void> {
     if (refreshPending.current) return renew ? refreshPending.current.catch(() => {}).then(() => refresh(true)) : refreshPending.current;
@@ -1125,12 +1126,11 @@ export default function AndroidApp() {
           <MenuRow label="外观" icon={Palette} onClick={() => navigate("appearance")} />
           <MenuRow label="播放设置" icon={Play} subtitle="解码、渲染与超分辨率" onClick={() => navigate("playback-settings")} />
           <MenuRow label="弹幕设置" icon={MessageSquare} subtitle="后续更新" onClick={() => navigate("future/弹幕设置")} />
-          <MenuRow label="书签" icon={Bookmark} onClick={() => navigate("future/书签")} />
+          <MenuRow label="书签" icon={Bookmark} subtitle="漫画与小说的阅读位置" onClick={() => navigate("bookmarks")} />
           <MenuRow label="阅读统计" icon={BarChart3} onClick={() => navigate("reading-stats")} />
         </MenuSection>
         <MenuSection label="数据与应用">
           <MenuRow label="同步备份" icon={RefreshCw} subtitle="追番与多设备同步" onClick={() => navigate("sync")} />
-          <MenuRow label="下载设置" icon={Download} subtitle="后续更新" onClick={() => navigate("future/下载设置")} />
           <MenuRow label="网络" icon={Network} subtitle="数据源与元数据服务" onClick={() => navigate("network")} />
           <MenuRow label="资料库" icon={Database} subtitle="本地目录与来源管理" onClick={() => navigate("sources")} />
           <MenuRow label="规则设置" icon={Package} subtitle="番剧规则来源与排序" onClick={() => navigate("rule-settings")} />
@@ -1294,7 +1294,8 @@ export default function AndroidApp() {
       </>}
       {route.startsWith("future/") && <Empty title={`${decodeURIComponent(route.slice(7))} · Future`}><p>该能力尚未接入，保留扩展位置。</p><button className="gz-btn" onClick={back}>返回</button></Empty>}
       {route === "history" && historyPage}
-      {route === "downloads" && <DownloadCenter onReadBook={target => setHistoryReader({...target,offlineOnly:true})} onOpenWork={id => navigate(`detail/${encodeURIComponent(id)}`)} onToast={setToast} onError={reason => setError(String(reason))} />}
+      {route === "downloads" && <DownloadCenter registerBack={registerSubviewBack} onReadBook={target => setHistoryReader({...target,offlineOnly:true})} onOpenWork={id => navigate(`detail/${encodeURIComponent(id)}`)} onToast={setToast} onError={reason => setError(String(reason))} />}
+      {route === "bookmarks" && <BookmarkManager registerBack={registerSubviewBack} onRead={item => setHistoryReader({kind:item.kind,pathWord:item.pathWord,entryId:item.entryId,group:item.group,bookmarkId:item.id})} />}
       {route === "reading-stats" && readingStatsPage}
       {route === "reading-stats-settings" && readingStatsSettings}
       {route === "legal" && <><h1 className="gz-legal-title">使用协议与隐私说明</h1><LegalNotice /></>}
@@ -1345,7 +1346,7 @@ export default function AndroidApp() {
         </button>)}
       </div>
     </section></div>}
-    {historyReader && <BookReader key={readingHistoryKey(historyReader)} kind={historyReader.kind} pathWord={historyReader.pathWord} entryId={historyReader.entryId} group={historyReader.group} offlineOnly={historyReader.offlineOnly} onClose={() => setHistoryReader(null)} />}
+    {historyReader && <BookReader key={readingHistoryKey(historyReader)} kind={historyReader.kind} pathWord={historyReader.pathWord} entryId={historyReader.entryId} group={historyReader.group} offlineOnly={historyReader.offlineOnly} bookmarkId={historyReader.bookmarkId} onClose={() => setHistoryReader(null)} />}
     {readingHistoryItem && <div className="gz-scrim" onClick={() => setReadingHistoryItem(null)}><section className="gz-sheet" role="dialog" aria-modal="true" aria-label="阅读记录操作" onClick={event => event.stopPropagation()}>
       <span className="gz-sheet-handle" aria-hidden="true" />
       <h2 className="gz-sheet-title gz-truncate">{readingHistoryItem.title}</h2><p className="gz-meta gz-truncate">{readingHistoryItem.entryTitle}</p>

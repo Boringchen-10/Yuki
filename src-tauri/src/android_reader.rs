@@ -163,13 +163,15 @@ impl Session {
 }
 
 #[tauri::command]
-pub async fn open_internal_reader(kind: String, path_word: String, entry_id: String, group: String, offline_only: Option<bool>, state: tauri::State<'_, AppState>) -> AppResult<Value> {
+pub async fn open_internal_reader(kind: String, path_word: String, entry_id: String, group: String, offline_only: Option<bool>, bookmark_id: Option<String>, state: tauri::State<'_, AppState>) -> AppResult<Value> {
     if !cfg!(target_os = "android") { return Err(invalid("原生阅读器仅支持 Android")); }
+    crate::download_storage::refresh(&state).await?;
     if !matches!(kind.as_str(), "comic" | "novel") || !valid_id(&path_word) || !valid_id(&entry_id)
         || (!group.is_empty() && !valid_id(&group)) || (kind == "novel" && !group.is_empty()) { return Err(invalid("阅读来源标识无效")); }
-    start_reader(state.inner().clone(),kind,path_word,entry_id,group,HashMap::new(),offline_only.unwrap_or(false)).await
+    let location = match bookmark_id { Some(id) => Some(crate::reading_bookmarks::location_in_pool(&state.pool, &id, &kind, &path_word, &group, &entry_id).await?), None => None };
+    start_reader(state.inner().clone(),kind,path_word,entry_id,group,HashMap::new(),offline_only.unwrap_or(false),location).await
 }
-async fn start_reader(state: AppState, kind: String, path_word: String, entry_id: String, group: String, chapters: HashMap<String, Arc<Chapter>>, offline_only: bool) -> AppResult<Value> {
+async fn start_reader(state: AppState, kind: String, path_word: String, entry_id: String, group: String, chapters: HashMap<String, Arc<Chapter>>, offline_only: bool, location: Option<Value>) -> AppResult<Value> {
     let id = uuid::Uuid::new_v4().to_string();
     let closed = Arc::new(Notify::new());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
@@ -177,6 +179,7 @@ async fn start_reader(state: AppState, kind: String, path_word: String, entry_id
     let base = format!("http://{}/{token}/", listener.local_addr()?);
     let session = Arc::new(Session { state, kind:kind.clone(), book:path_word,
         group, initial:entry_id.clone(), offline_only, base:base.clone(), chapters:Mutex::new(chapters), comment_avatars:Mutex::new(HashMap::new()), loading:Mutex::new(()), closed:closed.clone() });
+    let location = match location { Some(value) => Some(session.location(&entry_id, &value).await?), None => None };
     let active = ACTIVE.get_or_init(|| Mutex::new(None));
     if let Some((_, previous)) = active.lock().await.replace((id.clone(), closed.clone())) { previous.notify_one(); }
     tauri::async_runtime::spawn(async move {
@@ -197,7 +200,7 @@ async fn start_reader(state: AppState, kind: String, path_word: String, entry_id
             });
         }
     });
-    if let Err(error) = crate::android_bridge::call("openReader", json!({"sessionId":id,"baseUrl":base,"kind":kind,"entryId":entry_id})).await {
+    if let Err(error) = crate::android_bridge::call("openReader", json!({"sessionId":id,"baseUrl":base,"kind":kind,"entryId":entry_id,"location":location})).await {
         if let Some((_, closed)) = active.lock().await.take() { closed.notify_one(); }
         return Err(error);
     }
@@ -221,7 +224,7 @@ pub async fn open_reader_online_fixture(state: tauri::State<'_, AppState>) -> Ap
             sections:vec![json!({"title":"第一章：合成正文","text":rows[..300].join("\n")}),json!({"title":"独立合成插图","imageUrl":"qa-inline-image"}),json!({"title":"第二章：继续阅读","text":rows[300..].join("\n")})],
             inline_images:HashMap::from([(1,image)])})
     }).await.map_err(|error| AppError::System(error.to_string()))??;
-    start_reader(state.inner().clone(),"novel".into(),"reader-fixture-novel".into(),"one".into(),String::new(),HashMap::from([("one".into(),Arc::new(chapter))]),false).await
+    start_reader(state.inner().clone(),"novel".into(),"reader-fixture-novel".into(),"one".into(),String::new(),HashMap::from([("one".into(),Arc::new(chapter))]),false,None).await
 }
 
 async fn route(session: &Session, method: &str, path: &str, body: &[u8]) -> AppResult<(Vec<u8>, &'static str)> {
@@ -308,10 +311,12 @@ async fn route(session: &Session, method: &str, path: &str, body: &[u8]) -> AppR
                 let label = value["label"].as_str().filter(|label| label.chars().count() <= 500).ok_or_else(|| invalid("书签标题无效"))?;
                 sqlx::query("INSERT OR IGNORE INTO android_reading_bookmarks(id,kind,book_id,group_id,entry_id,location_json,label,created_at) VALUES(?,?,?,?,?,?,?,?)")
                     .bind(uuid::Uuid::new_v4().to_string()).bind(&session.kind).bind(&session.book).bind(&session.group).bind(entry).bind(location).bind(label).bind(now).execute(&session.state.pool).await?;
+                crate::android_events::bookmarks();
             } else if *action == "delete-bookmark" {
                 let id = value["id"].as_str().ok_or_else(|| invalid("书签标识缺失"))?;
                 sqlx::query("DELETE FROM android_reading_bookmarks WHERE id=? AND kind=? AND book_id=? AND group_id=? AND entry_id=?")
                     .bind(id).bind(&session.kind).bind(&session.book).bind(&session.group).bind(entry).execute(&session.state.pool).await?;
+                crate::android_events::bookmarks();
             } else { return Err(invalid("未知阅读操作")); }
             json!({})
         }

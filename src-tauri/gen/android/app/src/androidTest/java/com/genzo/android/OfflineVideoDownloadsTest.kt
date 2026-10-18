@@ -131,8 +131,19 @@ class OfflineVideoDownloadsTest {
     }
 
     @Test fun durableProgressivePausesResumesAndPlaysWithoutItsOrigin() {
+        progressiveStorage("internal", true)
+    }
+    @Test fun externalStorageKeepsPausedDownloadsReadableAfterChangingTheDefault() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val external = DownloadStorage.locations(context).firstOrNull { it.id != "internal" }
+        org.junit.Assume.assumeNotNull(external)
+        progressiveStorage(external!!.id, false)
+    }
+    private fun progressiveStorage(storageId: String, legacy: Boolean) {
         val context = ApplicationProvider.getApplicationContext<Context>()
         assertTrue("isolated QA package required", context.packageName.endsWith("qa"))
+        val previous = DownloadStorage.selectedId(context)
+        DownloadStorage.select(context,storageId)
         val downloads = onMain { OfflineVideoDownloads.get(context) }
         await { onMain { downloads.manager.isInitialized } }
         val id = "qa_${UUID.randomUUID()}"
@@ -141,7 +152,12 @@ class OfflineVideoDownloadsTest {
         val origin = FixtureServer(mapOf("/video.mp4" to ("video/mp4" to bytes)), delayMs = 8)
         try {
             val ticket = downloads.stage { downloads.prepare(id, "${origin.base}/video.mp4?token=$secret", mapOf("Cookie" to secret, "Authorization" to "Bearer $secret"), "QA progressive", null, null, null, org.json.JSONObject()) }
-            val downloadRequest = downloads.commitTicket(ticket, id)
+            val prepared = downloads.commitTicket(ticket, id)
+            assertEquals(storageId, org.json.JSONObject(String(prepared.data)).getString("storageId"))
+            val downloadRequest = if (legacy) {
+                val data = org.json.JSONObject(String(prepared.data)).apply { remove("storageId") }
+                androidx.media3.exoplayer.offline.DownloadRequest.Builder(id,prepared.uri).setMimeType(prepared.mimeType).setData(data.toString().toByteArray()).build()
+            } else prepared
             assertFalse(downloadRequest.uri.toString().contains(secret))
             onMain { downloads.manager.addDownload(downloadRequest); downloads.manager.resumeDownloads() }
             await { onMain { downloads.manager.currentDownloads.firstOrNull { it.request.id == id }?.bytesDownloaded ?: 0 } > 65536 }
@@ -149,6 +165,7 @@ class OfflineVideoDownloadsTest {
             await { downloads.manager.downloadIndex.getDownload(id)?.state == Download.STATE_STOPPED }
             val stopped = downloads.manager.downloadIndex.getDownload(id)!!
             assertTrue(stopped.bytesDownloaded > 0)
+            DownloadStorage.select(context,"internal")
             Thread.sleep(100)
             assertEquals(stopped.bytesDownloaded, downloads.manager.downloadIndex.getDownload(id)!!.bytesDownloaded)
             onMain { downloads.manager.setStopReason(id, Download.STOP_REASON_NONE) }
@@ -162,10 +179,13 @@ class OfflineVideoDownloadsTest {
             val uri = downloads.locator(id).getString("uri")
             request(uri, "bytes=12345-13000").let { (status, body) -> assertEquals(206, status); assertArrayEquals(bytes.copyOfRange(12345, 13001), body) }
             assertEquals(count, origin.requests.size)
+            val root = if (storageId == "internal") context.filesDir else DownloadStorage.root(context,storageId)
+            assertTrue(File(root,"offline-video-cache").listFiles()?.any { it.isFile } == true)
             assertTrue(origin.requests.all { it.cookie == secret && it.authorization == "Bearer $secret" })
         } finally {
             origin.close(); onMain { downloads.manager.removeDownload(id) }
             await { downloads.manager.downloadIndex.getDownload(id) == null }
+            DownloadStorage.select(context,previous)
         }
     }
 

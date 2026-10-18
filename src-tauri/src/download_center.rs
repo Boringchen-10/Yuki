@@ -400,6 +400,7 @@ async fn import_existing(state: &AppState) -> AppResult<()> {
 }
 #[tauri::command]
 pub async fn list_download_jobs(state: State<'_, AppState>) -> AppResult<Vec<DownloadJob>> {
+    crate::download_storage::refresh(&state).await?;
     import_existing(&state).await?;
     rows(&state.pool).await
 }

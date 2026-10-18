@@ -60,7 +60,7 @@ internal class OfflineVideoBridge(private val cache: SimpleCache) : java.io.Clos
         return "http://127.0.0.1:${listener.localPort}/$token/file"
     }
     fun remove(id: String) { sessions.remove(id) }
-    private fun revokePrevious() {
+    @Synchronized fun revokePrevious() {
         sessions.clear()
         val previous = files.values.toList(); files.clear()
         previous.forEach { runCatching { it.input.close() } }

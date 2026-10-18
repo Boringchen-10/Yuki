@@ -39,9 +39,7 @@ class ComicReaderSurface(private val host: ReaderActivity, data: JSONObject, ini
     override val rendered: Boolean get() = page in ready
     private val urls = data.getJSONArray("pages").let { array -> (0 until array.length()).map { array.getString(it) } }
     private val cacheKeys=data.optJSONArray("cacheKeys")
-    private val archive = data.optString("archivePath").takeIf { it.isNotEmpty() && it != "null" }?.let { File(it).canonicalFile }.also { path ->
-        if (path != null) require(path.path.startsWith(File(host.applicationInfo.dataDir,"reading-cache").canonicalPath + "/"))
-    }
+    private val archive = data.optString("archivePath").takeIf { it.isNotEmpty() && it != "null" }?.let { DownloadStorage.readingArchive(host,it) }
     private val archiveEntries = data.optJSONArray("archiveEntries")
     private val initialTitle = data.optString("title", host.entry)
     private val initialOffline = data.optBoolean("offline")
@@ -255,8 +253,7 @@ class ComicReaderSurface(private val host: ReaderActivity, data: JSONObject, ini
     private fun chapterFrom(data:JSONObject, fallbackId:String):Chapter {
         val pages=data.getJSONArray("pages")
         val list=(0 until pages.length()).map { pages.getString(it) }
-        val path=data.optString("archivePath").takeIf { it.isNotEmpty() && it != "null" }?.let { File(it).canonicalFile }
-        if(path!=null)require(path.path.startsWith(File(host.applicationInfo.dataDir,"reading-cache").canonicalPath + "/"))
+        val path=data.optString("archivePath").takeIf { it.isNotEmpty() && it != "null" }?.let { DownloadStorage.readingArchive(host,it) }
         return Chapter(data.optString("id", fallbackId), data.optString("title", fallbackId), data.optBoolean("offline"), list, data.optJSONArray("cacheKeys"), path, data.optJSONArray("archiveEntries"))
     }
     private fun rebuildRows() {

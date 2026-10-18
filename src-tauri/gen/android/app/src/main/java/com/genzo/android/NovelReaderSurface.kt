@@ -58,7 +58,7 @@ class NovelReaderSurface(private val host: ReaderActivity, private val container
                 val archive = data.optString("archivePath").takeIf { it.isNotEmpty() && it != "null" }
                 val book = if (archive != null) {
                     val file = File(archive)
-                    require(file.canonicalPath.startsWith(File(host.applicationInfo.dataDir).canonicalPath + "/"))
+                    DownloadStorage.readingArchive(host,file.path)
                     val retriever = AssetRetriever(host.contentResolver, client)
                     val asset = retriever.retrieve(file).getOrElse { error("EPUB 缓存无法读取：${it.message}") }
                     PublicationOpener(DefaultPublicationParser(host, client, retriever, null), onCreatePublication = { container = readerDocumentContainer(container) })

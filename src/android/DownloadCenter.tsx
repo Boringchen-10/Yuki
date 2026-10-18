@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BookOpen, Check, Download, FileDown, Film, HardDrive, Images, Pause, Play, RefreshCw, Trash2, X } from "lucide-react";
+import { BookOpen, Check, Download, FileDown, Film, HardDrive, Images, Pause, Play, RefreshCw, Settings, Trash2, X } from "lucide-react";
+import DownloadSettings from "./DownloadSettings";
 import LoadingIndicator from "./LoadingIndicator";
 import { activeDownload, downloadBytes, downloadCenterApi, downloadErrorLabel, downloadProgress, mergeDownloadTasks, type DownloadAction, type DownloadJob, type DownloadKind, type DownloadReadTarget, type DownloadTask, type VideoDownload } from "./downloadCenterApi";
 import "./downloadCenter.css";
@@ -21,9 +22,11 @@ type Props = {
   onOpenWork: (workId: string) => void;
   onError?: (reason: unknown) => void;
   onToast?: (message: string) => void;
+  registerBack?: (handler: (() => boolean) | null) => void;
 };
 
-export default function DownloadCenter({ onReadBook, onOpenWork, onError, onToast }: Props) {
+export default function DownloadCenter({ onReadBook, onOpenWork, onError, onToast, registerBack }: Props) {
+  const [settings, setSettings] = useState(false), [settingsBusy, setSettingsBusy] = useState(false);
   const [jobs, setJobs] = useState<DownloadJob[]>([]);
   const [videos, setVideos] = useState<VideoDownload[]>([]);
   const [loading, setLoading] = useState(true);
@@ -92,6 +95,10 @@ export default function DownloadCenter({ onReadBook, onOpenWork, onError, onToas
   const confirmTask = tasks.find(task => task.key === confirm?.key) ?? confirm;
   const confirming = !!confirmTask && pending.includes(confirmTask.key);
   useEffect(() => {
+    registerBack?.(() => { if (settings) { if (!settingsBusy) setSettings(false); return true; } if (confirm) { if (!confirming) setConfirm(null); return true; } return false; });
+    return () => registerBack?.(null);
+  }, [registerBack, settings, settingsBusy, confirm, confirming]);
+  useEffect(() => {
     if (!confirm) return;
     const node = dialog.current;
     const opener = document.activeElement as HTMLElement | null;
@@ -126,7 +133,7 @@ export default function DownloadCenter({ onReadBook, onOpenWork, onError, onToas
   }
 
   return <section className="gz-download-center" aria-label="下载中心">
-    <header className="gz-download-heading"><h2>下载中心</h2><button type="button" className={`gz-iconbtn${refreshing ? " is-refreshing" : ""}`} title="刷新下载任务" aria-label="刷新下载任务" disabled={refreshing} onClick={() => void refresh()}><RefreshCw size={20} /></button></header>
+    <header className="gz-download-heading"><h2>下载中心</h2><div className="gz-download-head-actions"><button type="button" className={`gz-iconbtn${refreshing ? " is-refreshing" : ""}`} title="刷新下载任务" aria-label="刷新下载任务" disabled={refreshing} onClick={() => void refresh()}><RefreshCw size={20} /></button><button type="button" className="gz-iconbtn" title="下载设置" aria-label="下载设置" onClick={() => setSettings(true)}><Settings size={20} /></button></div></header>
     <div className="gz-download-overview"><span><Download size={15} />{tasks.length} 个任务</span><span><HardDrive size={15} />已下载 {downloadBytes(tasks.reduce((total, task) => total + task.bytesDownloaded, 0))}</span></div>
     <div className="gz-download-toolbar">
       <div className="gz-shelf-tabs" role="tablist" aria-label="下载状态">
@@ -161,6 +168,7 @@ export default function DownloadCenter({ onReadBook, onOpenWork, onError, onToas
         </article>;
       })}
     </div> : !readErrors.length && <div className="gz-download-empty"><Download size={28} aria-hidden="true" /><h3>{kind === "all" ? tab === "completed" ? "暂无已完成的下载" : "暂无进行中的下载" : `暂无${kindLabels[kind]}${tab === "completed" ? "离线内容" : "下载任务"}`}</h3></div>}
+    {settings && <DownloadSettings onClose={() => setSettings(false)} onBusyChange={setSettingsBusy} />}
     {confirmTask && <dialog ref={dialog} className="gz-download-confirm" data-download-confirm aria-labelledby="gz-download-confirm-title"
       onCancel={event => { event.preventDefault(); if (!confirming) setConfirm(null); }} onClose={() => setConfirm(null)}
       onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); if (!confirming) setConfirm(null); } }}

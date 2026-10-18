@@ -30,10 +30,10 @@ struct HistoryRow {
 }
 
 #[derive(Default)]
-struct CachedLabels {
-    title: Option<String>,
-    cover_url: Option<String>,
-    entries: HashMap<String, (String, Option<i64>)>,
+pub(crate) struct CachedLabels {
+    pub title: Option<String>,
+    pub cover_url: Option<String>,
+    pub entries: HashMap<String, (String, Option<i64>)>,
 }
 
 fn valid(kind: &str, book: &str, group: &str, entry: &str) -> AppResult<()> {
@@ -56,7 +56,7 @@ pub(crate) async fn save_progress(pool: &SqlitePool, kind: &str, book: &str, gro
     Ok(())
 }
 
-async fn cached_labels(pool: &SqlitePool, kind: &str, book: &str, group: &str) -> AppResult<CachedLabels> {
+pub(crate) async fn cached_labels(pool: &SqlitePool, kind: &str, book: &str, group: &str) -> AppResult<CachedLabels> {
     let mut labels = CachedLabels::default();
     let provider = if kind == "comic" { "copymanga" } else { "copynovel" };
     let detail_path = if kind == "comic" { format!("/api/v3/comic2/{book}:") } else { format!("/api/v3/book/{book}:") };

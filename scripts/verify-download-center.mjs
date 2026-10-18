@@ -28,7 +28,7 @@ try {
   assert.equal(await row("video:shared").locator("progress").getAttribute("value"), "25");
   assert.equal(await row("job:novel-queued").locator("progress").getAttribute("value"), null);
   cases.push("real bytes/resource counts determine progress; unknown totals remain indeterminate; backend identities do not collide");
-  for (const width of [360, 412, 915, 1024, 1366, 1920]) {
+  for (const width of [360, 375, 412, 915, 1280, 1920]) {
     await page.setViewportSize({ width, height: width > 1000 ? 768 : 915 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), width);
     const layout = await page.locator(".gz-download-row").evaluateAll(nodes => nodes.map(node => {
@@ -168,6 +168,42 @@ try {
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), 412);
   await page.screenshot({ path: `${output}/downloads-light-412.png` });
   cases.push("the shared light theme preserves the same download layout");
+  await page.getByRole("button",{name:"下载设置",exact:true}).click();
+  const settings=page.getByRole("dialog",{name:"下载设置",exact:true});
+  await settings.getByRole("combobox",{name:"下载目录",exact:true}).selectOption("external:primary");
+  await settings.getByRole("button",{name:"保存下载设置",exact:true}).click();
+  await settings.waitFor({state:"detached"});
+  await page.getByRole("button",{name:"下载设置",exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('select[aria-label="下载目录"]')?.value==="external:primary");
+  assert.equal(await page.evaluate(()=>window.__qaBack()),true);
+  await settings.waitFor({state:"detached"});
+  cases.push("top-right settings save storage, retain selection when reopened, and system back closes settings first");
+  await page.evaluate(()=>window.__qaSaveStorageFailure=true);
+  await page.getByRole("button",{name:"下载设置",exact:true}).click();
+  await settings.getByRole("combobox",{name:"下载目录",exact:true}).selectOption("internal");
+  await settings.getByRole("button",{name:"保存下载设置",exact:true}).click();
+  await settings.getByRole("alert").waitFor();
+  for (const theme of ["light","dark"]) for (const width of [375,1280]) {
+    await page.setViewportSize({width,height:812});await page.evaluate(theme=>document.querySelector(".android-app").dataset.theme=theme,theme);
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+    await page.screenshot({path:`${output}/settings-${theme}-${width}.png`});
+  }
+  await settings.evaluate(dialog=>{const nodes=[...dialog.querySelectorAll('h2,p,strong,button,select,label>span')];const sizes=nodes.map(node=>parseFloat(getComputedStyle(node).fontSize));nodes.forEach((node,index)=>node.style.fontSize=`${sizes[index]*1.5}px`);});
+  for(const theme of ["light","dark"])for(const width of [375,1280]){
+    await page.setViewportSize({width,height:812});await page.evaluate(theme=>document.querySelector('.android-app').dataset.theme=theme,theme);
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await page.screenshot({path:`${output}/settings-font150-${theme}-${width}.png`});
+  }
+  cases.push("download settings support 150 percent text in both themes and phone/desktop widths");
+  await settings.getByRole("button",{name:"取消",exact:true}).click();
+  await page.evaluate(()=>{window.__qaSaveStorageFailure=false;window.__qaStorageFailure="目录读取失败";});
+  await page.getByRole("button",{name:"下载设置",exact:true}).click();
+  await settings.getByRole("alert").waitFor();
+  await page.evaluate(()=>window.__qaStorageFailure="");
+  await settings.getByRole("button",{name:"重试",exact:true}).click();
+  await settings.getByRole("combobox",{name:"下载目录",exact:true}).waitFor();
+  assert.equal(await settings.getByRole("combobox",{name:"下载目录",exact:true}).inputValue(),"external:primary");
+  await settings.getByRole("button",{name:"取消",exact:true}).click();
+  cases.push("storage read/save errors preserve the previous setting and recover via retry without moving downloads");
   assert.deepEqual(errors, []);
   writeFileSync(`${output}/result.json`, JSON.stringify({ passed: true, widths, cases, errors }, null, 2));
   console.log(JSON.stringify({ passed: true, output, widths, cases }));

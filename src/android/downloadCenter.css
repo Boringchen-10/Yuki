@@ -1,6 +1,15 @@
 .android-app .gz-download-center { --download-ink: var(--accent); max-width: 1120px; margin: 0 auto; }
 .android-app[data-theme="light"] .gz-download-center { --download-ink: color-mix(in srgb, var(--accent), var(--text) 60%); }
 .android-app .gz-download-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 44px; }
+.gz-download-head-actions { display: flex; gap: 4px; }
+.gz-download-settings { width: min(480px,calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow: auto; margin: auto; padding: 24px; background: var(--surface-strong); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius); }
+.gz-download-settings::backdrop { background: #0009; }
+.gz-download-settings > :not(:first-child) { margin-top: 16px; }
+.gz-download-settings select { width: 100%; min-height: 44px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--text); padding: 8px 12px; }
+.gz-download-directory { display: flex; gap: 12px; align-items: flex-start; }
+.gz-download-directory > div { min-width: 0; }
+.gz-download-directory strong { font-size: .875em; font-weight: 600; }
+.gz-download-directory p { overflow-wrap: anywhere; margin-top: 8px; }
 .android-app .gz-download-overview { display: flex; flex-wrap: wrap; gap: 6px 18px; color: var(--muted); font-size: 12px; margin: 8px 0 18px; font-variant-numeric: tabular-nums; }
 .android-app .gz-download-overview > span { display: inline-flex; gap: 6px; align-items: center; }
 .android-app .gz-download-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 16px; border-bottom: 1px solid var(--line); }

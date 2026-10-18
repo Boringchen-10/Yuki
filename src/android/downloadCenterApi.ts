@@ -50,6 +50,7 @@ export type DownloadReadTarget = { kind: "comic" | "novel"; pathWord: string; en
 export const activeDownload = (task: DownloadTask) => ["queued", "downloading", "removing"].includes(task.state);
 
 const downloadErrors: Record<string, string> = {
+  offline_storage_unavailable: "下载目录不可用，请插入 SD 卡或在下载设置中选择其他目录。",
   offline_download_resolve_failed: "下载地址解析失败，请检查来源后重试。",
   offline_download_missing: "离线内容已丢失，请重新下载。",
   offline_download_incomplete: "离线内容不完整，请继续下载或重试。",

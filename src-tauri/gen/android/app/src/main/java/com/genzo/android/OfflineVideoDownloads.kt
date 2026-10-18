@@ -56,7 +56,15 @@ internal data class OfflineVideoPreparation(val request: DownloadRequest, val se
 internal class OfflineVideoDownloads private constructor(private val context: Context) {
     private val credentials = CredentialStore(context)
     private val database = StandaloneDatabaseProvider(context)
-    private val cache = SimpleCache(File(context.filesDir, "offline-video-cache"), NoOpCacheEvictor(), database)
+    private val caches = HashMap<String, SimpleCache>()
+    private val bridges = HashMap<String, OfflineVideoBridge>()
+    private fun storageId(request: DownloadRequest): String = JSONObject(String(request.data, Charsets.UTF_8)).optString("storageId", "internal")
+    @Synchronized private fun cache(id: String): SimpleCache {
+        val root = if (id == "internal") context.filesDir else DownloadStorage.root(context, id, true)
+        return caches.getOrPut(id) { SimpleCache(File(root, "offline-video-cache"), NoOpCacheEvictor(), database) }
+    }
+    @Synchronized private fun bridge(id: String): OfflineVideoBridge = bridges.getOrPut(id) { OfflineVideoBridge(cache(id)) }
+    @Synchronized private fun revokeReaders() { bridges.values.forEach { it.revokePrevious() } }
     private val index = DefaultDownloadIndex(database, "GenzoOfflineVideos").apply {
         // Restoring the app never restarts network work until the user explicitly continues it.
         getDownloads(Download.STATE_QUEUED, Download.STATE_DOWNLOADING).use { cursor ->
@@ -69,13 +77,12 @@ internal class OfflineVideoDownloads private constructor(private val context: Co
         }
     }
     private val errors = context.getSharedPreferences("genzo-offline-video-errors", 0)
-    private val bridge by lazy { OfflineVideoBridge(cache) }
     private class Pending(val expiresAt: Long, var preparation: OfflineVideoPreparation? = null)
     private val pending = ConcurrentHashMap<String, Pending>()
     val manager = DownloadManager(context, index, DownloaderFactory { request ->
         val secret = lazy { readSecret(request.id) }
         val source = DataSource.Factory { OfflineNetworkDataSource { secret.value } }
-        DefaultDownloaderFactory(CacheDataSource.Factory().setCache(cache).setUpstreamDataSourceFactory(source), Executor { it.run() })
+        DefaultDownloaderFactory(CacheDataSource.Factory().setCache(cache(storageId(request))).setUpstreamDataSourceFactory(source), Executor { it.run() })
             .createDownloader(request)
     }).apply {
         maxParallelDownloads = 2
@@ -92,7 +99,7 @@ internal class OfflineVideoDownloads private constructor(private val context: Co
             }
             override fun onDownloadRemoved(manager: DownloadManager, download: Download) {
                 credentials.delete(secretId(download.request.id)); errors.edit().remove(download.request.id).apply()
-                bridge.remove(download.request.id)
+                synchronized(this@OfflineVideoDownloads) { bridges[storageId(download.request)]?.remove(download.request.id) }
             }
         })
     }
@@ -113,6 +120,8 @@ internal class OfflineVideoDownloads private constructor(private val context: Co
             require(key.matches(Regex("[!#$%&'*+.^_`|~0-9A-Za-z-]{1,100}")) && value.length <= 8192 && !value.contains('\r') && !value.contains('\n'))
             require(key.lowercase() !in listOf("host", "connection", "range", "accept-encoding", "content-length"))
         }
+        val location = existing?.request?.let(::storageId) ?: DownloadStorage.selectedId(context)
+        DownloadStorage.root(context, location, true)
         val key = ByteArray(32).also { SecureRandom().nextBytes(it) }
         val secret = OfflineVideoSecret(id, uri, headers, key)
         val deadline = SystemClock.elapsedRealtime() + 45000
@@ -146,7 +155,7 @@ internal class OfflineVideoDownloads private constructor(private val context: Co
             } finally { manifest.close() }
         }
         val data = JSONObject().put("title", title).put("mediaFileId", mediaFileId).put("workId", workId).put("episodeTitle", episodeTitle)
-            .put("recipe", recipe).put("resolution", resolution)
+            .put("recipe", recipe).put("resolution", resolution).put("storageId", location)
         val root = secret.encode(uri, hls)
         val stored = JSONObject().put("uri", uri).put("headers", JSONObject(headers)).put("key", Base64.encodeToString(key, Base64.NO_WRAP))
         if (JSONObject().put("username", "offline-video").put("password", stored.toString()).toString().toByteArray(Charsets.UTF_8).size > 16384)
@@ -188,7 +197,7 @@ internal class OfflineVideoDownloads private constructor(private val context: Co
         if (existing != null && existing.state !in listOf(Download.STATE_FAILED, Download.STATE_STOPPED)) throw OfflineDownloadException("offline_download_active")
         credentials.save(secretId(prepared.request.id), "offline-video", prepared.secret)
         // Explicit retry refreshes the signed address and its generated cache together.
-        if (existing != null) cache.keys.filter { it.startsWith("https://offline.genzo.invalid/${prepared.request.id}/") }.forEach { cache.removeResource(it) }
+        if (existing != null) cache(storageId(existing.request)).let { cache -> cache.keys.filter { it.startsWith("https://offline.genzo.invalid/${prepared.request.id}/") }.forEach { cache.removeResource(it) } }
         return prepared.request
     }
 
@@ -236,9 +245,16 @@ internal class OfflineVideoDownloads private constructor(private val context: Co
     fun locator(id: String): JSONObject {
         val download = index.getDownload(id) ?: throw OfflineDownloadException("offline_download_missing")
         if (download.state != Download.STATE_COMPLETED) throw OfflineDownloadException("offline_download_incomplete")
+        val bridge = bridge(storageId(download.request)); revokeReaders()
         return JSONObject(String(download.request.data)).put("uri", bridge.locator(id, download.request.uri))
     }
-    fun fileLocator(path: String): String = bridge.fileLocator(File(context.dataDir, "remote-cache"), path)
+    fun fileLocator(path: String): String {
+        val file = File(path).canonicalFile
+        val root = DownloadStorage.locations(context).map { File(it.root, "remote-cache").canonicalFile }.firstOrNull { file.parentFile == it }
+            ?: throw OfflineDownloadException("offline_storage_unavailable")
+        val bridge = bridge("internal"); revokeReaders()
+        return bridge.fileLocator(root, path)
+    }
     private fun readSecret(id: String): OfflineVideoSecret {
         val stored = JSONObject(credentials.read(secretId(id)).getString("password"))
         val headers = stored.getJSONObject("headers").let { json -> json.keys().asSequence().associateWith { json.getString(it) } }

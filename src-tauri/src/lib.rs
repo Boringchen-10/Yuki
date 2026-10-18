@@ -24,6 +24,8 @@ mod comic_home;
 mod novel_explore;
 mod book_content;
 mod reading_history;
+mod reading_bookmarks;
+mod download_storage;
 mod download_center;
 mod video_downloads;
 mod bangumi_comment_images;
@@ -78,6 +80,8 @@ pub fn run() {
             android_events::init(app.handle());
             let state = tauri::async_runtime::block_on(db::initialize(app.handle()))
                 .map_err(|error| format!("Yuki 无法初始化本地数据库。{error}"))?;
+            tauri::async_runtime::block_on(download_storage::refresh(&state))
+                .map_err(|error| format!("Yuki 无法读取下载目录。{error}"))?;
             tauri::async_runtime::block_on(download_center::initialize(&state, app.handle()))
                 .map_err(|error| format!("Yuki 无法读取下载任务。{error}"))?;
             tauri::async_runtime::block_on(video_downloads::initialize(&state.pool))
@@ -159,6 +163,10 @@ pub fn run() {
             reading_history::list_reading_history,
             reading_history::remove_reading_history,
             reading_history::clear_reading_history,
+            reading_bookmarks::list_reading_bookmarks,
+            reading_bookmarks::remove_reading_bookmark,
+            download_storage::get_download_storage,
+            download_storage::set_download_storage,
             bangumi_comment_images::cache_bangumi_comment_image,
             book_content::get_book_online_content,
             book_content::get_book_online_image,

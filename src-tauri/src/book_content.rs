@@ -136,8 +136,9 @@ fn checked_cache_root(root: &Path) -> AppResult<PathBuf> {
     Ok(directory)
 }
 fn checked_target(root: &Path, kind: &str, book: &str, entry: &str) -> AppResult<PathBuf> {
-    let directory = checked_cache_root(root)?;
-    let target = key(root, kind, book, entry);
+    let root = crate::download_storage::existing_root(root, &[key(Path::new(""), kind, book, entry)]).unwrap_or_else(|| root.to_path_buf());
+    let directory = checked_cache_root(&root)?;
+    let target = key(&root, kind, book, entry);
     if let Ok(metadata) = fs::symlink_metadata(&target) {
         if !metadata.is_dir() || metadata.file_type().is_symlink()
             || fs::canonicalize(&target)?.parent() != Some(fs::canonicalize(directory)?.as_path()) { return Err(invalid("阅读缓存目录无效，未修改文件")); }
@@ -182,6 +183,15 @@ pub(crate) fn reader_archive(root: &Path, kind: &str, book: &str, entry: &str) -
         .map(|(manifest, directory)| (manifest.title, directory.join(manifest.open_file))))
 }
 pub(crate) fn cached_downloads(root: &Path) -> AppResult<Vec<CachedDownload>> {
+    let mut seen = HashSet::new(); let mut items = vec![];
+    for root in crate::download_storage::roots(root) {
+        for item in cached_downloads_at(&root)? {
+            if seen.insert((item.kind.clone(),item.book_id.clone(),item.content.entry_id.clone())) { items.push(item); }
+        }
+    }
+    Ok(items)
+}
+fn cached_downloads_at(root: &Path) -> AppResult<Vec<CachedDownload>> {
     let directory = checked_cache_root(root)?;
     if !directory.exists() { return Ok(vec![]); }
     if fs::symlink_metadata(&directory)?.file_type().is_symlink()
@@ -221,6 +231,7 @@ fn publish(target: &Path, pending: &Path, manifest: &Manifest) -> AppResult<()> 
 }
 #[tauri::command]
 pub async fn list_cached_book_content(kind: String, path_word: String, entry_ids: Vec<String>, state: State<'_, AppState>) -> AppResult<Vec<CachedContent>> {
+    crate::download_storage::refresh(&state).await?;
     check(&kind, &path_word, None)?;
     if entry_ids.len() > 10_000 { return Err(invalid("缓存查询数量过多")); }
     for id in &entry_ids { check(&kind, &path_word, Some(id))?; }
@@ -524,9 +535,12 @@ async fn cancellable<T>(cancel: Option<watch::Receiver<bool>>, future: impl std:
 }
 pub(crate) async fn cache_content(state: &AppState, kind: &str, path_word: &str, entry_id: &str, group: &str, refresh: bool, control: Option<CacheControl>) -> AppResult<CachedContent> {
     check(kind, path_word, Some(entry_id))?;
+    crate::download_storage::refresh(state).await?;
     let cancel = control.as_ref().map(|control| control.cancel.clone());
     let started = chrono::Utc::now();
-    let target = checked_target(&state.data_directory, kind, path_word, entry_id)?;
+    let root = crate::download_storage::existing_root(&state.data_directory, &[key(Path::new(""), kind, path_word, entry_id)])
+        .map(Ok).unwrap_or_else(|| crate::download_storage::write_root(&state.data_directory))?;
+    let target = checked_target(&root, kind, path_word, entry_id)?;
     let mutex = lock(&target).await; let _guard = cancellable(cancel.clone(), async { Ok(mutex.lock().await) }).await?;
     if let Some((manifest, _)) = load(&target, kind, path_word, entry_id, true) {
         if !refresh || chrono::DateTime::parse_from_rfc3339(&manifest.cached_at).is_ok_and(|time| time >= started) { return Ok(summary(&manifest)); }
@@ -593,8 +607,8 @@ pub async fn clear_cached_book_content(kind: String, path_word: String, entry_id
 }
 pub(crate) async fn clear_content(state: &AppState, kind: &str, path_word: &str, entry_id: &str) -> AppResult<()> {
     check(kind, path_word, Some(entry_id))?;
-    let root = checked_cache_root(&state.data_directory)?;
     let target = checked_target(&state.data_directory, kind, path_word, entry_id)?;
+    let root = target.parent().ok_or_else(|| invalid("缓存目录无效"))?;
     let mutex = lock(&target).await; let _guard = mutex.lock().await;
     if target.exists() {
         let resolved = fs::canonicalize(&target)?; let parent = fs::canonicalize(root)?;
@@ -606,6 +620,28 @@ pub(crate) async fn clear_content(state: &AppState, kind: &str, path_word: &str,
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn selected_storage_keeps_archives_discoverable_and_clear_is_scoped_to_the_requested_book() {
+        use super::*;
+        let base=tempfile::tempdir().unwrap(); let external=tempfile::tempdir().unwrap();
+        for (root,book) in [(base.path(),"old-book"),(external.path(),"new-book")] {
+            let target=key(root,"comic",book,"one"); fs::create_dir_all(&target).unwrap();
+            let pending=target.join("pending-fixture"); fs::create_dir(&pending).unwrap();
+            let bytes=b"isolated generated archive"; fs::write(pending.join("chapter.cbz"),bytes).unwrap();
+            publish(&target,&pending,&Manifest {version:1,kind:"comic".into(),book_id:book.into(),entry_id:"one".into(),title:book.into(),open_file:"chapter.cbz".into(),
+                files:vec![CachedFile {name:"chapter.cbz".into(),sha256:hash(bytes),bytes:bytes.len() as u64}],cached_at:"now".into()}).unwrap();
+        }
+        crate::download_storage::test_select(base.path(),external.path(),&[external.path().into()]);
+        assert!(reader_archive(base.path(),"comic","old-book","one").unwrap().unwrap().1.starts_with(base.path()));
+        assert!(reader_archive(base.path(),"comic","new-book","one").unwrap().unwrap().1.starts_with(external.path()));
+        assert_eq!(cached_downloads(base.path()).unwrap().len(),2);
+        let state=AppState {pool:crate::db::test_pool().await.unwrap(),database_path:base.path().join("test.db"),data_directory:base.path().into(),cover_cache_path:base.path().join("covers"),thumbnail_cache_path:base.path().join("thumbs")};
+        clear_content(&state,"comic","new-book","one").await.unwrap();
+        assert!(reader_archive(base.path(),"comic","old-book","one").unwrap().is_some());
+        assert!(reader_archive(base.path(),"comic","new-book","one").unwrap().is_none());
+        crate::download_storage::test_select(base.path(),base.path(),&[external.path().into()]);
+        assert_eq!(cached_downloads(base.path()).unwrap().len(),1);
+    }
     use super::*;
     use serde_json::json;
     async fn cache_test_state(directory: &Path) -> AppState {

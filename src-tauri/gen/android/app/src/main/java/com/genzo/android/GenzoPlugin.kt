@@ -61,11 +61,13 @@ class PlaybackPreferencesArgs {
 @InvokeArg
 class AppearanceArgs { var dark: Boolean = true; var appearance: Map<String, Any?>? = null }
 @InvokeArg
-class ReaderArgs { lateinit var sessionId: String; lateinit var baseUrl: String; lateinit var kind: String; lateinit var entryId: String }
+class ReaderArgs { lateinit var sessionId: String; lateinit var baseUrl: String; lateinit var kind: String; lateinit var entryId: String; var location: String? = null }
 @InvokeArg
 class ReaderControlArgs { lateinit var sessionId: String; lateinit var action: String; var value: Double = 0.0; var settings: String? = null }
 @InvokeArg
 class DataPackageArgs { lateinit var data: String }
+@InvokeArg
+class DownloadStorageArgs { lateinit var id: String }
 @InvokeArg
 class ImportServiceArgs { var text: String = "正在整理目录" }
 @InvokeArg
@@ -117,6 +119,17 @@ class GenzoPlugin(private val activity: Activity) : Plugin(activity) {
                 invoke.resolve(AppUpdater.status(activity))
             } catch (_: Exception) { invoke.reject("无法打开浏览器，请手动访问 Yuki 的 GitHub 发布页") }
         }
+    }
+    @Command
+    fun getDownloadStorage(invoke: Invoke) {
+        downloadReadWorker.execute { try { invoke.resolve(JSObject(DownloadStorage.state(activity).toString())) }
+            catch (_: Exception) { invoke.reject("无法读取下载目录，请重试") } }
+    }
+    @Command
+    fun setDownloadStorage(invoke: Invoke) {
+        val id = invoke.parseArgs(DownloadStorageArgs::class.java).id
+        downloadReadWorker.execute { try { invoke.resolve(JSObject(DownloadStorage.select(activity, id).toString())) }
+            catch (_: Exception) { invoke.reject("下载目录不可用或无法写入，请重新选择") } }
     }
     @Command
     fun parseRuleHtml(invoke: Invoke) {
@@ -380,7 +393,7 @@ class GenzoPlugin(private val activity: Activity) : Plugin(activity) {
         }
         activity.startActivity(Intent(activity, ReaderActivity::class.java)
             .putExtra("baseUrl", args.baseUrl).putExtra("sessionId", args.sessionId)
-            .putExtra("kind", args.kind).putExtra("entryId", args.entryId))
+            .putExtra("kind", args.kind).putExtra("entryId", args.entryId).putExtra("location", args.location))
         invoke.resolve(JSObject().put("status", "opening"))
     }
     @Command
