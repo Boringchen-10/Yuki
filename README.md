@@ -10,7 +10,7 @@
   <a href="docs/RELEASING.md">发布与更新</a>
 </p>
 
-Yuki 是本地优先的安卓动漫、漫画与轻小说媒体库，源自 [Genzo](https://github.com/Boringchen-10/genzo) 安卓分支。当前版本 **v1.1.0**，支持 **Android 8.0+、arm64-v8a**。
+Yuki 是本地优先的安卓动漫、漫画与轻小说媒体库，源自 [Genzo](https://github.com/Boringchen-10/genzo) 安卓分支。当前版本 **v1.2.0**，支持 **Android 8.0+、arm64-v8a**。
 
 ## 可以做什么
 

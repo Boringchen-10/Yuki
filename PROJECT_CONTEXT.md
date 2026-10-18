@@ -3,7 +3,7 @@
 ## 产品与兼容
 
 - 独立安卓 ACGN 媒体库；主页、源码和更新源为 [Boringchen-10/Yuki](https://github.com/Boringchen-10/Yuki)。Windows 留在原 Genzo 仓库。
-- 当前版本 v1.1.0，含下载目录设置与阅读书签。保留正式包 `com.genzo.android`、原签名、内部 genzo 标识、资料路径、偏好与同步协议。
+- 当前版本 v1.2.0，含下载目录设置、阅读书签与图片保存到相册。保留正式包 `com.genzo.android`、原签名、内部 genzo 标识、资料路径、偏好与同步协议。
 - `com.genzo.android.readerqa` 为隔离测试包。数据库只新增迁移，不清库、不重建资料、不修改用户真实媒体。
 
 ## 架构与功能
