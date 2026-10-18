@@ -2,7 +2,11 @@ package com.genzo.android
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Test
+import java.io.File
+import java.nio.file.Files
 
 class ReaderGalleryTest {
     private fun header(vararg bytes: Int) = ByteArray(bytes.size) { bytes[it].toByte() }
@@ -36,5 +40,21 @@ class ReaderGalleryTest {
         assertEquals(64, long.length)
         assertEquals("Yuki 图片", readerImageFileName("   "))
         assertEquals("Yuki 图片", readerImageFileName("///"))
+    }
+
+    @Test fun legacyGalleryReservesANewFileAfterManyNameCollisions() {
+        val album = Files.createTempDirectory("yuki-gallery-test-").toFile()
+        try {
+            File(album, "page.png").writeText("existing")
+            for (index in 2..1000) File(album, "page ($index).png").writeText("existing")
+            val target = ReaderGallery.uniqueTarget(album, "page", "png")
+            assertFalse("An existing gallery image must never be selected", target.readText() == "existing")
+            target.writeText("new image")
+            assertNotEquals(target, ReaderGallery.uniqueTarget(album, "page", "png"))
+            assertEquals("existing", File(album, "page (999).png").readText())
+            assertEquals("existing", File(album, "page (1000).png").readText())
+        } finally {
+            album.deleteRecursively()
+        }
     }
 }

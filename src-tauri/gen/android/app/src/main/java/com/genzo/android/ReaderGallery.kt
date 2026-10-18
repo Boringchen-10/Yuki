@@ -107,10 +107,10 @@ internal object ReaderGallery {
         return true
     }
 
-    private fun uniqueTarget(album: File, name: String, extension: String): File {
+    internal fun uniqueTarget(album: File, name: String, extension: String): File {
         var candidate = File(album, "$name.$extension")
         var index = 2
-        while (candidate.exists() && index < 1000) {
+        while (!candidate.createNewFile()) {
             candidate = File(album, "$name ($index).$extension")
             index++
         }
