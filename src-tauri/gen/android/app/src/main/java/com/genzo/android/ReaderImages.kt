@@ -8,6 +8,9 @@ import android.widget.Button
 import android.widget.LinearLayout
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import androidx.core.view.WindowCompat
+import androidx.core.graphics.ColorUtils
 import androidx.lifecycle.lifecycleScope
 import com.davemorrissey.labs.subscaleview.ImageSource
 import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
@@ -75,5 +78,13 @@ fun showReaderImage(host: ReaderActivity, file: File, name: String = "Yuki å›¾ç‰
     }
     host.lifecycle.addObserver(observer)
     dialog.setContentView(root); dialog.setOnDismissListener { host.lifecycle.removeObserver(observer); image.recycle(); leave() }; dialog.show()
-    dialog.window?.setLayout(-1,-1)
+    dialog.window?.let { window ->
+        window.setLayout(-1,-1)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        WindowInsetsControllerCompat(window, root).apply {
+            isAppearanceLightStatusBars = ColorUtils.calculateLuminance(host.readerBackground) > .5
+            isAppearanceLightNavigationBars = isAppearanceLightStatusBars
+        }
+        ViewCompat.requestApplyInsets(root)
+    }
 }
